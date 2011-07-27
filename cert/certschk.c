@@ -21,6 +21,8 @@
 *																			*
 ****************************************************************************/
 
+#if defined( USE_CERTREV ) || defined( USE_CERTVAL )
+
 /* Generate an issuerID, a SHA-1 hash of the issuerAndSerialNumber needed 
    when storing/retrieving a certificate to/from a database keyset, which 
    can't handle the awkward heirarchical IDs usually used in certificates.  
@@ -90,6 +92,7 @@ static int generateCertID( IN_BUFFER( dnLength ) const void *dn,
 
 	return( status );
 	}
+#endif /* USE_CERTREV || USE_CERTVAL */
 
 /****************************************************************************
 *																			*
@@ -107,24 +110,24 @@ static int checkResponder( INOUT CERT_INFO *certInfoPtr,
 	{
 	CRYPT_CERTIFICATE cryptResponse = DUMMY_INIT;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	int type, status;
+	int sessionType, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
 	REQUIRES( isHandleRangeValid( iCryptSession) );
 
-	status = krnlSendMessage( iCryptSession, IMESSAGE_GETATTRIBUTE, &type,
-							  CRYPT_IATTRIBUTE_SUBTYPE );
+	status = krnlSendMessage( iCryptSession, IMESSAGE_GETATTRIBUTE, 
+							  &sessionType, CRYPT_IATTRIBUTE_SUBTYPE );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	REQUIRES( ( type == SUBTYPE_SESSION_RTCS ) || \
-			  ( type == SUBTYPE_SESSION_OCSP ) );
+	REQUIRES( ( sessionType == SUBTYPE_SESSION_RTCS ) || \
+			  ( sessionType == SUBTYPE_SESSION_OCSP ) );
 
 	/* Create the request, add the certificate, and add the request to the
 	   session */
 	setMessageCreateObjectInfo( &createInfo,
-							    ( type == SUBTYPE_SESSION_RTCS ) ? \
+							    ( sessionType == SUBTYPE_SESSION_RTCS ) ? \
 									CRYPT_CERTTYPE_RTCS_REQUEST : \
 									CRYPT_CERTTYPE_OCSP_REQUEST );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
@@ -148,7 +151,7 @@ static int checkResponder( INOUT CERT_INFO *certInfoPtr,
 								  &cryptResponse, CRYPT_SESSINFO_RESPONSE );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( type == SUBTYPE_SESSION_RTCS )
+	if( sessionType == SUBTYPE_SESSION_RTCS )
 		{
 		int certStatus;
 
@@ -502,12 +505,10 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 					   IN_HANDLE_OPT const CRYPT_HANDLE iSigCheckObject )
 	{
 	CRYPT_CONTEXT iCryptContext;
-	CRYPT_CERTTYPE_TYPE sigCheckKeyType = CRYPT_CERTTYPE_NONE;
 	CERT_INFO *issuerCertInfoPtr = NULL;
-	OBJECT_TYPE type;
 	X509SIG_FORMATINFO formatInfo, *formatInfoPtr = NULL;
 	BOOLEAN issuerCertAcquired = FALSE;
-	int status;
+	int sigCheckObjectType, sigCheckKeyType = CRYPT_CERTTYPE_NONE, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
@@ -553,9 +554,10 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 		}
 
 	/* Find out what the signature check object is */
-	status = krnlSendMessage( iSigCheckObject, IMESSAGE_GETATTRIBUTE, &type,
-							  CRYPT_IATTRIBUTE_TYPE );
-	if( cryptStatusOK( status ) && type == OBJECT_TYPE_CERTIFICATE )
+	status = krnlSendMessage( iSigCheckObject, IMESSAGE_GETATTRIBUTE, 
+							  &sigCheckObjectType, CRYPT_IATTRIBUTE_TYPE );
+	if( cryptStatusOK( status ) && \
+		sigCheckObjectType == OBJECT_TYPE_CERTIFICATE )
 		{
 		status = krnlSendMessage( iSigCheckObject, IMESSAGE_GETATTRIBUTE,
 								  &sigCheckKeyType, 
@@ -569,7 +571,7 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 	   the kernel checks since the kernel only knows about valid subtypes
 	   but not that some subtypes are only valid in combination with some
 	   types of object being checked */
-	switch( type )
+	switch( sigCheckObjectType )
 		{
 		case OBJECT_TYPE_CERTIFICATE:
 		case OBJECT_TYPE_CONTEXT:
@@ -614,11 +616,11 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 	   RTCS or OCSP session then this is a validity/revocation check that 
 	   works rather differently from a straight signature check */
 #if defined( USE_CERTREV )
-	if( type == OBJECT_TYPE_CERTIFICATE && \
+	if( sigCheckObjectType == OBJECT_TYPE_CERTIFICATE && \
 		sigCheckKeyType == CRYPT_CERTTYPE_CRL )
 		return( checkCRL( certInfoPtr, iSigCheckObject ) );
 #endif /* USE_CERTREV */
-	if( type == OBJECT_TYPE_KEYSET )
+	if( sigCheckObjectType == OBJECT_TYPE_KEYSET )
 		{
 		/* If it's an RTCS or OCSP response use the certificate store to fill
 		   in the status information fields */
@@ -638,7 +640,7 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 #endif /* USE_CERTREV */
 		}
 #if defined( USE_CERTREV ) || defined( USE_CERTVAL )
-	if( type == OBJECT_TYPE_SESSION )
+	if( sigCheckObjectType == OBJECT_TYPE_SESSION )
 		return( checkResponder( certInfoPtr, iSigCheckObject ) );
 #endif /* USE_CERTREV || USE_CERTVAL */
 
@@ -671,7 +673,7 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 		   questionable combinations like a certificate request being used 
 		   to validate a certificate and misleading ones such as one 
 		   certificate chain being used to check a second chain */
-		if( type == OBJECT_TYPE_CERTIFICATE )
+		if( sigCheckObjectType == OBJECT_TYPE_CERTIFICATE )
 			{
 			status = krnlSendMessage( certInfoPtr->objectHandle,
 									  IMESSAGE_COMPARE, 
@@ -693,7 +695,7 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 	/* The signature check key may be a certificate or a context.  If it's
 	   a certificate we get the issuer certificate information and extract 
 	   the context from it before continuing */
-	if( type == OBJECT_TYPE_CERTIFICATE )
+	if( sigCheckObjectType == OBJECT_TYPE_CERTIFICATE )
 		{
 		/* Get the context from the issuer certificate */
 		status = krnlSendMessage( iSigCheckObject, IMESSAGE_GETDEPENDENT,

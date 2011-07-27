@@ -800,10 +800,11 @@ BOOLEAN isValidField( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
 
 /* Prototypes for functions in certschk.c */
 
-int checkCertDetails( CERT_INFO *subjectCertInfoPtr,
-					  CERT_INFO *issuerCertInfoPtr,
-					  const CRYPT_CONTEXT iIssuerPubKey,
-					  const X509SIG_FORMATINFO *formatInfo,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 7, 8 ) ) \
+int checkCertDetails( INOUT CERT_INFO *subjectCertInfoPtr,
+					  INOUT_OPT CERT_INFO *issuerCertInfoPtr,
+					  IN_HANDLE_OPT const CRYPT_CONTEXT iIssuerPubKey,
+					  IN_OPT const X509SIG_FORMATINFO *formatInfo,
 					  const BOOLEAN trustAnchorCheck,
 					  const BOOLEAN shortCircuitCheck,
 					  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \

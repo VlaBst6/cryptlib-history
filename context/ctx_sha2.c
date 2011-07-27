@@ -358,9 +358,9 @@ static int initParams( INOUT CONTEXT_INFO *contextInfoPtr,
 
 	/* SHA-2 has a variable-length output, selectable by setting the 
 	   blocksize attribute */
-#ifdef USE_SHA2_EXT
 	if( paramType == KEYPARAM_BLOCKSIZE )
 		{
+#ifdef USE_SHA2_EXT
   #ifdef CONFIG_SUITEB
 		static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 				CRYPT_ALGO_SHA2, bitsToBytes( 384 ), "SHA-384", 7,
@@ -374,12 +374,14 @@ static int initParams( INOUT CONTEXT_INFO *contextInfoPtr,
 				selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
 				};
   #endif /* CONFIG_SUITEB */
+#endif /* USE_SHA2_EXT */
 
 		/* The default SHA-2 variant is SHA-256, so an attempt to set this 
 		   size is a no-op */
 		if( dataLength == SHA256_DIGEST_SIZE )
 			return( CRYPT_OK );
 
+#ifdef USE_SHA2_EXT
 		/* Switch to the appropriate variant of SHA-2.  Note that the 
 		   initParamsFunction pointer for this version is NULL rather than
 		   pointing to this function, so once the output size has been set 
@@ -395,8 +397,10 @@ static int initParams( INOUT CONTEXT_INFO *contextInfoPtr,
   #endif /* CONFIG_SUITEB */
 
 		return( CRYPT_OK );
-		}
+#else
+		return( CRYPT_ARGERROR_NUM1 );
 #endif /* USE_SHA2_EXT */
+		}
 
 	/* Pass the call on down to the global parameter-handling function */	
 	return( initGenericParams( contextInfoPtr, paramType, data, 

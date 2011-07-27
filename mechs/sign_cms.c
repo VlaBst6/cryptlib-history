@@ -256,22 +256,6 @@ static void addSmimeCapabilities( IN_HANDLE const CRYPT_CERTIFICATE iCmsAttribut
 		  CRYPT_CERTINFO_CMS_SMIMECAP_3DES },
 		{ CRYPT_ALGO_AES, CRYPT_ALGO_NONE, 
 		  CRYPT_CERTINFO_CMS_SMIMECAP_AES },
-#ifdef USE_CAST
-		{ CRYPT_ALGO_CAST, CRYPT_ALGO_NONE, 
-		  CRYPT_CERTINFO_CMS_SMIMECAP_CAST128 },
-#endif /* USE_CAST */
-#ifdef USE_IDEA
-		{ CRYPT_ALGO_IDEA, CRYPT_ALGO_NONE, 
-		  CRYPT_CERTINFO_CMS_SMIMECAP_IDEA },
-#endif /* USE_IDEA */
-#ifdef USE_RC2
-		{ CRYPT_ALGO_RC2, CRYPT_ALGO_NONE, 
-		  CRYPT_CERTINFO_CMS_SMIMECAP_RC2 },
-#endif /* USE_RC2 */
-#ifdef USE_SKIPJACK
-		{ CRYPT_ALGO_SKIPJACK, CRYPT_ALGO_NONE, 
-		  CRYPT_CERTINFO_CMS_SMIMECAP_SKIPJACK },
-#endif /* USE_SKIPJACK */
 #ifdef USE_SHAng
 		{ CRYPT_ALGO_SHAng, CRYPT_ALGO_NONE, 
 		  CRYPT_CERTINFO_CMS_SMIMECAP_SHAng },
@@ -600,13 +584,12 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	{
 	CRYPT_CONTEXT iCmsHashContext = iHashContext;
 	CRYPT_CERTIFICATE iSigningCert;
-	CRYPT_ALGO_TYPE hashAlgo;
 	STREAM stream;
 	CMS_ATTRIBUTE_INFO cmsAttributeInfo;
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 128 + 8 ];
 	BYTE *bufPtr = ( signature == NULL ) ? NULL : buffer;
 	const int bufSize = ( signature == NULL ) ? 0 : CRYPT_MAX_PKCSIZE + 128;
-	int dataSignatureSize, length = DUMMY_INIT, status;
+	int hashAlgo, dataSignatureSize, length = DUMMY_INIT, status;
 
 	assert( ( signature == NULL && sigMaxLength == 0 ) || \
 			isReadPtr( signature, sigMaxLength ) );
@@ -738,14 +721,13 @@ int checkSignatureCMS( IN_BUFFER( signatureLength ) const void *signature,
 	{
 	CRYPT_CERTIFICATE iLocalExtraData;
 	CRYPT_CONTEXT iCmsHashContext = iHashContext;
-	CRYPT_ALGO_TYPE hashAlgo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	QUERY_INFO queryInfo;
 	MESSAGE_DATA msgData;
 	STREAM stream;
 	static const BYTE setTag[] = { BER_SET };
 	BYTE hashValue[ CRYPT_MAX_HASHSIZE + 8 ];
-	int status;
+	int hashAlgo, status;	/* int vs.enum */
 
 	assert( isReadPtr( signature, signatureLength ) );
 	assert( ( iExtraData == NULL ) || \

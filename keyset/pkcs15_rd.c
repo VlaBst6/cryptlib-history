@@ -172,9 +172,8 @@ static int readObject( INOUT STREAM *stream,
 					   INOUT ERROR_INFO *errorInfo )
 	{
 	STREAM objectStream;
-	BYTE buffer[ MIN_OBJECT_SIZE + 8 ];
 	void *objectData;
-	int headerSize = DUMMY_INIT, objectLength = DUMMY_INIT, status;
+	int objectLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( pkcs15objectInfo, sizeof( PKCS15_INFO ) ) );
@@ -189,54 +188,14 @@ static int readObject( INOUT STREAM *stream,
 	*objectPtrPtr = NULL;
 	*objectLengthPtr = 0;
 
-	/* Read the current object.  We can't use getObjectLength() here because 
-	   we're reading from a file rather than a memory stream so we have to
-	   grab the first MIN_OBJECT_SIZE bytes from the file stream and decode
-	   them to see what's next */
-	status = sread( stream, buffer, MIN_OBJECT_SIZE );
-	if( cryptStatusOK( status ) )
-		{
-		STREAM headerStream;
-
-		sMemConnect( &headerStream, buffer, MIN_OBJECT_SIZE );
-		status = readGenericHole( &headerStream, &objectLength, 
-								  MIN_OBJECT_SIZE, DEFAULT_TAG );
-		if( cryptStatusOK( status ) )
-			headerSize = stell( &headerStream );
-		sMemDisconnect( &headerStream );
-		}
+	/* Read the current object's data */
+	status = readRawObjectAlloc( stream, &objectData, &objectLength,
+								 MIN_OBJECT_SIZE, MAX_INTLENGTH_SHORT - 1 );
 	if( cryptStatusError( status ) )
 		{
 		retExt( status, 
 				( status, errorInfo, 
 				  "Couldn't read PKCS #15 object data" ) );
-		}
-	if( objectLength < MIN_OBJECT_SIZE || \
-		objectLength > MAX_INTLENGTH_SHORT )
-		{
-		retExt( status, 
-				( status, errorInfo, 
-				  "Invalid PKCS #15 object length %d", objectLength ) );
-		}
-
-	/* Allocate storage for the object and copy the already-read portion to 
-	   the start of the storage */
-	objectLength += headerSize;
-	if( ( objectData = clAlloc( "readObject", objectLength ) ) == NULL )
-		return( CRYPT_ERROR_MEMORY );
-	memcpy( objectData, buffer, MIN_OBJECT_SIZE );
-
-	/* Read the remainder of the object into the memory buffer and check 
-	   that the overall object is valid */
-	status = sread( stream, ( BYTE * ) objectData + MIN_OBJECT_SIZE,
-					objectLength - MIN_OBJECT_SIZE );
-	if( cryptStatusOK( status ) )
-		status = checkObjectEncoding( objectData, objectLength );
-	if( cryptStatusError( status ) )
-		{
-		clFree( "readObject", objectData );
-		retExt( status, 
-				( status, errorInfo, "Invalid PKCS #15 object data" ) );
 		}
 
 	/* Read the object attributes from the in-memory object data */

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib TLS Extension Management						*
-*					Copyright Peter Gutmann 1998-2010						*
+*					Copyright Peter Gutmann 1998-2011						*
 *																			*
 ****************************************************************************/
 
@@ -25,10 +25,13 @@
 *																			*
 ****************************************************************************/
 
-/* TLS extension information.  We specify distinct minimum and maximum 
-   lengths for client- and server-side use (so minLengthClient is the 
-   minimum length that a client can send).  A value of CRYPT_ERROR means 
-   that this extension isn't valid when sent by the client or server */
+/* TLS extension information.  Further types are defined at
+   http://www.iana.org/assignments/tls-extensiontype-values.
+
+   We specify distinct minimum and maximum lengths for client- and server-
+   side use (so minLengthClient is the minimum length that a client can 
+   send).  A value of CRYPT_ERROR means that this extension isn't valid when 
+   sent by the client or server */
 
 typedef struct {
 	const int type;					/* Extension type */
@@ -38,7 +41,7 @@ typedef struct {
 	} EXT_CHECK_INFO;
 
 static const EXT_CHECK_INFO extCheckInfoTbl[] = {
-	/* Server name indication (SNI):
+	/* Server name indication (SNI), RFC 4366:
 
 		uint16		listLen
 			byte	nameType
@@ -47,7 +50,7 @@ static const EXT_CHECK_INFO extCheckInfoTbl[] = {
 	{ TLS_EXT_SERVER_NAME, 1, 0, 8192, 
 	  "server name indication" },
 
-	/* Maximm fragment length:
+	/* Maximm fragment length, RFC 4366:
 
 		byte		fragmentLength */
 	{ TLS_EXT_MAX_FRAGMENT_LENTH, 1, 1, 1, 
@@ -69,12 +72,12 @@ static const EXT_CHECK_INFO extCheckInfoTbl[] = {
 	  1 + UINT16_SIZE + UINT16_SIZE + MIN_URL_SIZE + 1, CRYPT_ERROR, 8192,
 	  "client certificate URL" },
 
-	/* Trusted CA certificate(s).  This allows a client to specify which CA 
-	   certificates it trusts and by extension which server certificates it 
-	   trusts, supposedly to reduce handshake messages in constrained 
-	   clients.  Since the server usually has only a single certificate 
-	   signed by a single CA, specifying the CAs that the client trusts 
-	   doesn't serve much purpose:
+	/* Trusted CA certificate(s), RFC 4366.  This allows a client to specify 
+	   which CA certificates it trusts and by extension which server 
+	   certificates it trusts, supposedly to reduce handshake messages in 
+	   constrained clients.  Since the server usually has only a single 
+	   certificate signed by a single CA, specifying the CAs that the client 
+	   trusts doesn't serve much purpose:
 
 		uint16		caList
 			byte	idType
@@ -84,12 +87,12 @@ static const EXT_CHECK_INFO extCheckInfoTbl[] = {
 	  "trusted CA" },
 
 	/* Truncate the HMAC to a nonstandard 80 bits (rather than the de 
-	   facto IPsec cargo-cult standard of 96 bits) */
+	   facto IPsec cargo-cult standard of 96 bits), RFC 4366 */
 	{ TLS_EXT_TRUNCATED_HMAC, 0, 0, 0, 
 	  "truncated HMAC" },
 
-	/* OCSP status request.  Another bounce-attack enabler, this time on 
-	   both the server and an OCSP responder:
+	/* OCSP status request, RFC 4366.  Another bounce-attack enabler, this 
+	   time on both the server and an OCSP responder:
 
 		byte		statusType
 		uint16		ocspResponderList
@@ -109,35 +112,49 @@ static const EXT_CHECK_INFO extCheckInfoTbl[] = {
 	{ TLS_EXT_USER_MAPPING, 1 + 1, CRYPT_ERROR, 1 + 255, 
 	  "user-mapping" },
 
-	/* OpenPGP key.  From an experimental RFC with support for OpenPGP keys:
+	/* Authorisation exteniosn.  From an experimental RFC for adding 
+	   additional authorisation data to the TLS handshake, RFC 5878:
+
+		byte		authzFormatsList
+			byte	authzFormatType
+
+	   with the additional authorisation data being carried in the 
+	   SupplementalData handshake message */
+	{ TLS_EXT_CLIENT_AUTHZ, 1 + 1, CRYPT_ERROR, 1 + 255,
+	  "client-authz" },
+	{ TLS_EXT_SERVER_AUTHZ, CRYPT_ERROR, 1 + 1, 1 + 255,
+	  "server-authz" },
+
+	/* OpenPGP key.  From an experimental (later informational) RFC with 
+	   support for OpenPGP keys, RFC 5081/6091:
 
 		byte		certTypeListLength
 		byte[]		certTypeList */
 	{ TLS_EXT_CERTTYPE, 1 + 1, CRYPT_ERROR, 1 + 255, 
 	  "cert-type (OpenPGP keying)" },
 
-	/* Supported ECC curve IDs:
+	/* Supported ECC curve IDs, RFC 4492 modified by RFC 5246/TLS 1.2:
 
 		uint16		namedCurveListLength
 		uint16[]	namedCurve */
 	{ TLS_EXT_ELLIPTIC_CURVES, UINT16_SIZE + UINT16_SIZE, CRYPT_ERROR, 512, 
 	  "ECDH/ECDSA curve ID" },
 
-	/* Supported ECC point formats:
+	/* Supported ECC point formats, RFC 4492 modified by RFC 5246/TLS 1.2:
 
 		byte		pointFormatListLength
 		byte[]		pointFormat */
 	{ TLS_EXT_EC_POINT_FORMATS, 1 + 1, 1 + 1, 255, 
 	  "ECDH/ECDSA point format" },
 
-	/* SRP user name:
+	/* SRP user name, RFC 5054:
 
 		byte		userNameLength
 		byte[]		userName */
 	{ TLS_EXT_SRP, 1 + 1, CRYPT_ERROR, 1 + 255, 
 	  "SRP username" },
 
-	/* Signature algorithms:
+	/* Signature algorithms, RFC 5246/TLS 1.2:
 
 		uint16		algorithmListLength
 			byte	hashAlgo
@@ -145,24 +162,45 @@ static const EXT_CHECK_INFO extCheckInfoTbl[] = {
 	{ TLS_EXT_SIGNATURE_ALGORITHMS, UINT16_SIZE + 1 + 1, CRYPT_ERROR, 512, 
 	  "signature algorithm" },
 
-	/* Session ticket.  The client can send a zero-length session ticket to
-	   indicate that it supports the extension but doesn't have a session 
-	   ticket yet, and the server can send a zero-length ticket to indicate 
-	   that it'll send the client a new ticket later in the handshake.  
-	   Confusing this even more, the specification says that the client 
-	   sends "a zero-length ticket" but the server sends "a zero-length 
-	   extension".  The original specification, RFC 4507, was later updated 
-	   by a second version, RFC 5077, that makes explicit (via Appendix A) 
-	   the fact that there's no "ticket length" field in the extension, so 
-	   that the entire extension consists of the opaque ticket data:
+	/* Session ticket, RFC 4507/5077.  The client can send a zero-length 
+	   session ticket to indicate that it supports the extension but doesn't 
+	   have a session ticket yet, and the server can send a zero-length 
+	   ticket to indicate that it'll send the client a new ticket later in 
+	   the handshake.  Confusing this even more, the specification says that 
+	   the client sends "a zero-length ticket" but the server sends "a 
+	   zero-length extension".  The original specification, RFC 4507, was 
+	   later updated by a second version, RFC 5077, that makes explicit (via 
+	   Appendix A) the fact that there's no "ticket length" field in the 
+	   extension, so that the entire extension consists of the opaque ticket 
+	   data:
 
 		byte[]		sessionTicket (implicit size) */
 	{ TLS_EXT_SESSIONTICKET, 0, 0, 8192,
 	  "session ticket" },
 
+	/* Secure renegotiation indication, RFC 5746.  See the comment below for
+	   why we (apparently) support this even though we don't do 
+	   renegotiation.  We give the length as one, corresponding to zero-
+	   length content, the one is for the single-byte length field in the 
+	   extension itself, set to a value of zero.  It can in theory be larger 
+	   as part of the secure renegotiation process but this would be an 
+	   indication of an attack since we don't do renegotiation */
+	{ TLS_EXT_SECURE_RENEG, 1, 1, 1,
+	  "secure renegotiation" },
+
 	/* End-of-list marker */
 	{ CRYPT_ERROR, 0, 0, 0, NULL }, { CRYPT_ERROR, 0, 0, 0, NULL }
 	};
+
+/* In addition to the variable-format extenions above we also support the 
+   secure-renegotiation extension.  This is a strange extension to support 
+   because cryptlib doesn't do renegotiation, but we have to send it at the 
+   client side in order to avoid being attacked via a (non-cryptlib) server 
+   that's vulnerable, and we have to process it on the server side in order 
+   to not appear to be a vulnerable server (sigh) */
+
+#define RENEG_EXT_SIZE	5
+#define RENEG_EXT_DATA	"\xFF\x01\x00\x01\x00"
 
 /****************************************************************************
 *																			*
@@ -170,15 +208,342 @@ static const EXT_CHECK_INFO extCheckInfoTbl[] = {
 *																			*
 ****************************************************************************/
 
+/* Process the list of preferred (or at least supported) ECC curves.  This 
+   is a somewhat problematic extension because it applies to any use of ECC, 
+   so if (for some reason) the server wants to use a P256 ECDH key with a 
+   P521 ECDSA signing key then it has to verify that the client reports that 
+   it supports both P256 and P521.  Since our limiting factor is the ECDSA 
+   key that we use for signing, we require that the client report support 
+   for the curve that matches our signing key.  Support for the 
+   corresponding ECDH curve is automatic, since we support all curves for 
+   ECDH that are supported for ECDSA:
+
+	uint16		namedCurveListLength
+	uint16[]	namedCurve */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
+static int processSupportedCurveID( INOUT SESSION_INFO *sessionInfoPtr, 
+									INOUT STREAM *stream, 
+									IN_LENGTH_SHORT_Z const int extLength,
+									OUT_ENUM_OPT( CRYPT_ECCCURVE ) \
+										CRYPT_ECCCURVE_TYPE *preferredCurveIdPtr,
+									OUT_BOOL BOOLEAN *extErrorInfoSet )
+	{
+	static const MAP_TABLE curveIDTbl[] = {
+		{ TLS_CURVE_SECP192R1, CRYPT_ECCCURVE_P192 },
+		{ TLS_CURVE_SECP224R1, CRYPT_ECCCURVE_P224 },
+		{ TLS_CURVE_SECP256R1, CRYPT_ECCCURVE_P256 },
+		{ TLS_CURVE_SECP384R1, CRYPT_ECCCURVE_P384 },
+		{ TLS_CURVE_SECP521R1, CRYPT_ECCCURVE_P521 },
+		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
+		};
+	static const MAP_TABLE curveSizeTbl[] = {
+		{ CRYPT_ECCCURVE_P192, bitsToBytes( 192 ) },
+		{ CRYPT_ECCCURVE_P224, bitsToBytes( 224 ) },
+		{ CRYPT_ECCCURVE_P256, bitsToBytes( 256 ) },
+		{ CRYPT_ECCCURVE_P384, bitsToBytes( 384 ) },
+		{ CRYPT_ECCCURVE_P521, bitsToBytes( 521 ) },
+		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
+		};
+	CRYPT_ECCCURVE_TYPE preferredCurveID = CRYPT_ECCCURVE_NONE;
+	int listLen, keySize, i, status;
+#ifdef CONFIG_SUITEB_TESTS 
+	int curvesSeen = 0;
+#endif /* CONFIG_SUITEB_TESTS */
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( preferredCurveIdPtr, \
+						sizeof( CRYPT_ECCCURVE_TYPE ) ) );
+
+	REQUIRES( extLength >= 0 && extLength < MAX_INTLENGTH_SHORT );
+
+	/* Clear return values */
+	*preferredCurveIdPtr = CRYPT_ECCCURVE_NONE;
+	*extErrorInfoSet = FALSE;
+
+	/* Get the size of the server's signing key to bound the curve size */
+	status = krnlSendMessage( sessionInfoPtr->privateKey,
+							  IMESSAGE_GETATTRIBUTE, &keySize,
+							  CRYPT_CTXINFO_KEYSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Read and check the ECC curve list header */
+	status = listLen = readUint16( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( listLen != extLength - UINT16_SIZE || \
+		listLen < UINT16_SIZE || listLen > 256 || \
+		( listLen % UINT16_SIZE ) != 0 )
+		return( CRYPT_ERROR_BADDATA );
+
+	/* Read the list of curve IDs, recording the most preferred one */
+	for( i = 0; i < listLen / UINT16_SIZE; i++ )
+		{
+		int value, curveID, curveSize;
+
+		status = value = readUint16( stream );
+		if( cryptStatusError( status ) )
+			return( status );
+		status = mapValue( value, &curveID, curveIDTbl, 
+						   FAILSAFE_ARRAYSIZE( curveIDTbl, MAP_TABLE ) );
+		if( cryptStatusError( status ) )
+			continue;	/* Unrecognised curve type */
+		status = mapValue( curveID, &curveSize, curveSizeTbl, 
+						   FAILSAFE_ARRAYSIZE( curveSizeTbl, MAP_TABLE ) );
+		ENSURES( cryptStatusOK( status ) );
+#ifdef CONFIG_SUITEB
+		if( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB )
+			{
+			const int suiteBinfo = \
+						sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
+
+			/* Suite B only allows P256 and P384.  At the 128-bit level both 
+			   P256 and P384 are allowed, at the 256-bit level only P384 is 
+			   allowed */
+			if( curveID != CRYPT_ECCCURVE_P256 && \
+				curveID != CRYPT_ECCCURVE_P384 )
+				continue;
+			if( suiteBinfo == SSL_PFLAG_SUITEB_256 && \
+				curveID == CRYPT_ECCCURVE_P256 )
+				continue;
+  #ifdef CONFIG_SUITEB_TESTS 
+			if( suiteBTestValue == SUITEB_TEST_BOTHCURVES )
+				{
+				/* We're checking whether the client sends both curve IDs, 
+				   remember which ones we've seen so far */
+				if( curveID == CRYPT_ECCCURVE_P256 )
+					curvesSeen |= 1;
+				if( curveID == CRYPT_ECCCURVE_P384 )
+					curvesSeen |= 2;
+				}
+  #endif /* CONFIG_SUITEB_TESTS */
+			}
+#endif /* CONFIG_SUITEB */
+
+		/* Make sure that the curve matches the server's signing key */
+		if( curveSize != keySize )
+			continue;
+
+		/* We've got a matching curve, remember it.  In theory we could exit
+		   at this point but we continue anyway to clear the remainder of 
+		   the data */
+		preferredCurveID = curveID;
+		}
+#ifdef CONFIG_SUITEB_TESTS 
+	/* If we're checking for the presence of both P256 and P384 as supported 
+	   elliptic curves and we don't see them, complain */
+	if( suiteBTestValue == SUITEB_TEST_BOTHCURVES && curvesSeen != 3 )
+		{
+		*extErrorInfoSet = TRUE;
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+				  "Supported elliptic curves extension should have "
+				  "contained both P256 and P384 but didn't" ) );
+		}
+#endif /* CONFIG_SUITEB_TESTS */
+
+	*preferredCurveIdPtr = preferredCurveID;
+
+	return( CRYPT_OK );
+	}
+
+/* Process the list of signature algorithms that the client can accept.  
+   This is a complex and confusing TLS 1.2+ extension with weird 
+   requirements attached to it, for example if the client indicates hash 
+   algorithm X then the server (section 7.4.2) has to somehow produce a 
+   certificate chain signed only using that hash algorithm, as if a 
+   particular algorithm choice for TLS use could somehow dictate what 
+   algorithms the CA and certificate-processing library that's being used 
+   will provide (in addition the spec is rather confused on this issue, 
+   giving it first as a MUST and then a paragraph later as a SHOULD).  This 
+   also makes some certificate signature algorithms like RSA-PSS impossible 
+   even if the hash algorithm used is supported by both the TLS and 
+   certificate library, because TLS only allows the specification of PKCS 
+   #1 v1.5 signatures.  What's worse, it creates a situation from which 
+   there's no recovery because in the case of a problem all that the server 
+   can say is "failed", but not "try again using this algorithm", while 
+   returning certificates or a signature with the server's available 
+   algorithm (ignoring the requirement to summarily abort the handshake in 
+   the case of a mismatch) at least tells the client what the problem is.
+
+   To avoid this mess we assume that everyone can do SHA-256, the TLS 1.2 
+   default.  A poll of TLS implementers in early 2011 indicated that 
+   everyone else ignores this requirement as well (one implementer described
+   the requirement as "that is not just shooting yourself in the foot, that 
+   is shooting 'the whole nine yards' (the entire ammunition belt) in your 
+   foot"), so we're pretty safe here.  Since the extension isn't valid for 
+   earlier versions, we ignore it if we're not using TLS 1.2+:
+
+	uint16		algorithmListLength
+		byte	hashAlgo
+		byte	sigAlgo */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
+static int processSignatureAlgos( INOUT SESSION_INFO *sessionInfoPtr, 
+								  INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+								  INOUT STREAM *stream, 
+								  IN_LENGTH_SHORT_Z const int extLength,
+								  OUT_BOOL BOOLEAN *extErrorInfoSet )
+	{
+#ifdef CONFIG_SUITEB
+	static const MAP_TABLE curveSizeTbl[] = {
+		{ bitsToBytes( 256 ), TLS_HASHALGO_SHA2 },
+		{ bitsToBytes( 384 ), TLS_HASHALGO_SHA384 },
+		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
+		};
+	const int suiteBinfo = sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
+	int keySize, hashType;
+  #ifdef CONFIG_SUITEB_TESTS 
+	int hashesSeen = 0;
+  #endif /* CONFIG_SUITEB_TESTS */
+#endif /* CONFIG_SUITEB */
+	int listLen, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES( extLength >= 0 && extLength < MAX_INTLENGTH_SHORT );
+
+	/* Clear return values */
+	*extErrorInfoSet = FALSE;
+
+	/* Read and check the signature algorithm list header */
+	status = listLen = readUint16( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( listLen != extLength - UINT16_SIZE || \
+		listLen < 1 + 1 || listLen > 64 + 64 || \
+		( listLen % UINT16_SIZE ) != 0 )
+		return( CRYPT_ERROR_BADDATA );
+
+	/* If we're not using TLS 1.2+, skip the extension */
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+		return( sSkip( stream, listLen ) );
+
+	/* For the more strict handling requirements in Suite B only 256- or 
+	   384-bit algorithms are allowed at the 128-bit level and only 384-bit 
+	   algorithms are allowed at the 256-bit level */
+#ifdef CONFIG_SUITEB
+	/* If we're not running in Suite B mode then there are no additional
+	   checks required */
+	if( !suiteBinfo )
+		{
+		handshakeInfo->keyexSigHashAlgo = CRYPT_ALGO_SHA2;
+
+		return( sSkip( stream, listLen ) );
+		}
+
+	/* Get the size of the server's signing key to try and match the 
+	   client's preferred hash size */
+	status = krnlSendMessage( sessionInfoPtr->privateKey, 
+							  IMESSAGE_GETATTRIBUTE, &keySize,
+							  CRYPT_CTXINFO_KEYSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = mapValue( keySize, &hashType, curveSizeTbl, 
+					   FAILSAFE_ARRAYSIZE( curveSizeTbl, MAP_TABLE ) );
+	if( cryptStatusError( status ) )
+		{
+		/* Suite B only allows P256 and P384 keys (checked by the higher-
+		   level code when we add the server key) so we should never get to 
+		   this situation */
+		return( status );
+		}
+	handshakeInfo->keyexSigHashAlgo = CRYPT_ALGO_NONE;
+
+	/* Read the hash and signature algorithms and choose the best one to 
+	   use */
+	for( ; listLen > 0; listLen -= 1 + 1 )
+		{
+		int hashAlgo, sigAlgo;
+
+		/* Read the hash and signature algorithm and make sure that it's one 
+		   that we can use.  At the 128-bit level both SHA256 and SHA384 are 
+		   allowed, at the 256-bit level only SHA384 is allowed */
+		hashAlgo = sgetc( stream );			/* Hash algorithm */
+		status = sigAlgo = sgetc( stream );	/* Sig.algorithm */
+		if( cryptStatusError( status ) )
+			return( status );
+		if( sigAlgo != TLS_SIGALGO_ECDSA || \
+			( hashAlgo != TLS_HASHALGO_SHA2 && \
+			  hashAlgo != TLS_HASHALGO_SHA384 ) )
+			continue;
+		if( suiteBinfo == SSL_PFLAG_SUITEB_256 && \
+			hashAlgo != TLS_HASHALGO_SHA384 )
+			continue;
+  #ifdef CONFIG_SUITEB_TESTS 
+		if( suiteBTestValue == SUITEB_TEST_BOTHSIGALGOS )
+			{
+			/* We're checking whether the client sends both hash algorithm 
+			   IDs, remember which ones we've seen so far */
+			if( hashAlgo == TLS_HASHALGO_SHA2 )
+				hashesSeen |= 1;
+			if( hashAlgo == TLS_HASHALGO_SHA384 )
+				hashesSeen |= 2;
+			}
+  #endif /* CONFIG_SUITEB_TESTS */
+
+		/* In addition to the general validity checks, the hash type also has
+		   to match the server's key size */
+		if( hashType != hashAlgo )
+			continue;
+
+		/* We've found one that we can use, set the appropriate variant.  
+		   Note that since SHA384 is just a variant of SHA2, we always 
+		   choose this if it's available.  Even if the order given is 
+		   { SHA384, SHA256 } the parameter value for the original SHA384 
+		   will remain set when SHA256 is subsequently read */
+		handshakeInfo->keyexSigHashAlgo = CRYPT_ALGO_SHA2;
+		if( hashAlgo == TLS_HASHALGO_SHA384 )
+			handshakeInfo->keyexSigHashAlgoParam = bitsToBytes( 384 );
+		}
+
+	/* For Suite B the client must send either SHA256 or SHA384 as an 
+	   option */
+	if( handshakeInfo->keyexSigHashAlgo == CRYPT_ALGO_NONE )
+		{
+		*extErrorInfoSet = TRUE;
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+				  "Signature algorithms extension should have "
+				  "contained %sP384/SHA384 but didn't",
+				  ( suiteBinfo != SSL_PFLAG_SUITEB_256 ) ? \
+					"P256/SHA256 and/or " : "" ) );
+		}
+#ifdef CONFIG_SUITEB_TESTS 
+	/* If we're checking for the presence of both SHA256 and SHA384 as 
+	   supported hash algorithms and we don't see them, complain */
+	if( suiteBTestValue == SUITEB_TEST_BOTHSIGALGOS && hashesSeen != 3 )
+		{
+		*extErrorInfoSet = TRUE;
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+				  "Signature algortithms extension should have contained "
+				  "both P256/SHA256 and P384/SHA384 but didn't" ) );
+		}
+#endif /* CONFIG_SUITEB_TESTS */
+
+	return( CRYPT_OK );
+#else
+	handshakeInfo->keyexSigHashAlgo = CRYPT_ALGO_SHA2;
+
+	return( sSkip( stream, listLen ) );
+#endif /* CONFIG_SUITEB */
+	}
+
 /* Process a single extension.  The internal structure of some of these 
    things shows that they were created by ASN.1 people... */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 6 ) ) \
 static int processExtension( INOUT SESSION_INFO *sessionInfoPtr, 
 							 INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
 							 INOUT STREAM *stream, 
 							 IN_RANGE( 0, 65536 ) const int type,
-							 IN_LENGTH_SHORT_Z const int extLength )
+							 IN_LENGTH_SHORT_Z const int extLength,
+							 OUT_BOOL BOOLEAN *extErrorInfoSet )
 	{
 	int value, listLen, status;
 
@@ -188,6 +553,9 @@ static int processExtension( INOUT SESSION_INFO *sessionInfoPtr,
 
 	REQUIRES( type >= 0 && type <= 65536 );
 	REQUIRES( extLength >= 0 && extLength < MAX_INTLENGTH_SHORT );
+
+	/* Clear return values */
+	*extErrorInfoSet = FALSE;
 
 	switch( type )
 		{
@@ -223,7 +591,8 @@ static int processExtension( INOUT SESSION_INFO *sessionInfoPtr,
 				return( status );
 			if( listLen != extLength - UINT16_SIZE || \
 				listLen < 1 + UINT16_SIZE || \
-				listLen >= MAX_INTLENGTH_SHORT )
+				listLen >= MAX_INTLENGTH_SHORT || \
+				( listLen % UINT16_SIZE ) != 0 )
 				return( CRYPT_ERROR_BADDATA );
 
 			/* Parsing of further SEQUENCE OF SEQUENCE data omitted */
@@ -253,96 +622,14 @@ static int processExtension( INOUT SESSION_INFO *sessionInfoPtr,
 
 		case TLS_EXT_ELLIPTIC_CURVES:
 			{
-			/* Read the list of preferred curves, selecting the best one.  
-			   We somewhat arbitrarily define 'best' as 'biggest' because
-			   everyone knows that bigger is better, however we also
-			   bound the curve size by the size of the server's signing
-			   key, since there's not much point in using a P521 curve
-			   that the server then authenticates with a P192 key:
+			CRYPT_ECCCURVE_TYPE preferredCurveID;
 
-				uint16		namedCurveListLength
-				uint16[]	namedCurve */
-			static const MAP_TABLE curveIDTbl[] = {
-				{ TLS_CURVE_SECP192R1, CRYPT_ECCCURVE_P192 },
-				{ TLS_CURVE_SECP224R1, CRYPT_ECCCURVE_P224 },
-				{ TLS_CURVE_SECP256R1, CRYPT_ECCCURVE_P256 },
-				{ TLS_CURVE_SECP384R1, CRYPT_ECCCURVE_P384 },
-				{ TLS_CURVE_SECP521R1, CRYPT_ECCCURVE_P521 },
-				{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
-				};
-			static const MAP_TABLE curveSizeTbl[] = {
-				{ CRYPT_ECCCURVE_P192, bitsToBytes( 192 ) },
-				{ CRYPT_ECCCURVE_P224, bitsToBytes( 224 ) },
-				{ CRYPT_ECCCURVE_P256, bitsToBytes( 256 ) },
-				{ CRYPT_ECCCURVE_P384, bitsToBytes( 384 ) },
-				{ CRYPT_ECCCURVE_P521, bitsToBytes( 521 ) },
-				{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
-				};
-			int preferredCurveID = CRYPT_ERROR, keySize, i;
-
-			/* Get the size of the server's signing key to bound the curve 
-			   size */
-			status = krnlSendMessage( sessionInfoPtr->privateKey,
-									  IMESSAGE_GETATTRIBUTE, &keySize,
-									  CRYPT_CTXINFO_KEYSIZE );
+			/* Read and process the list of preferred curves */
+			status = processSupportedCurveID( sessionInfoPtr, stream,
+											  extLength, &preferredCurveID,
+											  extErrorInfoSet );
 			if( cryptStatusError( status ) )
 				return( status );
-
-			/* Read and check the ECC curve list header */
-			status = listLen = readUint16( stream );
-			if( cryptStatusError( status ) )
-				return( status );
-			if( listLen != extLength - UINT16_SIZE || \
-				listLen < UINT16_SIZE || listLen > 256 )
-				return( CRYPT_ERROR_BADDATA );
-
-			/* Read the list of curve IDs, recording the most preferred one */
-			for( i = 0; i < listLen / UINT16_SIZE; i++ )
-				{
-				int curveID, curveSize;
-
-				status = value = readUint16( stream );
-				if( cryptStatusError( status ) )
-					return( status );
-				status = mapValue( value, &curveID, curveIDTbl, 
-								   FAILSAFE_ARRAYSIZE( curveIDTbl, MAP_TABLE ) );
-				if( cryptStatusError( status ) )
-					continue;	/* Unrecognised curve type */
-				status = mapValue( curveID, &curveSize, curveSizeTbl, 
-								   FAILSAFE_ARRAYSIZE( curveSizeTbl, MAP_TABLE ) );
-				ENSURES( cryptStatusOK( status ) );
-				if( curveSize > keySize )
-					{
-					/* The curve size exceeds the security provided by the 
-					   server key, there's no point in using a curve of this
-					   size */
-					continue;
-					}
-				if( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB )
-					{
-					const int suiteBinfo = \
-						sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
-
-					/* Suite B only allows P256 and P384 */
-					switch( curveID )
-						{
-						case CRYPT_ECCCURVE_P256:
-							if( !( suiteBinfo & SSL_PFLAG_SUITEB_128 ) )
-								continue;
-							break;
-
-						case CRYPT_ECCCURVE_P384:
-							if( !( suiteBinfo & SSL_PFLAG_SUITEB_256 ) )
-								continue;
-							break;
-
-						default:
-							continue;
-						}
-					}
-				if( curveID > preferredCurveID )
-					preferredCurveID = curveID;
-				}
 
 			/* If we couldn't find a curve that we have in common with the 
 			   other side, disable the use of ECC algorithms.  This is a 
@@ -353,7 +640,7 @@ static int processExtension( INOUT SESSION_INFO *sessionInfoPtr,
 			   NIST curves) means that the crypto is quietly switched to 
 			   non-ECC with the user being none the wiser, but there's no 
 			   way for an implementation to negotiate ECC-only encryption */
-			if( preferredCurveID == CRYPT_ERROR )
+			if( preferredCurveID == CRYPT_ECCCURVE_NONE )
 				handshakeInfo->disableECC = TRUE;
 			else
 				handshakeInfo->eccCurveID = preferredCurveID;
@@ -371,155 +658,37 @@ static int processExtension( INOUT SESSION_INFO *sessionInfoPtr,
 
 				byte		pointFormatListLength
 				byte[]		pointFormat */
-			handshakeInfo->sendECCPointExtn = TRUE;
 			if( extLength > 0 )
 				{
 				status = sSkip( stream, extLength );
 				if( cryptStatusError( status ) )
 					return( status );
 				}
+			handshakeInfo->sendECCPointExtn = TRUE;
 
 			return( CRYPT_OK );
 
 		case TLS_EXT_SIGNATURE_ALGORITHMS:
-			/* This is a complex and confusing TLS 1.2+ extension with weird 
-			   requirements attached to it, for example if the client 
-			   indicates hash algorithm X then the server (section 7.4.2) 
-			   has to somehow produce a certificate chain signed only using 
-			   that hash algorithm, as if a particular algorithm choice for 
-			   TLS use could somehow dictate what algorithms the CA and 
-			   certificate-processing library that's being used will provide 
-			   (in addition the spec is rather confused on this issue, 
-			   giving it first as a MUST and then a paragraph later as a 
-			   SHOULD).  This also makes some certificate signature 
-			   algorithms like RSA-PSS impossible even if the hash algorithm 
-			   used is supported by both the TLS and certificate library, 
-			   because TLS only allows the specification of PKCS #1 v1.5 
-			   signatures.  What's worse, it creates a situation from which 
-			   there's no recovery because in the case of a problem all that 
-			   the server can say is "failed", but not "try again using this 
-			   algorithm", while returning certificates or a signature with 
-			   the server's available algorithm (ignoring the requirement to 
-			   summarily abort the handshake in the case of a mismatch) at 
-			   least tells the client what the problem is.
+			/* Read and process the list of signature algorithms */
+			return( processSignatureAlgos( sessionInfoPtr, handshakeInfo, 
+										   stream, extLength, 
+										   extErrorInfoSet ) );
 
-			   To avoid this mess we assume that everyone can do SHA-256,
-			   the TLS 1.2 default.  Since the extension isn't valid for
-			   earlier versions, we ignore it if we're not using TLS 1.2+:
+		case TLS_EXT_SECURE_RENEG:
+			/* If we get a nonzero length for this extension (the '1' is the 
+			   initial length byte at the start) then it's an indication of 
+			   an attack.  The status code to return here is a bit 
+			   uncertain, but CRYPT_ERROR_INVALID seems to be the least
+			   inappropriate */
+			if( extLength != 1 || sgetc( stream ) != 0 )
+				return( CRYPT_ERROR_INVALID );
 
-				uint16		algorithmListLength
-					byte	hashAlgo
-					byte	sigAlgo */
-			status = listLen = readUint16( stream );
-			if( cryptStatusError( status ) )
-				return( status );
-			if( listLen != extLength - UINT16_SIZE || \
-				listLen < 1 + 1 || listLen > 64 + 64 || \
-				listLen & 1 )
-				return( CRYPT_ERROR_BADDATA );
-			if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
-				{
-#ifdef CONFIG_SUITEB
-				/* For the more strict handling in Suite B there are two 
-				   paths that we can take, either require that the client 
-				   send at least one hash algorithm that matches the server 
-				   key size (thus ensuring that our server certificate 
-				   matches what the client wants), or we can strictly apply 
-				   the Suite B requirements so that only 256-bit algorithms
-				   are allowed for SSL_PFLAG_SUITEB_128 and only 384-bit
-				   algorithms are allowed for SSL_PFLAG_SUITEB_256 */
-  #if 0	/* Check for client match of server key size */
-				static const MAP_TABLE curveSizeTbl[] = {
-					{ bitsToBytes( 256 ), TLS_HASHALGO_SHA2 },
-					{ bitsToBytes( 384 ), TLS_HASHALGO_SHA384 },
-					{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
-					};
-				int keySize, hashType;
+			/* If we're the server, remember that we have to echo the 
+			   extension back to the client */
+			if( isServer( sessionInfoPtr ) )
+				handshakeInfo->needRenegResponse = TRUE;
 
-				/* If we don't find anything else that matches we default to 
-				   SHA2 */
-				handshakeInfo->keyexSigHashAlgo = CRYPT_ALGO_SHA2;
-
-				/* Get the size of the server's signing key to try and match
-				   the client's preferred hash size */
-				status = krnlSendMessage( sessionInfoPtr->privateKey,
-										  IMESSAGE_GETATTRIBUTE, &keySize,
-										  CRYPT_CTXINFO_KEYSIZE );
-				if( cryptStatusError( status ) )
-					return( status );
-				status = mapValue( keySize, &hashType, curveSizeTbl, 
-								   FAILSAFE_ARRAYSIZE( curveSizeTbl, MAP_TABLE ) );
-				if( cryptStatusError( status ) )
-					{
-					/* In theory we could continue with SHA-2 as the generic 
-					   hash algorithm, but Suite B only allows P256 and P384
-					   keys (checked by the higher-level code) so we should 
-					   never get to this situation */
-					return( status );
-					}
-  #else	/* Strict _128/_256 match */
-				const int suiteBinfo = \
-							sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
-
-				handshakeInfo->keyexSigHashAlgo = CRYPT_ERROR;
-  #endif /* Suite B parameter match type */
-
-				/* Read the hash and signature algorithms and try and choose 
-				   the best one to use.  See the long comment above to 
-				   understand the somewhat optimistic way in which the choice
-				   is made */
-				for( ; listLen > 0; listLen -= 1 + 1 )
-					{
-					int hashAlgo, sigAlgo;
-
-					/* Read the hash and signature algorithm and make sure
-					   that it's one that we can use */
-					hashAlgo = sgetc( stream );			/* Hash algorithm */
-					status = sigAlgo = sgetc( stream );	/* Sig.algorithm */
-					if( cryptStatusError( status ) )
-						return( status );
-					if( sigAlgo != TLS_SIGALGO_ECDSA || \
-						( hashAlgo != TLS_HASHALGO_SHA2 && \
-						  hashAlgo != TLS_HASHALGO_SHA384 ) )
-						continue;
-  #if 0	/* Check for client match of server key size */
-					if( hashType != hashAlgo )
-						continue;
-  #else	/* Strict _128/_256 match */
-					if( ( suiteBinfo == SSL_PFLAG_SUITEB_128 && \
-						  hashAlgo != TLS_HASHALGO_SHA2 ) || \
-						( suiteBinfo == SSL_PFLAG_SUITEB_256 && \
-						  hashAlgo != TLS_HASHALGO_SHA384 ) )
-						continue;
-  #endif /* Suite B parameter match type */
-
-					/* We've found one that we can use, set the appropriate 
-					   variant.  Note that since SHA384 is just a variant of 
-					   SHA2, we always choose this if it's available, so even
-					   if the order is { SHA384, SHA256 } the parameter value
-					   for the original SHA384 will remain set when SHA256 is
-					   subsequently read */
-					handshakeInfo->keyexSigHashAlgo = CRYPT_ALGO_SHA2;
-					if( hashAlgo == TLS_HASHALGO_SHA384 )
-						{
-						handshakeInfo->keyexSigHashAlgoParam = \
-													bitsToBytes( 384 );
-						}
-					}
-
-				/* For strict Suite B compliance the client must send either 
-				   SHA256 or SHA384 as an option */
-  #if 1	/* Strict _128/_256 match */
-				if( handshakeInfo->keyexSigHashAlgo == CRYPT_ERROR )
-					return( CRYPT_ERROR_BADDATA );
-  #endif /* Suite B parameter match type */
-
-				return( CRYPT_OK );
-#else
-				handshakeInfo->keyexSigHashAlgo = CRYPT_ALGO_SHA2;
-#endif /* CONFIG_SUITEB */
-				}
-			return( sSkip( stream, listLen ) );
+			return( CRYPT_OK );
 
 		default:
 			/* Default: Ignore the extension */
@@ -536,13 +705,7 @@ static int processExtension( INOUT SESSION_INFO *sessionInfoPtr,
 	retIntError();
 	}
 
-/* Read TLS extensions.  Further types are defined at
-   http://www.iana.org/assignments/tls-extensiontype-values:
-
-	uint16		extListLen			-- RFC 3546/RFC 4366
-		uint16	extType
-		uint16	extLen
-		byte[]	extData */
+/* Read TLS extensions */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readExtensions( INOUT SESSION_INFO *sessionInfoPtr, 
@@ -568,7 +731,12 @@ int readExtensions( INOUT SESSION_INFO *sessionInfoPtr,
 		sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS )
 		minPayloadLength = 0;
 
-	/* Read the extension header and make sure that it's valid */
+	/* Read the extension header and make sure that it's valid:
+
+		uint16		extListLen
+			uint16	extType
+			uint16	extLen
+			byte[]	extData */
 	if( length < UINT16_SIZE + UINT16_SIZE + UINT16_SIZE + minPayloadLength )
 		{
 		retExt( CRYPT_ERROR_BADDATA,
@@ -596,10 +764,13 @@ int readExtensions( INOUT SESSION_INFO *sessionInfoPtr,
 		 noExtensions++ )
 		{
 		const EXT_CHECK_INFO *extCheckInfoPtr = NULL;
+		BOOLEAN extErrorInfoSet;
 		int type, extLen, i;
 
 		/* Read the header for the next extension and get the extension-
-		   checking information */
+		   checking information.  The length check at this point is just a
+		   generic sanity check, more specific checking is done once we've 
+		   got the extension type-specific information */
 		type = readUint16( stream );
 		status = extLen = readUint16( stream );
 		if( cryptStatusError( status ) || \
@@ -651,9 +822,11 @@ int readExtensions( INOUT SESSION_INFO *sessionInfoPtr,
 
 		/* Process the extension data */
 		status = processExtension( sessionInfoPtr, handshakeInfo, stream, 
-								   type, extLen );
+								   type, extLen, &extErrorInfoSet );
 		if( cryptStatusError( status ) )
 			{
+			if( extErrorInfoSet )
+				return( status );
 			if( extCheckInfoPtr != NULL )
 				{
 				retExt( CRYPT_ERROR_BADDATA,
@@ -731,9 +904,7 @@ static int writeSigHashAlgoList( STREAM *stream )
 	BYTE algoList[ 32 + 8 ];
 	int algoIndex = 0, i;
 
-	/* Determine which signature and hash algorithms are available for use.
-	   Since RSA and SHA-1 are always available we short-circuit the
-	   availability check for them */
+	/* Determine which signature and hash algorithms are available for use */
 	for( i = 0; algoTbl[ i ].sigAlgo != CRYPT_ALGO_NONE && \
 				i < FAILSAFE_ARRAYSIZE( algoTbl, SIG_HASH_INFO ); i++ )
 		{
@@ -796,7 +967,7 @@ static int writeServerName( INOUT STREAM *stream,
 
 	/* Write the server name */
 	writeUint16( stream, 1 + UINT16_SIZE + urlInfo.hostLen );
-	sputc( stream, 0 );		/* DNS name */
+	sputc( stream, 0 );		/* Type = DNS name */
 	writeUint16( stream, urlInfo.hostLen );
 	return( swrite( stream, urlInfo.host, urlInfo.hostLen ) );
 	}
@@ -808,106 +979,87 @@ int writeClientExtensions( INOUT STREAM *stream,
 						   INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	STREAM nullStream;
-	static const BYTE eccCurveInfo[] = {
-		0, TLS_CURVE_SECP521R1, 0, TLS_CURVE_SECP384R1, 
-		0, TLS_CURVE_SECP256R1, 0, TLS_CURVE_SECP224R1, 
-		0, TLS_CURVE_SECP192R1, 0, 0 
-		};
-#ifdef CONFIG_SUITEB
-	static const BYTE eccCurveSuiteBInfo[] = {
-		0, TLS_CURVE_SECP384R1, 0, TLS_CURVE_SECP256R1, 0, 0 
-		};
-	static const BYTE eccCurveSuiteB128Info[] = {
-		0, TLS_CURVE_SECP256R1, 0, 0 
-		};
-	static const BYTE eccCurveSuiteB256Info[] = {
-		0, TLS_CURVE_SECP384R1, 0, 0 
-		};
-#endif /* CONFIG_SUITEB */
 	const void *eccCurveInfoPtr = DUMMY_INIT_PTR;
-	int offset = DUMMY_INIT, status;
-	int serverNameExtLen, sigHashHdrLen = 0, sigHashExtLen = 0;
-	int eccCurveTypeLen = DUMMY_INIT, eccInfoLen = 0;
+	int serverNameExtLen = DUMMY_INIT, sigHashHdrLen = 0, sigHashExtLen = 0;
+	int eccCurveTypeLen = DUMMY_INIT, eccInfoLen = 0, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	REQUIRES( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS );
 
-	/* Determine the overall length of the extension data.  We do this
-	   by writing each extension to a null stream and tracking the
-	   extData length around the extension data write:
-
-		uint16	extType
-		uint16	extLen
-		byte[]	extData */
+	/* Determine the overall length of the extension data, first the server 
+	   name indication (SNI) */
 	sMemNullOpen( &nullStream );
-
-	/* Sever name indication (SNI) */
-	writeUint16( &nullStream, TLS_EXT_SERVER_NAME );
-	status = writeUint16( &nullStream, 0 );		/* Dummy length */
+	status = writeServerName( &nullStream, sessionInfoPtr );
 	if( cryptStatusOK( status ) )
-		{
-		offset = stell( &nullStream );
-		status = writeServerName( &nullStream, sessionInfoPtr );
-		}
+		serverNameExtLen = stell( &nullStream );
+	sMemClose( &nullStream );
 	if( cryptStatusError( status ) )
-		{
-		sMemClose( &nullStream );
 		return( status );
-		}
-	serverNameExtLen = stell( &nullStream ) - offset;
 
 	/* Signature and hash algorithms.  These are only used with TLS 1.2+ so 
 	   we only write them if we're using these versions of the protocol */
 	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
 		{
-		writeUint16( &nullStream, TLS_EXT_SIGNATURE_ALGORITHMS );
-		status = writeUint16( &nullStream, 0 );		/* Dummy length */
+		sMemNullOpen( &nullStream );
+		status = writeSigHashAlgoList( &nullStream );
 		if( cryptStatusOK( status ) )
 			{
-			offset = stell( &nullStream );
-			status = writeSigHashAlgoList( &nullStream );
+			sigHashHdrLen = UINT16_SIZE + UINT16_SIZE;
+			sigHashExtLen = stell( &nullStream );
 			}
+		sMemClose( &nullStream );
 		if( cryptStatusError( status ) )
-			{
-			sMemClose( &nullStream );
 			return( status );
-			}
-		sigHashHdrLen = UINT16_SIZE + UINT16_SIZE;
-		sigHashExtLen = stell( &nullStream ) - offset;
 		}
-	sMemClose( &nullStream );
 
 	/* ECC information.  This is only sent if we're proposing ECC suites in
 	   the client hello */
 	if( algoAvailable( CRYPT_ALGO_ECDH ) && \
 		algoAvailable( CRYPT_ALGO_ECDSA ) )
 		{
+		static const BYTE eccCurveInfo[] = {
+			0, TLS_CURVE_SECP521R1, 0, TLS_CURVE_SECP384R1, 
+			0, TLS_CURVE_SECP256R1, 0, TLS_CURVE_SECP224R1, 
+			0, TLS_CURVE_SECP192R1, 0, 0 
+			};
+
 #ifdef CONFIG_SUITEB
 		if( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB )
 			{
+			static const BYTE eccCurveSuiteB128Info[] = {
+				0, TLS_CURVE_SECP256R1, 0, TLS_CURVE_SECP384R1, 0, 0 
+				};
+			static const BYTE eccCurveSuiteB256Info[] = {
+				0, TLS_CURVE_SECP384R1, 0, 0 
+				};
 			const int suiteBinfo = \
 					sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
 
 			if( suiteBinfo == SSL_PFLAG_SUITEB_128 )
 				{
 				eccCurveInfoPtr = eccCurveSuiteB128Info;
+				eccCurveTypeLen = 2 * UINT16_SIZE;
+				}
+			else				
+				{
+				eccCurveInfoPtr = eccCurveSuiteB256Info;
 				eccCurveTypeLen = UINT16_SIZE;
 				}
-			else
+  #ifdef CONFIG_SUITEB_TESTS 
+			/* In some cases for test purposes we have to send invalid ECC
+			   information */
+			if( suiteBTestValue == SUITEB_TEST_CLIINVALIDCURVE )
 				{
-				if( suiteBinfo == SSL_PFLAG_SUITEB_256 )
-					{
-					eccCurveInfoPtr = eccCurveSuiteB256Info;
-					eccCurveTypeLen = UINT16_SIZE;
-					}
-				else
-					{
-					eccCurveInfoPtr = eccCurveSuiteBInfo;
-					eccCurveTypeLen = 2 * UINT16_SIZE;
-					}
+				static const BYTE eccCurveSuiteBInvalidInfo[] = {
+					0, TLS_CURVE_SECP521R1, 0, 0, TLS_CURVE_SECP192R1, 0, 0 
+					};
+
+				eccCurveInfoPtr = eccCurveSuiteBInvalidInfo;
+				eccCurveTypeLen = 2 * UINT16_SIZE;
 				}
+  #endif /* CONFIG_SUITEB_TESTS  */
 			}
 		else
 #endif /* CONFIG_SUITEB */
@@ -922,31 +1074,44 @@ int writeClientExtensions( INOUT STREAM *stream,
 
 	/* Write the list of extensions */
 	writeUint16( stream, UINT16_SIZE + UINT16_SIZE + serverNameExtLen + \
-						 sigHashHdrLen + sigHashExtLen + eccInfoLen );
+						 RENEG_EXT_SIZE + sigHashHdrLen + sigHashExtLen + \
+						 eccInfoLen );
 	writeUint16( stream, TLS_EXT_SERVER_NAME );
 	writeUint16( stream, serverNameExtLen );
 	status = writeServerName( stream, sessionInfoPtr );
+	if( cryptStatusError( status ) )
+		return( status );
 	DEBUG_PRINT(( "Wrote extension server name indication (%d), length %d.\n",
 				  TLS_EXT_SERVER_NAME, serverNameExtLen ));
 	DEBUG_DUMP_STREAM( stream, stell( stream ) - serverNameExtLen, 
 					   serverNameExtLen );
-	if( cryptStatusOK( status ) && sigHashExtLen > 0 )
+	status = swrite( stream, RENEG_EXT_DATA, RENEG_EXT_SIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	DEBUG_PRINT(( "Wrote extension secure renegotiation (%d), length 1.\n",
+				  TLS_EXT_SECURE_RENEG ));
+	DEBUG_DUMP_STREAM( stream, stell( stream ) - 1, 1 );
+	if( sigHashExtLen > 0 )
 		{
 		writeUint16( stream, TLS_EXT_SIGNATURE_ALGORITHMS );
 		writeUint16( stream, sigHashExtLen );
 		status = writeSigHashAlgoList( stream );
+		if( cryptStatusError( status ) )
+			return( status );
 		DEBUG_PRINT(( "Wrote extension signature algorithm (%d), length %d.\n",
 					  TLS_EXT_SIGNATURE_ALGORITHMS, sigHashExtLen ));
 		DEBUG_DUMP_STREAM( stream, 
 						   stell( stream ) - sigHashExtLen, sigHashExtLen );
 		}
-	if( cryptStatusOK( status ) && eccInfoLen > 0 )
+	if( eccInfoLen > 0 )
 		{
 		/* Write the ECC curve type extension */
 		writeUint16( stream, TLS_EXT_ELLIPTIC_CURVES );
 		writeUint16( stream, UINT16_SIZE + eccCurveTypeLen );/* Ext.len */
-		writeUint16( stream, eccCurveTypeLen );				/* Curve list len.*/
-		swrite( stream, eccCurveInfoPtr, eccCurveTypeLen );	/* Curve list */
+		writeUint16( stream, eccCurveTypeLen );		/* Curve list len.*/
+		status = swrite( stream, eccCurveInfoPtr, eccCurveTypeLen );	
+		if( cryptStatusError( status ) )			/* Curve list */
+			return( status );
 		DEBUG_PRINT(( "Wrote extension ECC curve type (%d), length %d.\n",
 					  TLS_EXT_ELLIPTIC_CURVES, eccCurveTypeLen ));
 		DEBUG_DUMP_STREAM( stream, 
@@ -955,9 +1120,9 @@ int writeClientExtensions( INOUT STREAM *stream,
 
 		/* Write the ECC point format extension */
 		writeUint16( stream, TLS_EXT_EC_POINT_FORMATS );
-		writeUint16( stream, 1 + 1 );		/* Extn. length */
-		sputc( stream, 1 );					/* Point-format list len.*/
-		status = sputc( stream, 0 );		/* Uncompressed points */
+		writeUint16( stream, 1 + 1 );			/* Extn. length */
+		sputc( stream, 1 );						/* Point-format list len.*/
+		status = sputc( stream, 0 );			/* Uncompressed points */
 		if( cryptStatusError( status ) )
 			return( status );
 		DEBUG_PRINT(( "Wrote extension ECC point format (%d), length %d.\n",
@@ -982,6 +1147,8 @@ int writeServerExtensions( INOUT STREAM *stream,
 		extListLen += UINT16_SIZE + UINT16_SIZE + 1 + 1;
 	if( handshakeInfo->needSNIResponse )
 		extListLen += UINT16_SIZE + UINT16_SIZE;
+	if( handshakeInfo->needRenegResponse )
+		extListLen += RENEG_EXT_SIZE;
 	if( extListLen <= 0 )
 		{
 		/* No extensions to write, we're done */
@@ -990,24 +1157,6 @@ int writeServerExtensions( INOUT STREAM *stream,
 
 	/* Write the overall extension list length */
 	writeUint16( stream, extListLen );
-
-	/* If the client sent ECC extensions and we've negotiated an ECC cipher 
-	   suite, send back the appropriate response.  We don't have to send 
-	   back the curve ID that we've chosen because this is communicated 
-	   explicitly in the server keyex */
-	if( isEccAlgo( handshakeInfo->keyexAlgo ) && \
-		handshakeInfo->sendECCPointExtn )
-		{
-		writeUint16( stream, TLS_EXT_EC_POINT_FORMATS );
-		writeUint16( stream, 1 + 1 );	/* Extn. length */
-		sputc( stream, 1 );				/* Point-format list len.*/
-		status = sputc( stream, 0 );	/* Uncompressed points */
-		if( cryptStatusError( status ) )
-			return( status );
-		DEBUG_PRINT(( "Wrote extension ECC point format (%d), length %d.\n",
-					  TLS_EXT_EC_POINT_FORMATS, 1 + 1 ));
-		DEBUG_DUMP_STREAM( stream, stell( stream ) - 1 + 1, 1 + 1 );
-		}
 
 	/* If the client sent an SNI extension then we have to acknowledge it
 	   with a zero-length SNI extension response.  This is slightly 
@@ -1028,6 +1177,37 @@ int writeServerExtensions( INOUT STREAM *stream,
 			return( status );
 		DEBUG_PRINT(( "Wrote extension extension server name indication (%d), "
 					  "length 0.\n", TLS_EXT_SERVER_NAME, 0 ));
+		}
+
+	/* If the client sent a secure-renegotiation indicator we have to send a
+	   response even though we don't support renegotiation.  See the comment 
+	   by extCheckInfoTbl for why this odd behaviour is necessary */
+	if( handshakeInfo->needRenegResponse )
+		{
+		status = swrite( stream, RENEG_EXT_DATA, RENEG_EXT_SIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		DEBUG_PRINT(( "Wrote extension secure renegotiation (%d), length 1.\n",
+					  TLS_EXT_SECURE_RENEG ));
+		DEBUG_DUMP_STREAM( stream, stell( stream ) - 1, 1 );
+		}
+
+	/* If the client sent ECC extensions and we've negotiated an ECC cipher 
+	   suite, send back the appropriate response.  We don't have to send 
+	   back the curve ID that we've chosen because this is communicated 
+	   explicitly in the server keyex */
+	if( isEccAlgo( handshakeInfo->keyexAlgo ) && \
+		handshakeInfo->sendECCPointExtn )
+		{
+		writeUint16( stream, TLS_EXT_EC_POINT_FORMATS );
+		writeUint16( stream, 1 + 1 );	/* Extn. length */
+		sputc( stream, 1 );				/* Point-format list len.*/
+		status = sputc( stream, 0 );	/* Uncompressed points */
+		if( cryptStatusError( status ) )
+			return( status );
+		DEBUG_PRINT(( "Wrote extension ECC point format (%d), length %d.\n",
+					  TLS_EXT_EC_POINT_FORMATS, 1 + 1 ));
+		DEBUG_DUMP_STREAM( stream, stell( stream ) - 1 + 1, 1 + 1 );
 		}
 
 	return( CRYPT_OK );

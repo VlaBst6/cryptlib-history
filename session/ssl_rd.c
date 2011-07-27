@@ -25,8 +25,8 @@
 *																			*
 ****************************************************************************/
 
-#if 0	/* 28/01/08 Disabled since it's now finally removed in MSIE and 
-		   Firefox */
+#ifdef ALLOW_SSLV2_HELLO	/* 28/01/08 Disabled since it's now finally 
+							   removed in MSIE and Firefox */
 
 /* Handle a legacy SSLv2 client hello:
 
@@ -65,7 +65,7 @@ static int handleSSLv2Header( SESSION_INFO *sessionInfoPtr,
 	   version is regarded as part of the payload that needs to be 
 	   hashed, rather than the header as for SSLv3 */
 	sMemConnect( &stream, bufPtr, ID_SIZE + VERSIONINFO_SIZE );
-	status = dualMacDataRead( handshakeInfo, &stream );
+	status = hashHSPacketRead( handshakeInfo, &stream );
 	ENSURES( cryptStatusOK( status ) );
 	value = sgetc( &stream );
 	if( value != SSL_HAND_CLIENT_HELLO )
@@ -107,7 +107,7 @@ static int handleSSLv2Header( SESSION_INFO *sessionInfoPtr,
 	sessionInfoPtr->receiveBufPos = 0;
 	sessionInfoPtr->receiveBufEnd = length;
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
-	status = dualMacDataRead( handshakeInfo, &stream );
+	status = hashHSPacketRead( handshakeInfo, &stream );
 	sMemDisconnect( &stream );
 	ENSURES( cryptStatusOK( status ) );
 
@@ -118,7 +118,7 @@ static int handleSSLv2Header( SESSION_INFO *sessionInfoPtr,
 
 	return( length );
 	}
-#endif /* 0 */
+#endif /* ALLOW_SSLV2_HELLO */
 
 /****************************************************************************
 *																			*
@@ -756,8 +756,8 @@ int readHSPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	if( packetType == SSL_MSG_FIRST_HANDSHAKE && \
 		headerBuffer[ 0 ] == SSL_MSG_V2HANDSHAKE )
 		{
-#if 0	/* 28/01/08 Disabled since it's now finally been removed from MSIE 
-		   and Firefox */
+#ifdef ALLOW_SSLV2_HELLO	/* 28/01/08 Disabled since it's now finally been 
+							   removed from MSIE and Firefox */
 		/* It's an SSLv2 handshake, handle it specially */
 		status = length = handleSSLv2Header( sessionInfoPtr, handshakeInfo, 
 											 headerBuffer );
@@ -770,7 +770,7 @@ int readHSPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 				( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
 				  "Client sent obsolete handshake for the insecure SSLv2 "
 				  "protocol" ) );
-#endif /* 0 */
+#endif /* ALLOW_SSLV2_HELLO */
 		}
 	sMemConnect( &stream, headerBuffer, sessionInfoPtr->receiveBufStartOfs );
 	status = checkPacketHeader( sessionInfoPtr, &stream, &bytesToRead, 
@@ -884,7 +884,7 @@ const static ALERT_INFO alertInfo[] = {
 	{ SSL_ALERT_CERTIFICATE_REVOKED, "Certificate revoked", 19, CRYPT_ERROR_INVALID },
 	{ SSL_ALERT_CERTIFICATE_EXPIRED, "Certificate expired", 19, CRYPT_ERROR_INVALID },
 	{ SSL_ALERT_CERTIFICATE_UNKNOWN, "Certificate unknown", 19, CRYPT_ERROR_INVALID },
-	{ SSL_ALERT_ILLEGAL_PARAMETER, "Illegal parameter", 17, CRYPT_ERROR_FAILED },
+	{ TLS_ALERT_ILLEGAL_PARAMETER, "Illegal parameter", 17, CRYPT_ERROR_FAILED },
 	{ TLS_ALERT_UNKNOWN_CA, "Unknown CA", 10, CRYPT_ERROR_INVALID },
 	{ TLS_ALERT_ACCESS_DENIED, "Access denied", 13, CRYPT_ERROR_PERMISSION },
 	{ TLS_ALERT_DECODE_ERROR, "Decode error", 12, CRYPT_ERROR_FAILED },

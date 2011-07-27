@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Key Load Routines						*
-*						Copyright Peter Gutmann 1992-2008					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -162,94 +162,6 @@ int initGenericParams( INOUT CONTEXT_INFO *contextInfoPtr,
 			}
 
 	retIntError();
-	}
-
-/* Trim a user-supplied key down to an appropriate size */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int adjustUserKeySize( const CONTEXT_INFO *contextInfoPtr, 
-					   IN_RANGE( MIN_KEYSIZE, \
-								 CRYPT_MAX_PKCSIZE ) const int requestedKeySize, 
-					   OUT_LENGTH_PKC_Z int *keyLength )
-	{
-	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-
-	assert( isReadPtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( isWritePtr( keyLength, sizeof( int ) ) );
-
-	REQUIRES( requestedKeySize >= MIN_KEYSIZE && \
-			  requestedKeySize <= CRYPT_MAX_PKCSIZE );
-
-	/* Clear return value */
-	*keyLength = 0;
-
-	/* Trim the key to the appropriate size */
-	if( requestedKeySize < capabilityInfoPtr->minKeySize || \
-		requestedKeySize > capabilityInfoPtr->maxKeySize )
-		return( CRYPT_ARGERROR_NUM1 );
-
-	/* If it's a PKC key we're done */
-	if( contextInfoPtr->type == CONTEXT_PKC )
-		{
-		*keyLength = requestedKeySize;
-
-		return( CRYPT_OK );
-		}
-
-	/* For conventional/MAC keys we need to limit the maximum working key 
-	   length to a sane size since the other side may not be able to handle
-	   stupidly large keys */
-	*keyLength = min( requestedKeySize, MAX_WORKING_KEYSIZE );
-
-	return( CRYPT_OK );
-	}
-
-/* Determine the optimal size for a generated key.  This isn't as easy as
-   just taking the default key size since some algorithms have variable key
-   sizes (RCx) or alternative key sizes where the default isn't necessarily
-   the best choice (two-key vs.three-key 3DES - In virtute sunt multi 
-   ascensus) */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int getDefaultKeysize( const CONTEXT_INFO *contextInfoPtr, 
-							  OUT_LENGTH_PKC_Z int *keyLength )
-	{
-	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	int localKeyLength;
-
-	assert( isReadPtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( isWritePtr( keyLength, sizeof( int ) ) );
-
-	/* Clear return value */
-	*keyLength = 0;
-
-	/* For PKC contexts and generic-secret objects where we're generating a 
-	   new key we want to use the recommended (rather than the longest 
-	   possible) key size whereas for conventional contexts and MAC objects 
-	   we want to use the longest possible size (this will be adjusted 
-	   further down if necessary for those algorithms where it's excessively 
-	   long) */
-	if( contextInfoPtr->type == CONTEXT_PKC || \
-		contextInfoPtr->type == CONTEXT_GENERIC )
-		localKeyLength = capabilityInfoPtr->keySize;
-	else
-		localKeyLength = capabilityInfoPtr->maxKeySize;
-
-#if defined( USE_RC2 ) || defined( USE_RC4 )
-	/* Although RC2 will handle keys of up to 1024 bits and RC4 up to 2048 
-	   bits they're never used with this maximum size but (at least in non-
-	   crippled implementations) always fixed at 128 bits, so we limit them 
-	   to the default rather than maximum possible size */
-	if( capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RC2 || \
-		capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RC4 )
-		localKeyLength = capabilityInfoPtr->keySize;
-#endif /* USE_RC2 || USE_RC4 */
-
-	ENSURES( localKeyLength >= MIN_KEYSIZE && \
-			 localKeyLength <= CRYPT_MAX_PKCSIZE );
-
-	/* Trim the key size to fit */
-	return( adjustUserKeySize( contextInfoPtr, localKeyLength, keyLength ) );
 	}
 
 /* Check that user-supplied supplied PKC parameters make sense (algorithm-
@@ -789,15 +701,12 @@ static int generateKeyConvFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 	int keyLength = contextInfoPtr->ctxConv->userKeyLength, status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( contextInfoPtr->type == CONTEXT_CONV );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_CONV );
 
 	/* If there's no key size specified, use the default length */
 	if( keyLength <= 0 )
-		{
-		status = getDefaultKeysize( contextInfoPtr, &keyLength );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
+		keyLength = capabilityInfoPtr->keySize;
 
 	/* If the context is implemented in a crypto device it may have the
 	   capability to generate the key itself so if there's a keygen function
@@ -831,18 +740,15 @@ static int generateKeyPKCFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 	int status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( contextInfoPtr->type == CONTEXT_PKC );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_PKC );
 
 	/* Set up supplementary key information */
 	contextInfoPtr->ctxPKC->pgpCreationTime = getApproxTime();
 
 	/* If there's no key size specified, use the default length */
 	if( keyLength <= 0 )
-		{
-		status = getDefaultKeysize( contextInfoPtr, &keyLength );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
+		keyLength = capabilityInfoPtr->keySize;
 
 	/* Generate the key into the context */
 	status = capabilityInfoPtr->generateKeyFunction( contextInfoPtr,
@@ -867,11 +773,7 @@ static int generateKeyMacFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 
 	/* If there's no key size specified, use the default length */
 	if( keyLength <= 0 )
-		{
-		status = getDefaultKeysize( contextInfoPtr, &keyLength );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
+		keyLength = capabilityInfoPtr->keySize;
 
 	/* If the context is implemented in a crypto device it may have the
 	   capability to generate the key itself so if there's a keygen function
@@ -910,11 +812,7 @@ static int generateKeyGenericFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 
 	/* If there's no key size specified, use the default length */
 	if( keyLength <= 0 )
-		{
-		status = getDefaultKeysize( contextInfoPtr, &keyLength );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
+		keyLength = capabilityInfoPtr->keySize;
 
 	/* If the context is implemented in a crypto device it may have the
 	   capability to generate the key itself so if there's a keygen function
@@ -953,9 +851,6 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 			   IN_BUFFER( keyValueLen ) const void *keyValue, 
 			   IN_LENGTH_SHORT const int keyValueLen )
 	{
-	CRYPT_ALGO_TYPE hmacAlgo = ( contextInfoPtr->type == CONTEXT_CONV ) ? \
-							   contextInfoPtr->ctxConv->keySetupAlgorithm : \
-							   contextInfoPtr->ctxMAC->keySetupAlgorithm;
 	MECHANISM_DERIVE_INFO mechanismInfo;
 	static const MAP_TABLE mapTbl[] = {
 		{ CRYPT_ALGO_MD5, CRYPT_ALGO_HMAC_MD5 },
@@ -964,6 +859,9 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 		{ CRYPT_ALGO_SHA2, CRYPT_ALGO_HMAC_SHA2 },
 		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
 		};
+	int hmacAlgo = ( contextInfoPtr->type == CONTEXT_CONV ) ? \
+					 contextInfoPtr->ctxConv->keySetupAlgorithm : \
+					 contextInfoPtr->ctxMAC->keySetupAlgorithm;
 	int value = DUMMY_INIT, status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
@@ -998,13 +896,9 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 		CONV_INFO *convInfo = contextInfoPtr->ctxConv;
 		int keySize = convInfo->userKeyLength;
 
-		if( keySize <= 0 )
-			{
-			/* There's no key size specified, use the default length */
-			status = getDefaultKeysize( contextInfoPtr, &keySize );
-			if( cryptStatusError( status ) )
-				return( status );
-			}
+		keySize = ( convInfo->userKeyLength > 0 ) ? \
+				  convInfo->userKeyLength : \
+				  contextInfoPtr->capabilityInfo->keySize;
 		if( convInfo->saltLength <= 0 )
 			{
 			MESSAGE_DATA nonceMsgData;
@@ -1037,15 +931,11 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 	else
 		{
 		MAC_INFO *macInfo = contextInfoPtr->ctxMAC;
-		int keySize = macInfo->userKeyLength;
+		int keySize;
 
-		if( keySize <= 0 )
-			{
-			/* There's no key size specified, use the default length */
-			status = getDefaultKeysize( contextInfoPtr, &keySize );
-			if( cryptStatusError( status ) )
-				return( status );
-			}
+		keySize = ( macInfo->userKeyLength > 0 ) ? \
+				  macInfo->userKeyLength : \
+				  contextInfoPtr->capabilityInfo->keySize;
 		if( macInfo->saltLength <= 0 )
 			{
 			MESSAGE_DATA nonceMsgData;

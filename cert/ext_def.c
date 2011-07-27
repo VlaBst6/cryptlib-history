@@ -219,13 +219,13 @@ static const ATTRIBUTE_INFO FAR_BSS extensionInfo[] = {
 	/* challengePassword:
 
 		OID = 1 2 840 113549 1 9 7
-		PrintableString.
+		DirectoryString.
 
 	   This is here even though it's a CMS attribute because SCEP stuffs it 
 	   into PKCS #10 requests */
 	{ MKOID( "\x06\x09\x2A\x86\x48\x86\xF7\x0D\x01\x09\x07" ), CRYPT_CERTINFO_CHALLENGEPASSWORD,
 	  DESCRIPTION( "challengePassword" )
-	  ENCODING( STRING_PRINTABLE ),
+	  ENCODING_SPECIAL( TEXTSTRING ),
 	  ATTR_TYPEINFO( CERTREQ, STANDARD ) | FL_ATTR_ATTREND | FL_ATTR_NOCOPY, 
 	  0, RANGE_TEXTSTRING },
 #endif /* USE_CERTREQ */
@@ -3840,6 +3840,36 @@ BOOLEAN checkExtensionTables( void )
 *						Extended Validity Checking Functions				*
 *																			*
 ****************************************************************************/
+
+/* Valid list of TLDs for checking FQDNs, from 
+   http://data.iana.org/TLD/tlds-alpha-by-domain.txt */
+
+static const char *tldNames[] = { 
+	"ac", "ad", "ae", "aero", "af", "ag", "ai", "al", "am", "an", "ao", 
+	"aq", "ar", "arpa", "as", "asia", "at", "au", "aw", "ax", "az", "ba", 
+	"bb", "bd", "be", "bf", "bg", "bh", "bi", "biz", "bj", "bm", "bn", "bo", 
+	"br", "bs", "bt", "bv", "bw", "by", "bz", "ca", "cat", "cc", "cd", "cf", 
+	"cg", "ch", "ci", "ck", "cl", "cm", "cn", "co", "com", "coop", "cr", 
+	"cu", "cv", "cx", "cy", "cz", "de", "dj", "dk", "dm", "do", "dz", "ec", 
+	"edu", "ee", "eg", "er", "es", "et", "eu", "fi", "fj", "fk", "fm", "fo", 
+	"fr", "ga", "gb", "gd", "ge", "gf", "gg", "gh", "gi", "gl", "gm", "gn", 
+	"gov", "gp", "gq", "gr", "gs", "gt", "gu", "gw", "gy", "hk", "hm", "hn", 
+	"hr", "ht", "hu", "id", "ie", "il", "im", "in", "info", "int", "io", 
+	"iq", "ir", "is", "it", "je", "jm", "jo", "jobs", "jp", "ke", "kg", 
+	"kh", "ki", "km", "kn", "kp", "kr", "kw", "ky", "kz", "la", "lb", "lc", 
+	"li", "lk", "lr", "ls", "lt", "lu", "lv", "ly", "ma", "mc", "md", "me", 
+	"mg", "mh", "mil", "mk", "ml", "mm", "mn", "mo", "mobi", "mp", "mq", 
+	"mr", "ms", "mt", "mu", "museum", "mv", "mw", "mx", "my", "mz", "na", 
+	"name", "nc", "ne", "net", "nf", "ng", "ni", "nl", "no", "np", "nr", 
+	"nu", "nz", "om", "org", "pa", "pe", "pf", "pg", "ph", "pk", "pl", "pm", 
+	"pn", "pr", "pro", "ps", "pt", "pw", "py", "qa", "re", "ro", "rs", "ru", 
+	"rw", "sa", "sb", "sc", "sd", "se", "sg", "sh", "si", "sj", "sk", "sl", 
+	"sm", "sn", "so", "sr", "st", "su", "sv", "sy", "sz", "tc", "td", "tel", 
+	"tf", "tg", "th", "tj", "tk", "tl", "tm", "tn", "to", "tp", "tr", 
+	"travel", "tt", "tv", "tw", "tz", "ua", "ug", "uk", "us", "uy", "uz", 
+	"va", "vc", "ve", "vg", "vi", "vn", "vu", "wf", "ws", "xxx", "ye", "yt", 
+	"za", "zm", "zw", NULL, NULL 
+	};
 
 /* Determine whether a variety of URIs are valid and return a 
    CRYPT_ERRTYPE_TYPE describing the type of error if there's a problem.  

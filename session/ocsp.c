@@ -84,10 +84,10 @@ static void sendErrorResponse( INOUT SESSION_INFO *sessionInfoPtr,
 
 /* Compare the nonce in a request with the returned nonce in the response */
 
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 2 ) ) \
-static BOOLEAN checkNonce( IN_HANDLE const CRYPT_CERTIFICATE iCertResponse,
-						   IN_BUFFER( requestNonceLength ) const void *requestNonce, 
-						   IN_LENGTH_SHORT const int requestNonceLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+static int checkNonce( IN_HANDLE const CRYPT_CERTIFICATE iCertResponse,
+					   IN_BUFFER( requestNonceLength ) const void *requestNonce, 
+					   IN_LENGTH_SHORT const int requestNonceLength )
 	{
 	MESSAGE_DATA responseMsgData;
 	BYTE responseNonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
@@ -100,7 +100,7 @@ static BOOLEAN checkNonce( IN_HANDLE const CRYPT_CERTIFICATE iCertResponse,
 
 	/* Make sure that the nonce has a plausible length */
 	if( requestNonceLength < 4 || requestNonceLength > CRYPT_MAX_HASHSIZE )
-		return( FALSE );
+		return( CRYPT_ERROR_BADDATA );
 
 	/* Try and read the nonce from the response */
 	setMessageData( &responseMsgData, responseNonceBuffer,
@@ -108,29 +108,21 @@ static BOOLEAN checkNonce( IN_HANDLE const CRYPT_CERTIFICATE iCertResponse,
 	if( cryptStatusError( \
 			krnlSendMessage( iCertResponse, IMESSAGE_GETATTRIBUTE_S,
 							 &responseMsgData, CRYPT_CERTINFO_OCSP_NONCE ) ) )
-		return( FALSE );
+		return( CRYPT_ERROR_NOTFOUND );
 
-	/* Make sure that the two nonces match.  The comparison is somewhat 
-	   complex because OCSP never specifies how the nonce is meant to be
-	   encoded so it's possible that some implementations will use things
-	   like TSP's bizarre INTEGER rather than the obvious and logical OCTET 
-	   STRING.  In theory we could check for the INTEGER-encoding 
-	   alternative, but this doesn't seem to be required any more since 
-	   everyone use a de facto encoding of OCTET STRING */
+	/* Make sure that the two nonces match.  The comparison is in theory 
+	   somewhat complex because OCSP never specifies how the nonce is meant 
+	   to be encoded so it's possible that some implementations will use 
+	   things like TSP's bizarre INTEGER rather than the obvious and logical 
+	   OCTET STRING.  In theory this means we might need to check for the 
+	   INTEGER-encoding alternatives that arise due to sign bits, but this 
+	   doesn't seem to be required in practice since everyone use a de facto 
+	   encoding of OCTET STRING */
 	if( requestNonceLength == responseMsgData.length && \
 		!memcmp( requestNonce, responseMsgData.data, requestNonceLength ) )
 		return( TRUE );
-#if 0	/* 24/9/08 Doesn't seem to be required any more */
-	if( requestNonceLength == responseMsgData.length - 1 && \
-		responseNonceBuffer[ 0 ] == 0 && \
-		!memcmp( requestNonce, responseNonceBuffer + 1, requestNonceLength ) )
-		{
-		/* INTEGER-encoding nonce comparison */
-		return( TRUE );
-		}
-#endif /* 0 */
 
-	return( FALSE );
+	return( CRYPT_ERROR_SIGNATURE );
 	}
 
 /****************************************************************************
@@ -287,25 +279,30 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	status = krnlSendMessage( sessionInfoPtr->iCertRequest,
 							  IMESSAGE_GETATTRIBUTE_S, &msgData,
 							  CRYPT_CERTINFO_OCSP_NONCE );
-	if( cryptStatusOK( status ) && \
-		!checkNonce( iCertResponse, msgData.data, msgData.length ) )
+	if( cryptStatusOK( status ) )
 		{
-		/* The response doesn't contain a nonce or it doesn't match what we 
-		   sent, we can't trust it.  The best error that we can return here 
-		   is a signature error to indicate that the integrity check 
-		   failed (note that a later modification to OCSP, in an attempt to
-		   make it scale, removed the nonce, thus breaking the security of
-		   the protocol against replay attack.  Since the protocol is now
-		   broken against attack we treat a nonce-less response from one of
-		   these responders as a failure, since it's indistinguishable from
-		   an actual attack */
-		krnlSendNotifier( iCertResponse, IMESSAGE_DECREFCOUNT );
-		retExt( CRYPT_ERROR_SIGNATURE,
-				( CRYPT_ERROR_SIGNATURE, SESSION_ERRINFO, 
-				  cryptStatusError( status ) ? \
-				  "OCSP response doesn't contain a nonce" : \
-				  "OCSP response nonce doesn't match the one in the "
-				  "request" ) );
+		/* There's a nonce in the request, check that it matches the one in
+		   the response */
+		status = checkNonce( iCertResponse, msgData.data, msgData.length );
+		if( cryptStatusError( status ) )
+			{
+			/* The response doesn't contain a nonce or it doesn't match what 
+			   we sent, we can't trust it.  The best error that we can return 
+			   here is a signature error to indicate that the integrity 
+			   check failed (note that a later modification to OCSP, in an 
+			   attempt to make it scale, removed the nonce, thus breaking 
+			   the security of the protocol against replay attack.  Since 
+			   the protocol is now broken against attack we treat a nonce-
+			   less response from one of these responders as a failure, 
+			   since it's indistinguishable from an actual attack */
+			krnlSendNotifier( iCertResponse, IMESSAGE_DECREFCOUNT );
+			retExt( CRYPT_ERROR_SIGNATURE,
+					( CRYPT_ERROR_SIGNATURE, SESSION_ERRINFO, 
+					  ( status == CRYPT_ERROR_NOTFOUND ) ? \
+					  "OCSP response doesn't contain a nonce" : \
+					  "OCSP response nonce doesn't match the one in the "
+					  "request" ) );
+			}
 		}
 	krnlSendNotifier( sessionInfoPtr->iCertRequest, IMESSAGE_DECREFCOUNT );
 	sessionInfoPtr->iCertRequest = CRYPT_ERROR;

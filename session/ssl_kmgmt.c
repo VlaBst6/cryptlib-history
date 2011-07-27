@@ -245,17 +245,17 @@ static int initSecurityContextsSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	   the default CBC */
 	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM ) 
 		{
-		static const int cryptMode = CRYPT_MODE_GCM;
+		static const int mode = CRYPT_MODE_GCM;	/* int vs.enum */
 
 		status = krnlSendMessage( sessionInfoPtr->iCryptInContext,
 								  IMESSAGE_SETATTRIBUTE, 
-								  ( MESSAGE_CAST ) &cryptMode,
+								  ( MESSAGE_CAST ) &mode,
 								  CRYPT_CTXINFO_MODE );
 		if( cryptStatusOK( status ) )
 			{
 			status = krnlSendMessage( sessionInfoPtr->iCryptOutContext,
 									  IMESSAGE_SETATTRIBUTE, 
-									  ( MESSAGE_CAST ) &cryptMode,
+									  ( MESSAGE_CAST ) &mode,
 									  CRYPT_CTXINFO_MODE );
 			}
 		if( cryptStatusError( status ) )
@@ -313,9 +313,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int cloneHashContext( IN_HANDLE const CRYPT_CONTEXT hashContext,
 					  OUT_HANDLE_OPT CRYPT_CONTEXT *clonedHashContext )
 	{
-	CRYPT_ALGO_TYPE hashAlgo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	int status;
+	int hashAlgo, status;	/* int vs.enum */
 
 	assert( isWritePtr( clonedHashContext, sizeof( CRYPT_CONTEXT * ) ) );
 
@@ -946,6 +945,59 @@ static int masterToKeys( const SESSION_INFO *sessionInfoPtr,
 *																			*
 ****************************************************************************/
 
+/* Update the session cache with information on the current session */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int updateSessionCache( INOUT SESSION_INFO *sessionInfoPtr,
+							   INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+							   IN_BUFFER( masterSecretSize ) void *masterSecret,
+							   IN_LENGTH_SHORT const int masterSecretSize,
+							   const BOOLEAN isClient )
+	{
+	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
+	int cachedID, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+	assert( isWritePtr( masterSecret, masterSecretSize ) );
+
+	REQUIRES( masterSecretSize > 0 && \
+			  masterSecretSize < MAX_INTLENGTH_SHORT );
+
+	/* If we're the client then we have to add additional information to the
+	   cache, in this case the server's name/address so that we can look up
+	   the information if we try to reconnect later */
+	if( isClient )
+		{
+		const ATTRIBUTE_LIST *attributeListPtr;
+
+		attributeListPtr = findSessionInfo( sessionInfoPtr->attributeList,
+											CRYPT_SESSINFO_SERVER_NAME );
+		ENSURES( attributeListPtr != NULL );
+		status = cachedID = \
+				addScoreboardEntryEx( sslInfo->scoreboardInfoPtr,
+									  handshakeInfo->sessionID,
+									  handshakeInfo->sessionIDlength,
+									  attributeListPtr->value,
+									  attributeListPtr->valueLength,
+									  masterSecret, masterSecretSize );
+		if( !cryptStatusError( status ) )
+			sslInfo->sessionCacheID = cachedID;
+		return( status );
+		}
+
+	/* We're the server, add the client's state information indexed by the 
+	   sessionID */
+	status = cachedID = \
+				addScoreboardEntry( sslInfo->scoreboardInfoPtr,
+									handshakeInfo->sessionID,
+									handshakeInfo->sessionIDlength,
+									masterSecret, masterSecretSize );
+	if( !cryptStatusError( status ) )
+		sslInfo->sessionCacheID = cachedID;
+	return( status );
+	}
+
 /* Load the SSL/TLS cryptovariables */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
@@ -1107,23 +1159,18 @@ int initCryptoSSL( INOUT SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/* Everything is OK so far, if we're the server (which caches 
-		   sessions) add the master secret to the session cache */
-		if( !isClient )
+		/* Everything is OK so far, add the master secret to the session 
+		   cache */
+		if( handshakeInfo->sessionIDlength > 0 )
 			{
-			int cachedID;
-
-			status = cachedID = \
-				addScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
-									handshakeInfo->sessionID,
-									handshakeInfo->sessionIDlength,
-									masterSecret, masterSecretSize );
+			status = updateSessionCache( sessionInfoPtr, handshakeInfo, 
+										 masterSecret, masterSecretSize,
+										 isClient );
 			if( cryptStatusError( status ) )
 				{
 				zeroise( masterSecret, masterSecretSize );
 				return( status );
 				}
-			sessionInfoPtr->sessionSSL->sessionCacheID = cachedID;
 			}
 		}
 	else

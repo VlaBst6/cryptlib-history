@@ -38,6 +38,7 @@ typedef enum {
 typedef enum {
 	CAPABILITY_INFO_NONE,			/* No info */
 	CAPABILITY_INFO_STATESIZE,		/* Size of algorithm state info */
+	CAPABILITY_INFO_STATEALIGNTYPE,	/* Alignment requirements for state info */
 	CAPABILITY_INFO_ICV,			/* ICV for authenticated-encr.modes */
 	CAPABILITY_INFO_LAST			/* Last possible capability info type */
 	} CAPABILITY_INFO_TYPE;
@@ -273,16 +274,12 @@ typedef const CAPABILITY_INFO * ( *GETCAPABILITY_FUNCTION )( void );
 const CAPABILITY_INFO *get3DESCapability( void );
 const CAPABILITY_INFO *getAESCapability( void );
 const CAPABILITY_INFO *getBlowfishCapability( void );
-const CAPABILITY_INFO *getCASTCapability( void );
 const CAPABILITY_INFO *getDESCapability( void );
 const CAPABILITY_INFO *getIDEACapability( void );
 const CAPABILITY_INFO *getRC2Capability( void );
 const CAPABILITY_INFO *getRC4Capability( void );
 const CAPABILITY_INFO *getRC5Capability( void );
-const CAPABILITY_INFO *getSkipjackCapability( void );
 
-const CAPABILITY_INFO *getMD2Capability( void );
-const CAPABILITY_INFO *getMD4Capability( void );
 const CAPABILITY_INFO *getMD5Capability( void );
 const CAPABILITY_INFO *getRipemd160Capability( void );
 const CAPABILITY_INFO *getSHA1Capability( void );

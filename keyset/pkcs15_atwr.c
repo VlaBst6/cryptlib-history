@@ -235,13 +235,13 @@ static int getKeyUsageFlags( IN_HANDLE const CRYPT_HANDLE iCryptContext,
 							  &msgData, CRYPT_IATTRIBUTE_DEVICESTORAGEID );
 	if( cryptStatusOK( status ) )
 		{
-		int cryptAlgo;
+		int pkcAlgo;
 		
 		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-								  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+								  &pkcAlgo, CRYPT_CTXINFO_ALGO );
 		if( cryptStatusError( status ) )
 			return( status );
-		switch( cryptAlgo )
+		switch( pkcAlgo )
 			{
 			case CRYPT_ALGO_DH:
 				return( PKCS15_USAGE_DERIVE );

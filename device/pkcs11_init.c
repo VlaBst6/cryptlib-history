@@ -196,7 +196,7 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 #else
 	CK_C_GetFunctionList pC_GetFunctionList;
 #endif /* USE_EXPLICIT_LINKING */
-	CK_INFO info;
+	CK_INFO info = DUMMY_INIT_STRUCT;
 	CK_RV status;
 #ifdef __WIN16__
 	UINT errorMode;
@@ -205,7 +205,7 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 	int i = 32;
 
 	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_DRIVER_INFO ) ) );
-	assert( driverName != NULL );
+	assert( isReadPtr( driverName, 4 ) );
 
 	/* Obtain a handle to the device driver module */
 #ifdef __WIN16__
@@ -355,7 +355,7 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 		/* The following two-step initialisation is needed because PKCS #11 
 		   uses a 1-byte alignment on structs, which means that if we pass
 		   in the pkcs11Info member address directly we run into alignment
-		   problems in 64-bit architectures */
+		   problems with 64-bit architectures */
 		status = pC_GetFunctionList( &functionListPtr ) & 0xFFFF;
 		if( status == CKR_OK )
 			pkcs11Info->functionListPtr = functionListPtr;
@@ -535,10 +535,9 @@ void deviceEndPKCS11( void )
 #define keysizeValid( algo ) \
 	( ( algo ) == CRYPT_ALGO_DH || ( algo ) == CRYPT_ALGO_RSA || \
 	  ( algo ) == CRYPT_ALGO_DSA || ( algo ) == CRYPT_ALGO_RC2 || \
-	  ( algo ) == CRYPT_ALGO_RC4 || ( algo ) == CRYPT_ALGO_RC5 || \
-	  ( algo ) == CRYPT_ALGO_CAST )
+	  ( algo ) == CRYPT_ALGO_RC4 || ( algo ) == CRYPT_ALGO_RC5 )
 #define keysizeInBytes( algo ) \
-	( ( algo ) == CRYPT_ALGO_RC5 || ( algo ) == CRYPT_ALGO_CAST )
+	( ( algo ) == CRYPT_ALGO_RC5 )
 
 /* Templates for the various capabilities.  These contain only basic 
    information, the remaining fields are filled in when the capability is 
@@ -550,14 +549,6 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 		MIN_KEYSIZE, bitsToBytes( 64 ), bitsToBytes( 64 ) },
 	{ CRYPT_ALGO_3DES, bitsToBytes( 64 ), "3DES", 4,
 		bitsToBytes( 64 + 8 ), bitsToBytes( 128 ), bitsToBytes( 192 ) },
-#ifdef USE_IDEA
-	{ CRYPT_ALGO_IDEA, bitsToBytes( 64 ), "IDEA", 4,
-		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 128 ) },
-#endif /* USE_IDEA */
-#ifdef USE_CAST
-	{ CRYPT_ALGO_CAST, bitsToBytes( 64 ), "CAST-128", 8,
-		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 128 ) },
-#endif /* USE_CAST */
 #ifdef USE_RC2
 	{ CRYPT_ALGO_RC2, bitsToBytes( 64 ), "RC2", 3,
 		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 1024 ) },
@@ -576,16 +567,8 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 	{ CRYPT_ALGO_BLOWFISH, bitsToBytes( 64 ), "Blowfish", 8,
 		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 448 ) },
 #endif /* USE_BLOWFISH */
-#ifdef USE_SKIPJACK
-	{ CRYPT_ALGO_SKIPJACK, bitsToBytes( 64 ), "Skipjack", 8,
-		bitsToBytes( 80 ), bitsToBytes( 80 ), bitsToBytes( 80 ) },
-#endif /* USE_SKIPJACK */
 
 	/* Hash capabilities */
-#ifdef USE_MD2
-	{ CRYPT_ALGO_MD2, bitsToBytes( 128 ), "MD2", 3,
-		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
-#endif /* USE_MD2 */
 #ifdef USE_MD5
 	{ CRYPT_ALGO_MD5, bitsToBytes( 128 ), "MD5", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
@@ -946,7 +929,9 @@ static int getCapabilities( DEVICE_INFO *deviceInfo,
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isReadPtr( mechanismInfoPtr, \
 					   maxMechanisms * sizeof( PKCS11_MECHANISM_INFO ) ) );
-	assert( sizeof( CAPABILITY_INFO ) == sizeof( VARIABLE_CAPABILITY_INFO ) );
+
+	static_assert( sizeof( CAPABILITY_INFO ) == sizeof( VARIABLE_CAPABILITY_INFO ),
+				   "Variable capability-info-struct" );
 
 	/* Find the end of the list to add new capabilities */
 	if( capabilityInfoListTail != NULL )
@@ -1299,7 +1284,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 			}
 		return( cryptStatus );
 		}
-	assert( hSession != CK_OBJECT_NONE );
+	ENSURES( hSession != CK_OBJECT_NONE );
 	pkcs11Info->hSession = hSession;
 	deviceInfo->flags |= DEVICE_ACTIVE;
 

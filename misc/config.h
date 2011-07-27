@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Configuration Settings  					*
-*						Copyright Peter Gutmann 1992-2010					*
+*					   Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -110,24 +110,17 @@
    algorithms that are never enabled, among them KEA (which never gained any 
    real acceptance, and in any case when it was finally analysed by Kristin 
    Lauter and Anton Mityagin was found to have a variety of problems) and 
-   MD4 (which is completely broken) */
+   MD2, MD4, and CAST (which are either completely broken or obsolete/never
+   used any more) */
 
 #ifdef USE_DEPRECATED_ALGORITHMS
-  #define USE_MD2
   #define USE_RC2
   #define USE_RC4
-  #define USE_SKIPJACK
 #endif /* Obsolete and/or weak algorithms */
-#ifdef USE_PKCS12
-  /* If we use PKCS #12 then we have to enable RC2 in order to handle 
-	 Microsoft's continuing use of RC2-40 */
-  #define USE_RC2
-#endif /* USE_PKCS12 */
 
 /* Obscure algorithms */
 
 #ifdef USE_OBSCURE_ALGORITHMS
-  #define USE_CAST
   #define USE_ELGAMAL
   #define USE_HMAC_MD5
   #define USE_HMAC_RIPEMD160
@@ -287,7 +280,7 @@
 
 /* General device usage */
 
-#if defined( USE_PKCS11 ) || defined( USE_FORTEZZA ) || defined( USE_CRYPTOAPI )
+#if defined( USE_PKCS11 ) || defined( USE_CRYPTOAPI )
   #define USE_DEVICES
 #endif /* Device types */
 
@@ -382,6 +375,11 @@
    you receive the code with the safety features already disabled, you must
    obtain an original, unmodified version */
 /* #define USE_PKCS12 */
+#ifdef USE_PKCS12
+  /* If we use PKCS #12 then we have to enable RC2 in order to handle 
+	 Microsoft's continuing use of RC2-40 */
+  #define USE_RC2
+#endif /* USE_PKCS12 */
 
 #define USE_PGPKEYS
 #define USE_PKCS15
@@ -484,10 +482,13 @@
 
 /* Threads */
 
-#if defined( __BEOS__ ) || defined( __CHORUS__ ) || defined( __ECOS__ ) || \
-	defined( __ITRON__ ) || defined( __OS2__ ) || defined( __PALMOS__ ) || \
-	defined( __RTEMS__ ) || defined( __UCOSII__ ) || defined( __VXWORKS__ ) || \
-	defined( __WIN32__ ) || defined( __WINCE__ )
+#if defined( __AMX__  ) || defined( __BEOS__ ) || defined( __CHORUS__ ) || \
+	defined( __ECOS__ ) || defined( __EmbOS__ ) || defined( __FreeRTOS__ ) || \
+	defined( __ITRON__ ) || defined( __MQX__ ) || defined( __OS2__ ) || \
+	defined( __PALMOS__ ) || defined( __RTEMS__ ) || defined( __ThreadX__ ) || \
+	defined( __TKernel__ ) || defined( __UCOS__ ) || defined( __VDK__ ) || \
+	defined( __VXWORKS__ ) || defined( __WIN32__ ) || defined( __WINCE__ ) || \
+	defined( __XMK__ ) || defined( __VXWORKS__ )
   #define USE_THREADS
 #endif /* Non-Unix systems with threads */
 
@@ -531,9 +532,10 @@
    WinCE and PalmOS which are treated as OSes in their own right, while all 
    USE_EMBEDDED_OS OSes are a single amorphous blob */
 
-#if defined( __AMX__ ) || defined( __ECOS__ ) || defined( __FREERTOS__ ) || \
-	defined( __RTEMS__ ) || defined( __UCOS__ ) || defined( __CHORUS__ ) || \
-	defined( __THREADX__ ) || defined( __VDK__ ) || \
+#if defined( __AMX__ ) || defined( __CHORUS__ ) || defined( __ECOS__ ) || \
+	defined( __EmbOS__ ) || defined( __FreeRTOS__ ) || defined( __ITRON__ ) || \
+	defined( __MQX__ ) || defined( __RTEMS__ ) || defined( __ThreadX__ ) || \
+	defined( __TKernel__ ) || defined( __UCOS__ ) || defined( __VDK__ ) || \
 	defined( __VXWORKS__ ) || defined( __XMK__ )
   #define USE_EMBEDDED_OS
 #endif /* Embedded OSes */
@@ -571,17 +573,14 @@
 
 	/* Contexts */
 	#undef USE_BLOWFISH
-	#undef USE_CAST
 	#undef USE_ELGAMAL
 	#undef USE_HMAC_MD5
 	#undef USE_HMAC_RIPEMD160
 	#undef USE_IDEA
-	#undef USE_MD2
 	#undef USE_RC2
 	#undef USE_RC4
 	#undef USE_RC5
 	#undef USE_RIPEMD160
-	#undef USE_SKIPJACK
 
 	/* Certificates */
 	#undef USE_CERTREV
@@ -591,7 +590,6 @@
 
 	/* Devices */
 	#undef USE_CRYPTOAPI
-	#undef USE_FORTEZZA
 	#undef USE_HARDWARE
 	#undef USE_PKCS11
 	#undef USE_DEVICES
@@ -693,14 +691,17 @@
 	   defined( CONFIG_PROFILE_SSH ) || defined( CONFIG_PROFILE_SSL ) )
   #define USE_CERT_DNSTRING
   #define USE_CRYPTOAPI
-  #define USE_DNSSRV
   #define USE_ECDH
   #define USE_ECDSA
-  #define USE_FORTEZZA
   #define USE_GCM
   #define USE_LDAP
   #define USE_OAEP
-  #define USE_SSH_EXTENDED
+  #define USE_PKCS12
+  #define USE_RC2		/* Needed for PKCS #12 */
+  #ifdef USE_TCP
+	#define USE_SSH_EXTENDED
+	#define USE_DNSSRV
+  #endif /* USE_TCP */
 #endif /* Win32 debug build under VC++ 6.0 */
 
 /* If we're using a static analyser then we also enable some additional 
@@ -722,6 +723,9 @@
 /* If we're using Suite B we have to explicitly enable certain algorithms, 
    including extended forms of SHA-2 */
 
+#if defined( CONFIG_SUITEB_TESTS ) && !defined( CONFIG_SUITEB )
+  #define CONFIG_SUITEB 
+#endif /* CONFIG_SUITEB_TESTS && !CONFIG_SUITEB */
 #if defined( CONFIG_SUITEB )
   #define USE_ECDH
   #define USE_ECDSA
@@ -735,7 +739,6 @@
 
 #if 0	/* Devices */
   #undef USE_PKCS11
-  #undef USE_FORTEZZA
   #undef USE_CRYPTOAPI
 #endif /* 0 */
 #if 0	/* Heavyweight keysets */

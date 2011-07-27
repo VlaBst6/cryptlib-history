@@ -32,7 +32,7 @@ static int processSessionID( INOUT SESSION_INFO *sessionInfoPtr,
 							 INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
 							 INOUT STREAM *stream )
 	{
-	BYTE sessionID[ SESSIONID_SIZE + 8 ];
+	BYTE sessionID[ MAX_SESSIONID_SIZE + 8 ];
 	int sessionIDlength, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -47,7 +47,7 @@ static int processSessionID( INOUT SESSION_INFO *sessionInfoPtr,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
 				  "Invalid session ID information" ) );
 		}
-	if( sessionIDlength == 0 )
+	if( sessionIDlength <= 0 )
 		{
 		/* No session ID, we're done */
 		return( CRYPT_OK );
@@ -59,14 +59,7 @@ static int processSessionID( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Invalid session ID length %d, should be 1...%d", 
 				  sessionIDlength, MAX_SESSIONID_SIZE ) );
 		}
-	if( sessionIDlength != SESSIONID_SIZE )
-		{
-		/* It's not (potentially) one of ours (length = SESSIONID_SIZE), 
-		   skip it */
-		status = sSkip( stream, sessionIDlength );
-		}
-	else
-		status = sread( stream, sessionID, SESSIONID_SIZE );
+	status = sread( stream, sessionID, sessionIDlength );
 	if( cryptStatusError( status ) )
 		{
 		retExt( CRYPT_ERROR_BADDATA,
@@ -74,16 +67,106 @@ static int processSessionID( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Invalid session ID data" ) );
 		}
 
-	/* If it's not one of our session ID's, we're done */
-	if( sessionIDlength != SESSIONID_SIZE )
+	/* If we're the server and it's not (potentially) one of our sessionIDs, 
+	   we're done */
+	if( isServer( sessionInfoPtr ) && sessionIDlength != SESSIONID_SIZE )
 		return( CRYPT_OK );
 
 	/* It's a potentially resumed session, remember the details and let the 
 	   caller know */
-	memcpy( handshakeInfo->sessionID, sessionID, SESSIONID_SIZE );
-	handshakeInfo->sessionIDlength = SESSIONID_SIZE;
+	memcpy( handshakeInfo->sessionID, sessionID, sessionIDlength );
+	handshakeInfo->sessionIDlength = sessionIDlength;
 	return( OK_SPECIAL );
 	}
+
+#ifdef CONFIG_SUITEB
+
+/* For Suite B the first suite must be ECDHE/AES128-GCM/SHA256 or 
+   ECDHE/AES256-GCM/SHA384 depending on the security level and the second
+   suite, at the 128-bit security level, must be ECDHE/AES256-GCM/SHA384.  
+   This is one of those pedantic checks that requires vastly more work to 
+   support its nitpicking than the whole check is worth (since the same 
+   thing is checked anyway when we check the suite strength), but it's 
+   required by the spec */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 4 ) ) \
+static int checkSuiteBSuiteSelection( IN_RANGE( SSL_FIRST_VALID_SUITE, \
+												SSL_LAST_SUITE - 1 ) \
+										const int cipherSuite,
+									  const int flags,
+									  const BOOLEAN isFirstSuite,
+									  INOUT ERROR_INFO *errorInfo )
+	{
+	const char *precedenceString = isFirstSuite ? "First" : "Second";
+	const char *suiteName = NULL;
+
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	REQUIRES( cipherSuite >= SSL_FIRST_VALID_SUITE && \
+			  cipherSuite < SSL_LAST_SUITE );
+	REQUIRES( ( flags & ~( SSL_PFLAG_SUITEB ) ) == 0 );
+
+	if( isFirstSuite )
+		{
+		switch( flags )
+			{
+			case SSL_PFLAG_SUITEB_128:
+				if( cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 )
+					suiteName = "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256";
+				break;
+
+			case SSL_PFLAG_SUITEB_256:
+				if( cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 )
+					suiteName = "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384";
+				break;
+
+			default:
+				retIntError();
+			}
+		}
+	else
+		{
+		switch( flags )
+			{
+			case SSL_PFLAG_SUITEB_128:
+				if( cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 )
+					suiteName = "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384";
+				break;
+
+			case SSL_PFLAG_SUITEB_256:
+				/* For the 256-bit level there are no further requirements */
+				break;
+
+			default:
+				retIntError();
+			}
+		}
+	if( suiteName != NULL )
+		{
+		retExt( CRYPT_ERROR_NOTAVAIL,
+				( CRYPT_ERROR_NOTAVAIL, errorInfo, 
+				  "%s cipher suite for Suite B at the %d-bit security "
+				  "level must be %s", precedenceString, 
+				  ( flags == SSL_PFLAG_SUITEB_128 ) ? 128 : 256, 
+				  suiteName ) );
+		}
+
+	/* At the 256-bit level there's an additional requirement that the 
+	   client not offer any P256 cipher suites, or specifically that it not
+	   offer the one P256 cipher suite allowed for Suite B (whether it can 
+	   offer non-Suite B P256 cipher suites is left ambiguous) */
+	if( flags == SSL_PFLAG_SUITEB_256 && \
+		cipherSuite == TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 )
+		{
+		retExt( CRYPT_ERROR_NOTAVAIL,
+				( CRYPT_ERROR_NOTAVAIL, errorInfo, 
+				  "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 cipher suite "
+				  "can't be offered at the 256-bit security level" ) );
+		}
+
+	return( CRYPT_OK );
+	}
+#endif /* CONFIG_SUITEB */
 
 /****************************************************************************
 *																			*
@@ -158,6 +241,9 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 	BOOLEAN allowRSA = algoAvailable( CRYPT_ALGO_RSA );
 	BOOLEAN allowTLS12 = \
 		( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 ) ? TRUE : FALSE;
+#ifdef CONFIG_SUITEB
+	const int suiteBinfo = sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
+#endif /* CONFIG_SUITEB */
 	int cipherSuiteInfoSize, suiteIndex = 999, altSuiteIndex = 999;
 	int i, status;
 
@@ -168,7 +254,8 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 	REQUIRES( noSuites > 0 && noSuites <= MAX_CIPHERSUITES );
 
 	/* Get the information for the supported cipher suites */
-	status = getCipherSuiteInfo( &cipherSuiteInfo, &cipherSuiteInfoSize );
+	status = getCipherSuiteInfo( &cipherSuiteInfo, &cipherSuiteInfoSize, 
+								 isServer );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -176,7 +263,7 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 	   by the server key that we're using, figure out what we can use */
 	if( isServer && sessionInfoPtr->privateKey != CRYPT_ERROR )
 		{
-		int value;
+		int pkcAlgo;
 
 		/* To be usable for DH/ECC the server key has to be signature-
 		   capable */
@@ -189,15 +276,15 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 		/* To be usable for ECC or RSA the server key has to itself be an 
 		   ECC or RSA key */
 		status = krnlSendMessage( sessionInfoPtr->privateKey, 
-								  IMESSAGE_GETATTRIBUTE, &value,
+								  IMESSAGE_GETATTRIBUTE, &pkcAlgo,
 								  CRYPT_CTXINFO_ALGO );
 		if( cryptStatusError( status ) )
 			allowECC = allowRSA = FALSE;
 		else
 			{
-			if( !isEccAlgo( value ) )
+			if( !isEccAlgo( pkcAlgo ) )
 				allowECC = FALSE;
-			if( value != CRYPT_ALGO_RSA )
+			if( pkcAlgo != CRYPT_ALGO_RSA )
 				allowRSA = FALSE;
 			}
 		}
@@ -207,8 +294,9 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 		const CIPHERSUITE_INFO *cipherSuiteInfoPtr = NULL;
 		int newSuite, newSuiteIndex;
 
-#if 0	/* 28/01/08 Disabled since it's now finally removed in MSIE and 
-		   Firefox (but see also the comment in ssl_rd.c) */
+#ifdef ALLOW_SSLV2_HELLO	/* 28/01/08 Disabled since it's now finally 
+							   removed in MSIE and Firefox (but see also the 
+							   comment in ssl_rd.c) */
 		/* If we're reading an SSLv2 hello and it's an SSLv2 suite (the high
 		   byte is nonzero), skip it and continue */
 		if( handshakeInfo->isSSLv2 )
@@ -226,7 +314,7 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 				continue;
 				}
 			}
-#endif /* 0 */
+#endif /* ALLOW_SSLV2_HELLO */
 
 		/* Get the cipher suite information */
 		status = newSuite = readUint16( stream );
@@ -236,19 +324,6 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 					( status, SESSION_ERRINFO, 
 					  "Invalid cipher suite information" ) );
 			}
-
-#if 0	/* When resuming a cached session the client is required to offer
-		   as one of its suites the original suite that was used.  There's
-		   no good reason for this requirement (it's probable that the spec
-		   is intending that there be at least one cipher suite and that if
-		   there's only one it should really be the one originally
-		   negotiated) and it complicates implementation of shared-secret
-		   key sessions so we don't perform this check */
-		/* If we have to match a specific suite and this isn't it,
-		   continue */
-		if( requiredSuite > 0 && requiredSuite != newSuite )
-			continue;
-#endif /* 0 */
 
 		/* If we're the client and we got back our canary method-of-last-
 		   resort suite from the server without having seen another suite
@@ -262,6 +337,20 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 					  "Server rejected attempt to connect using "
 					  "non-crippled encryption" ) );
 			}
+
+		/* If it's an obviously non-valid suite, continue.  Note that we 
+		   have to perform this check after the canary check above since the
+		   canary is an invalid suite */
+		if( newSuite < SSL_FIRST_VALID_SUITE || newSuite >= SSL_LAST_SUITE )
+			continue;
+
+		/* When resuming a cached session the client is required to offer
+		   as one of its suites the original suite that was used.  There's
+		   no good reason for this requirement (it's probable that the spec
+		   is intending that there be at least one cipher suite and that if
+		   there's only one it should really be the one originally
+		   negotiated) and it complicates implementation of shared-secret
+		   key sessions so we don't perform this check */
 
 		/* Try and find the information for the proposed cipher suite */
 		for( newSuiteIndex = 0; 
@@ -277,62 +366,21 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		ENSURES( newSuiteIndex < cipherSuiteInfoSize );
 #ifdef CONFIG_SUITEB
-		if( ( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB ) && i == 0 )
+		if( ( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB ) && \
+			( i == 0 || i == 1 ) )
 			{
-			const int cipherSuite = ( cipherSuiteInfoPtr == NULL ) ? 0 : \
-									cipherSuiteInfoPtr->cipherSuite;
-
-			/* For Suite B the first suite must be ECDHE/AES128-GCM/SHA256 
-			   or ECDHE/AES256-GCM/SHA384 depending on the security level. 
-			   This is one of those pedantic checks that requires more work 
-			   to support its nitpicking than the whole check is worth 
-			   (since the same thing is checked anyway when we check the
-			   suite strength), but it's required by the spec */
-			switch( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB )
-				{
-				case SSL_PFLAG_SUITEB_128:
-					if( cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 )
-						{
-						retExt( CRYPT_ERROR_NOTAVAIL,
-								( CRYPT_ERROR_NOTAVAIL, SESSION_ERRINFO, 
-								  "First cipher suite for Suite B at 128-bit "
-								  "security level must be "
-								  "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" ) );
-						}
-					break;
-
-				case SSL_PFLAG_SUITEB_256:
-					if( cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 )
-						{
-						retExt( CRYPT_ERROR_NOTAVAIL,
-								( CRYPT_ERROR_NOTAVAIL, SESSION_ERRINFO, 
-								  "First cipher suite for Suite B at 256-bit "
-								  "security level must be "
-								  "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384" ) );
-						}
-					break;
-
-				case SSL_PFLAG_SUITEB:
-					if( cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 && \
-						cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 )
-						{
-						retExt( CRYPT_ERROR_NOTAVAIL,
-								( CRYPT_ERROR_NOTAVAIL, SESSION_ERRINFO, 
-								  "First cipher suite for Suite B must be "
-								  "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 or "
-								  "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" ) );
-						}
-					break;
-
-				default:
-					retIntError();
-				}
+			status = checkSuiteBSuiteSelection( \
+							( cipherSuiteInfoPtr == NULL ) ? \
+								SSL_FIRST_VALID_SUITE /* Dummy value */ : \
+								cipherSuiteInfoPtr->cipherSuite,
+							sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB,
+							( i == 0 ) ? TRUE : FALSE, SESSION_ERRINFO );
+			if( cryptStatusError( status ) )
+				return( status );
 			}
 #endif /* CONFIG_SUITEB */
 		if( cipherSuiteInfoPtr == NULL )
-			{
 			continue;
-			}
 
 		/* Perform a short-circuit check, if the new suite is inherently 
 		   less-preferred than what we've already got then there's no point 
@@ -637,27 +685,48 @@ int processHelloSSL( INOUT SESSION_INFO *sessionInfoPtr,
 		handshakeInfo->hasExtensions = TRUE;
 		}
 
-	/* If we're the server and the client has chosen an ECC suite and it 
-	   hasn't subsequently been disabled by an incompatible choice of
-	   client-selected parameters, switch to the ECC suite */
-	if( isServer && !handshakeInfo->disableECC )
+	/* If we're the server, perform any special-case handling required by 
+	   the fact that the selection of an ECC cipher suite can be 
+	   retroactively modified by by TLS extensions that disable its use
+	   again */
+	if( isServer )
 		{
-		/* If the only available option was an ECC suite then it'll already
-		   have been enabled so we don't need to do it now */
-		if( handshakeInfo->eccSuiteInfoPtr != NULL )
+		if( handshakeInfo->disableECC )
 			{
-			status = setSuiteInfo( sessionInfoPtr, handshakeInfo, 
-								   handshakeInfo->eccSuiteInfoPtr );
-			if( cryptStatusError( status ) )
-				return( status );
+			/* If the only available suite is an ECC one but it's been 
+			   disabled through an incompatible choice of client-selected 
+			   algorithm parameters then we can't continue */
+			if( isEccAlgo( handshakeInfo->keyexAlgo ) )
+				{
+				retExt( CRYPT_ERROR_NOTAVAIL,
+						( CRYPT_ERROR_NOTAVAIL, SESSION_ERRINFO, 
+						  "Client specified use of an ECC cipher suite but "
+						  "didn't provide any compatible ECC parameters" ) );
+				}
 			}
+		else
+			{
+			/* If the client has chosen an ECC suite and it hasn't 
+			   subsequently been disabled by an incompatible choice of 
+			   client-selected parameters, switch to the ECC suite.  If the
+			   only available option was an ECC suite then it'll already
+			   have been enabled so we don't need to do it */
+			if( handshakeInfo->eccSuiteInfoPtr != NULL )
+				{
+				status = setSuiteInfo( sessionInfoPtr, handshakeInfo, 
+									   handshakeInfo->eccSuiteInfoPtr );
+				if( cryptStatusError( status ) )
+					return( status );
+				}
 
-		/* If we're using an ECC cipher suite (either due to it being the 
-		   only suite available or because it was selected above) and 
-		   there's no ECC curve selected by the client, default to P256 */
-		if( isEccAlgo( handshakeInfo->keyexAlgo ) && \
-			handshakeInfo->eccCurveID == CRYPT_ECCCURVE_NONE )
-			handshakeInfo->eccCurveID = CRYPT_ECCCURVE_P256;
+			/* If we're using an ECC cipher suite (either due to it being 
+			   the only suite available or because it was selected above) 
+			   and there's no ECC curve selected by the client, default to 
+			   P256 */
+			if( isEccAlgo( handshakeInfo->keyexAlgo ) && \
+				handshakeInfo->eccCurveID == CRYPT_ECCCURVE_NONE )
+				handshakeInfo->eccCurveID = CRYPT_ECCCURVE_P256;
+			}
 		}
 
 	/* If we're using Suite B and the MAC algorithm is an extended 

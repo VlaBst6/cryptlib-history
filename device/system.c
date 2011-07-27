@@ -703,9 +703,6 @@ static const GETCAPABILITY_FUNCTION FAR_BSS getCapabilityTable[] = {
 #ifdef USE_BLOWFISH
 	getBlowfishCapability,
 #endif /* USE_BLOWFISH */
-#ifdef USE_CAST
-	getCASTCapability,
-#endif /* USE_CAST */
 	getDESCapability,
 #ifdef USE_IDEA
 	getIDEACapability,
@@ -719,16 +716,7 @@ static const GETCAPABILITY_FUNCTION FAR_BSS getCapabilityTable[] = {
 #ifdef USE_RC5
 	getRC5Capability,
 #endif /* USE_RC5 */
-#ifdef USE_SKIPJACK
-	getSkipjackCapability,
-#endif /* USE_SKIPJACK */
 
-#ifdef USE_MD2
-	getMD2Capability,
-#endif /* USE_MD2 */
-#ifdef USE_MD4
-	getMD4Capability,
-#endif /* USE_MD4 */
 #ifdef USE_MD5
 	getMD5Capability,
 #endif /* USE_MD5 */

@@ -44,6 +44,12 @@
   #endif /* Compiler-specific includes */
 #endif /* _CRYPTCAP_DEFINED */
 
+/****************************************************************************
+*																			*
+*							Context Types and Constants						*
+*																			*
+****************************************************************************/
+
 /* Context information flags.  Most of these flags are context-type-specific,
    and are only used with some context types:
 
@@ -102,9 +108,19 @@
 #define CONTEXT_FLAG_STATICCONTEXT	0x1000	/* Static context */
 #define CONTEXT_FLAG_MAX			0x1FFF	/* Maximum possible flag value */
 
+/* DLP PKCs require a random value k that's then reduced mod p or q, however
+   if we make sizeof( k ) == sizeof( p ) then this introduced a bias into k
+   that eventually leaks the private key (see "The Insecurity of the Digital 
+   Signature Algorithm with Partially Known Nonces" by Phong Nguyen and Igor 
+   Shparlinski).  To get around this we generate a k that's slightly larger
+   than required, the following defines the size in bytes of this overflow
+   factor */
+
+#define DLP_OVERFLOW_SIZE			bitsToBytes( 32 )
+
 /****************************************************************************
 *																			*
-*								Data Structures								*
+*							Context Data Structures							*
 *																			*
 ****************************************************************************/
 
@@ -229,19 +245,6 @@ typedef struct {
 	BUFFER_OPT_FIXED( publicKeyInfoSize ) \
 	void *publicKeyInfo;			/* X.509 SubjectPublicKeyInfo */
 	int publicKeyInfoSize;			/* Key info size */
-
-#ifdef USE_KEA
-	/* For key agreement keys, we also store domain parameters (which
-	   identify the domain of the originator and recipient keys) and the
-	   public value used in the key agreement process.  These are just
-	   pointers to the encoded data in the publicKeyInfo */
-	BUFFER_OPT_FIXED( domainParamSize ) \
-	void *domainParamPtr;			/* Domain parameters within publicKeyInfo */
-	int domainParamSize;
-	BUFFER_OPT_FIXED( publicValueSize ) \
-	void *publicValuePtr;			/* Public value within publicKeyInfo */
-	int publicValueSize;
-#endif /* USE_KEA */
 
 	/* Pointers to functions to public-key context access methods.  The
 	   functions to read and write public and private keys are kept distinct
@@ -430,9 +433,6 @@ typedef struct CI {
 	   same information from the system object table */
 	CRYPT_HANDLE objectHandle;
 	CRYPT_USER ownerHandle;
-
-	/* Variable-length storage for the type-specific data */
-	DECLARE_VARSTRUCT_VARS;
 	} CONTEXT_INFO;
 
 /* Symbolic defines for the various PKC components for different PKC
@@ -706,15 +706,10 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 void initKeyWrite( INOUT CONTEXT_INFO *contextInfoPtr );
 
 /* Internal functions shared across a small number of modules, declared via 
-   a header to allow type checking (adjustUserKeySize() and 
-   attributeToFormatType() from keyload.c, hash functions from ctx_XXX.c 
-   accessed via the universal interface in ctx_misc.c) */
+   a header to allow type checking (attributeToFormatType() from keyload.c, 
+   hash functions from ctx_XXX.c accessed via the universal interface in 
+   ctx_misc.c) */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int adjustUserKeySize( const CONTEXT_INFO *contextInfoPtr, 
-					   IN_RANGE( MIN_KEYSIZE, \
-								 CRYPT_MAX_PKCSIZE ) const int requestedKeySize, 
-					   OUT_LENGTH_PKC_Z int *keyLength );
 CHECK_RETVAL \
 int attributeToFormatType( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 						   OUT_ENUM_OPT( KEYFORMAT ) KEYFORMAT_TYPE *keyformat );

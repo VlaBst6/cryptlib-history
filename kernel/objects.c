@@ -103,21 +103,35 @@ int initObjects( INOUT KERNEL_DATA *krnlDataPtr )
 
 	/* Perform a consistency check on various things that need to be set
 	   up in a certain way for things to work properly */
-	assert( OBJECT_TABLE_ALLOCSIZE >= 64 );
-	assert( OBJECT_INFO_TEMPLATE.type == OBJECT_TYPE_NONE );
-	assert( OBJECT_INFO_TEMPLATE.subType == 0 );
-	assert( OBJECT_INFO_TEMPLATE.objectPtr == NULL );
-	assert( OBJECT_INFO_TEMPLATE.objectSize == 0 );
-	assert( OBJECT_INFO_TEMPLATE.flags == \
-			( OBJECT_FLAG_INTERNAL | OBJECT_FLAG_NOTINITED ) );
-	assert( OBJECT_INFO_TEMPLATE.actionFlags == 0 );
-	assert( OBJECT_INFO_TEMPLATE.forwardCount == CRYPT_UNUSED );
-	assert( OBJECT_INFO_TEMPLATE.usageCount == CRYPT_UNUSED );
-	assert( OBJECT_INFO_TEMPLATE.owner == CRYPT_ERROR );
-	assert( OBJECT_INFO_TEMPLATE.dependentDevice == CRYPT_ERROR );
-	assert( OBJECT_INFO_TEMPLATE.dependentObject == CRYPT_ERROR );
-	assert( SYSTEM_OBJECT_HANDLE == NO_SYSTEM_OBJECTS - 2 );
-	assert( DEFAULTUSER_OBJECT_HANDLE == NO_SYSTEM_OBJECTS - 1 );
+	static_assert( OBJECT_TABLE_ALLOCSIZE >= 64, \
+				   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.type == OBJECT_TYPE_NONE, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.subType == 0, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.objectPtr == NULL, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.objectSize == 0, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.flags == \
+							( OBJECT_FLAG_INTERNAL | OBJECT_FLAG_NOTINITED ), \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.actionFlags == 0, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.forwardCount == CRYPT_UNUSED, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.usageCount == CRYPT_UNUSED, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.owner == CRYPT_ERROR, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.dependentDevice == CRYPT_ERROR, \
+					   "Object table param" );
+	static_assert_opt( OBJECT_INFO_TEMPLATE.dependentObject == CRYPT_ERROR, \
+					   "Object table param" );
+	static_assert( SYSTEM_OBJECT_HANDLE == NO_SYSTEM_OBJECTS - 2, \
+				   "Object table param" );
+	static_assert( DEFAULTUSER_OBJECT_HANDLE == NO_SYSTEM_OBJECTS - 1, \
+				   "Object table param" );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -185,23 +199,28 @@ void endObjects( void )
 
 /* Destroy an object's instance data and object table entry */
 
-void destroyObjectData( IN_HANDLE const int objectHandle )
+CHECK_RETVAL \
+int destroyObjectData( IN_HANDLE const int objectHandle )
 	{
 	OBJECT_INFO *objectInfoPtr;
+	int status;
 
 	/* Precondition: It's a valid object */
-	REQUIRES_V( isValidObject( objectHandle ) );
+	REQUIRES( isValidObject( objectHandle ) );
 
 	objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 
 	/* Inner precondition: There's valid object data present */
-	REQUIRES_V( objectInfoPtr->objectPtr != NULL && \
-				objectInfoPtr->objectSize > 0 && \
-				objectInfoPtr->objectSize < MAX_INTLENGTH );
+	REQUIRES( objectInfoPtr->objectPtr != NULL && \
+			  objectInfoPtr->objectSize > 0 && \
+			  objectInfoPtr->objectSize < MAX_INTLENGTH );
 
 	/* Destroy the object's data and clear the object table entry */
 	if( objectInfoPtr->flags & OBJECT_FLAG_SECUREMALLOC )
-		krnlMemfree( &objectInfoPtr->objectPtr );
+		{
+		status = krnlMemfree( &objectInfoPtr->objectPtr );
+		ENSURES( cryptStatusOK( status ) );
+		}
 	else
 		{
 		/* Mors ultima linea rerum est */
@@ -209,18 +228,21 @@ void destroyObjectData( IN_HANDLE const int objectHandle )
 		clFree( "destroyObjectData", objectInfoPtr->objectPtr );
 		}
 	krnlData->objectTable[ objectHandle ] = OBJECT_INFO_TEMPLATE;
+
+	return( CRYPT_OK );
 	}
 
 /* Destroy an object.  This is only called when cryptlib is shutting down,
    normally objects are destroyed directly in response to messages */
 
-static void destroyObject( IN_HANDLE const int objectHandle )
+CHECK_RETVAL \
+static int destroyObject( IN_HANDLE const int objectHandle )
 	{
 	const OBJECT_INFO *objectInfoPtr;
 	MESSAGE_FUNCTION messageFunction;
 
 	/* Precondition: It's a valid object */
-	REQUIRES_V( isValidObject( objectHandle ) );
+	REQUIRES( isValidObject( objectHandle ) );
 
 	objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	messageFunction = objectInfoPtr->messageFunction;
@@ -230,7 +252,7 @@ static void destroyObject( IN_HANDLE const int objectHandle )
 	if( messageFunction == NULL )
 		{
 		krnlData->objectTable[ objectHandle ] = OBJECT_INFO_TEMPLATE;
-		return;
+		return( CRYPT_OK );
 		}
 
 	/* Destroy the object and its object table entry */
@@ -245,9 +267,11 @@ static void destroyObject( IN_HANDLE const int objectHandle )
 										MESSAGE_DESTROY, NULL, 0 );
 		}
 	else
+		{
 		objectInfoPtr->messageFunction( objectInfoPtr->objectPtr, 
 										MESSAGE_DESTROY, NULL, 0 );
-	destroyObjectData( objectHandle );
+		}
+	return( destroyObjectData( objectHandle ) );
 	}
 
 /* Destroy all objects at a given nesting level */
@@ -322,7 +346,7 @@ static int destroySelectedObjects( IN_RANGE( 1, 3 ) const int currentDepth )
 CHECK_RETVAL \
 int destroyObjects( void )
 	{
-	int depth, objectHandle, status = CRYPT_OK;
+	int depth, objectHandle, localStatus, status = DUMMY_INIT;
 
 	/* Preconditions: We either didn't complete the initialisation and are 
 	   shutting down during a krnlBeginInit(), or we've completed 
@@ -356,7 +380,10 @@ int destroyObjects( void )
 	   message, which would indicate a programming error */
 	for( objectHandle = SYSTEM_OBJECT_HANDLE + 1;
 		 objectHandle < NO_SYSTEM_OBJECTS; objectHandle++ )
-		destroyObject( objectHandle );
+		{
+		status = destroyObject( objectHandle );
+		ENSURES( cryptStatusOK( status ) );
+		}
 
 	/* Postcondition: All system objects except the root system object have
 	   been destroyed */
@@ -376,8 +403,7 @@ int destroyObjects( void )
 	   another object out from under a dependent object */
 	for( depth = 3; depth > 0; depth-- )
 		{
-		int localStatus = destroySelectedObjects( depth );
-
+		localStatus = destroySelectedObjects( depth );
 		if( cryptStatusError( localStatus ) )
 			status = localStatus;
 		}
@@ -388,8 +414,11 @@ int destroyObjects( void )
 			!memcmp( &krnlData->objectTable[ i ], &OBJECT_INFO_TEMPLATE, \
 					 sizeof( OBJECT_INFO ) ) );
 
-	/* Finally, destroy the system root object */
-	destroyObject( SYSTEM_OBJECT_HANDLE );
+	/* Finally, destroy the system root object.  We need to preserve the 
+	   possible error status from cleaning up any leftover objects so we use 
+	   a local status value to get the destroy-object results */
+	localStatus = destroyObject( SYSTEM_OBJECT_HANDLE );
+	ENSURES( cryptStatusOK( localStatus ) );
 
 	/* Unlock the object table to allow access by other threads */
 	MUTEX_UNLOCK( objectTable );
@@ -720,7 +749,10 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 			/* Free the object instance data storage that we allocated
 			   earlier */
 			if( objectInfo.flags & OBJECT_FLAG_SECUREMALLOC )
-				krnlMemfree( &objectInfo.objectPtr );
+				{
+				int status = krnlMemfree( &objectInfo.objectPtr );
+				ENSURES( cryptStatusOK( status ) );
+				}
 			else
 				{
 				zeroise( objectInfo.objectPtr, objectInfo.objectSize );

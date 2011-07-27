@@ -31,11 +31,6 @@ static const FAR_BSS OID_INFO keyDataOIDinfo[] = {
 	{ NULL, 0 }, { NULL, 0 }
 	};
 
-static const FAR_BSS OID_INFO keyBagOIDinfo[] = {
-	{ OID_PKCS12_SHROUDEDKEYBAG, 0 },
-	{ NULL, 0 }, { NULL, 0 }
-	};
-
 /* OID information used to read decrypted PKCS #12 objects */
 
 static const FAR_BSS OID_INFO certBagOIDinfo[] = {
@@ -47,128 +42,194 @@ static const FAR_BSS OID_INFO certOIDinfo[] = {
 	{ NULL, 0 }, { NULL, 0 }
 	};
 
-/* Protection algorithms used for encrypted keys and certificates, and a 
-   mapping from PKCS #12 to cryptlib equivalents.  Beyond these there are
-   also 40- and 128-bit RC4 and 128-bit RC2, but nothing seems to use
-   them.  40-bit RC2 is used by Windows to, uhh, "protect" public
-   certificates so we have to support it in order to be able to read
-   certificates (see the comment in keymgmt/pkcs12.c for details on how
-   the 40-bit RC2 key is handled) */
-
-enum { PKCS12_ALGO_NONE, PKCS12_ALGO_3DES_192, PKCS12_ALGO_3DES_128, 
-	   PKCS12_ALGO_RC2_40 };
-
-typedef struct {
-	const CRYPT_ALGO_TYPE cryptAlgo;
-	const int keySize;
-	} PKCS12_ALGO_MAP;
-
-static const PKCS12_ALGO_MAP algoMap3DES_192 = { CRYPT_ALGO_3DES, bitsToBytes( 192 ) };
-static const PKCS12_ALGO_MAP algoMap3DES_128 = { CRYPT_ALGO_3DES, bitsToBytes( 128 ) };
-static const PKCS12_ALGO_MAP algoMapRC2_40 = { CRYPT_ALGO_RC2, bitsToBytes( 40 ) };
-
-static const FAR_BSS OID_INFO encryptionOIDinfo[] = {
-	{ OID_PKCS12_PBEWITHSHAAND3KEYTRIPLEDESCBC, PKCS12_ALGO_3DES_192, 
-	  &algoMap3DES_192 },
-	{ OID_PKCS12_PBEWITHSHAAND2KEYTRIPLEDESCBC, PKCS12_ALGO_3DES_128,
-	  &algoMap3DES_128 },
-	{ OID_PKCS12_PBEWITHSHAAND40BITRC2CBC, PKCS12_ALGO_RC2_40,
-	  &algoMapRC2_40 },
-	{ NULL, 0 }, { NULL, 0 }
-	};
-
-/* PKCS #12 attributes.  This is a subset of the full range that can be 
-   used, we skip any that we don't care about using a wildcard OID match */
-
-enum { PKCS12_ATTRIBUTE_NONE, PKCS12_ATTRIBUTE_LABEL, PKCS12_ATTRIBUTE_ID };
-
-static const FAR_BSS OID_INFO attributeOIDinfo[] = {
-	{ OID_PKCS9_FRIENDLYNAME, PKCS12_ATTRIBUTE_LABEL },
-	{ OID_PKCS9_LOCALKEYID, PKCS12_ATTRIBUTE_ID },
-	{ WILDCARD_OID, PKCS12_ATTRIBUTE_NONE },
-	{ NULL, 0 }, { NULL, 0 }
-	};
-
 /****************************************************************************
 *																			*
 *								Utility Functions							*
 *																			*
 ****************************************************************************/
 
-/* Read protection algorithm information */
+/* Copy PKCS #12 object information.  If there's already content present in 
+   the destination information then we copy in additional information, for
+   example to augment existing private-key data with an associated 
+   certificate or vice-versa */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static int readProtAlgoInfo( INOUT STREAM *stream, 
-							 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
-							 OUT_INT_SHORT_Z int *keySize )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static void copyObjectInfo( INOUT PKCS12_INFO *destPkcs12Info, 
+							const PKCS12_INFO *srcPkcs12Info,
+							const BOOLEAN isCertificate )
 	{
-	const OID_INFO *oidInfoPtr;
-	const PKCS12_ALGO_MAP *algoMapInfoPtr;
-	int status;
+	assert( isWritePtr( destPkcs12Info, sizeof( PKCS12_INFO ) ) );
+	assert( isReadPtr( srcPkcs12Info, sizeof( PKCS12_INFO ) ) );
 
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
-	assert( isWritePtr( keySize, sizeof( int ) ) );
+	destPkcs12Info->flags |= srcPkcs12Info->flags;
+	if( isCertificate )
+		{
+		memcpy( &destPkcs12Info->certInfo, &srcPkcs12Info->certInfo, 
+				sizeof( PKCS12_OBJECT_INFO ) );
+		}
+	else
+		{
+		memcpy( &destPkcs12Info->keyInfo, &srcPkcs12Info->keyInfo, 
+				sizeof( PKCS12_OBJECT_INFO ) );
+		}
+	if( destPkcs12Info->labelLength <= 0 && \
+		srcPkcs12Info->labelLength > 0 )
+		{
+		memcpy( destPkcs12Info->label, srcPkcs12Info->label,
+				srcPkcs12Info->labelLength );
+		destPkcs12Info->labelLength = srcPkcs12Info->labelLength;
+		}
+	if( destPkcs12Info->idLength <= 0 && \
+		srcPkcs12Info->idLength > 0 )
+		{
+		memcpy( destPkcs12Info->id, srcPkcs12Info->id,
+				srcPkcs12Info->idLength );
+		destPkcs12Info->idLength = srcPkcs12Info->idLength;
+		}
+	}
 
-	/* Clear return values */
-	*cryptAlgo = CRYPT_ALGO_NONE;
-	*keySize = CRYPT_ERROR;
+/* PKCS #12's lack of useful indexing information makes it extremely 
+   difficult to reliably track and match up object types like private keys
+   and certificates.  The PKCS #15 code simply does a findEntry() to find 
+   the entry that matches a newly-read object and attaches it to whatever's 
+   already present for an existing entry if required (so for example it'd 
+   attach a certificate to a previously-read private key), however with PKCS 
+   #12 there's no reliable way to do this since entries may or may not have 
+   ID information attached, which makes it impossible to reliably attach 
+   keys to certificates.
 
-	/* Read the wrapper and the protection algorithm OID and extract the
-	   protection information parameters for it */
-	readSequence( stream, NULL );
-	status = readOIDEx( stream, encryptionOIDinfo, 
-						FAILSAFE_ARRAYSIZE( encryptionOIDinfo, OID_INFO ), 
-						&oidInfoPtr );
-	if( cryptStatusError( status ) )
-		return( status );
-	algoMapInfoPtr = oidInfoPtr->extraInfo;
-	*cryptAlgo = algoMapInfoPtr->cryptAlgo;
-	*keySize = algoMapInfoPtr->keySize;
+   To deal with this as best we can, we apply the following strategy:
+
+	1. For the first item read, we save it as is in the zero-th position
+	   (the item may or may not have an ID attached, typically if it's an
+	   encrypted certificate then it won't, if it's a private key then it
+	   will).
+
+	2. For subsequent items read, if there's no ID information present then 
+	   we assume that it's attached to the previously-read first entry 
+	   provided that it's compatible with it, for example an ID-less 
+	   encrypted certificate attached to an encrypted key.  The "no ID
+	   information present" can mean either that the currently-read item has 
+	   no ID information or that the first item has no ID information.
+
+	3. If there's ID information attached, we handle it as we would for a 
+	   PKCS #15 item */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int findObjectEntryLocation( OUT_PTR PKCS12_INFO **pkcs12infoPtrPtr, 
+									IN_ARRAY( maxNoPkcs12objects ) \
+										const PKCS12_INFO *pkcs12info, 
+									IN_LENGTH_SHORT const int maxNoPkcs12objects, 
+									IN_BUFFER_OPT( idLength ) const void *id, 
+									IN_LENGTH_KEYID_Z const int idLength,
+									IN_FLAGS( PKCS12 ) const int flags )
+
+	{
+	const PKCS12_INFO *pkcs12firstItem = &pkcs12info[ 0 ];
+	const PKCS12_INFO *pkcs12infoPtr;
+	int index;
+
+	assert( isReadPtr( pkcs12infoPtrPtr, sizeof( PKCS12_INFO * ) ) );
+	assert( isReadPtr( pkcs12info, sizeof( PKCS12_INFO ) * \
+								   maxNoPkcs12objects ) );
+	assert( ( id == NULL && idLength == 0 ) || \
+			isReadPtr( id, idLength ) );
+
+	REQUIRES( maxNoPkcs12objects >= 1 && \
+			  maxNoPkcs12objects < MAX_INTLENGTH_SHORT );
+	REQUIRES( ( id == NULL && idLength == 0 ) || \
+			  ( id != NULL && \
+				idLength > 0 && idLength < MAX_ATTRIBUTE_SIZE ) );
+
+	/* Clear return value */
+	*pkcs12infoPtrPtr = NULL;
+
+	/* If this is the first entry being added, just add it as is */
+	if( pkcs12FindFreeEntry( pkcs12info, maxNoPkcs12objects, \
+							 &index ) != NULL && index == 0 )
+		{
+		*pkcs12infoPtrPtr = ( PKCS12_INFO * ) pkcs12firstItem;
+
+		return( CRYPT_OK );
+		}
+
+	/* If there's no ID information present, try and find an appropriate 
+	   existing item to attach it to.  This can occur in two variations,
+	   either the existing entry is EncryptedData containing a certificate 
+	   with no ID information and the newly-read item is a private key, or 
+	   the existing item is a private key with ID information and the newly-
+	   read item is EncryptedData containing a certificate with no ID 
+	   information */
+	if( ( pkcs12firstItem->labelLength == 0 && \
+		  pkcs12firstItem->idLength == 0 ) || id == NULL )
+		{
+		int i;
+
+		/* If the combination of items isn't an encrypted certificate (which 
+		   has no ID data associated with it since it's EncryptedData) rather 
+		   than a non-encrypted certificate or a private key (which is Data 
+		   and should have ID data associated with it) then we can't process 
+		   it */
+		if( !( ( pkcs12firstItem->flags == PKCS12_FLAG_ENCCERT && \
+				 flags == PKCS12_FLAG_PRIVKEY ) || \
+			   ( pkcs12firstItem->flags == PKCS12_FLAG_PRIVKEY && \
+				 flags == PKCS12_FLAG_ENCCERT ) ) )
+			return( CRYPT_ERROR_BADDATA );
+
+		pkcs12infoPtr = NULL;
+		for( i = 0; i < maxNoPkcs12objects && \
+					i < FAILSAFE_ITERATIONS_MED; i++ )
+			{
+			/* If this entry isn't in use, continue */
+			if( pkcs12info[ i ].flags == PKCS12_FLAG_NONE )
+				continue;
+
+			/* If we've already found a matching entry then finding a second 
+			   one is ambiguous since we don't know know which one to 
+			   associate the newly-read no-ID entry with */
+			if( pkcs12infoPtr != NULL )
+				return( CRYPT_ERROR_DUPLICATE );
+
+			/* We've found a potential location to add the ID-less entry */
+			pkcs12infoPtr = &pkcs12info[ i ];
+			}
+		ENSURES( i < FAILSAFE_ITERATIONS_MED );
+		ENSURES( pkcs12infoPtr != NULL )
+				 /* There's always a zero-th entry present to act as the 
+					known elephant in Cairo */
+
+		*pkcs12infoPtrPtr = ( PKCS12_INFO * ) pkcs12infoPtr;
+
+		return( CRYPT_OK );
+		}
+
+	/* There's an ID present, try and find a matching existing entry for 
+	   it */
+	pkcs12infoPtr = pkcs12FindEntry( pkcs12info, maxNoPkcs12objects, 
+									 CRYPT_IKEYID_KEYID, id, idLength );
+	if( pkcs12infoPtr != NULL )
+		{
+		*pkcs12infoPtrPtr = ( PKCS12_INFO * ) pkcs12infoPtr;
+
+		return( CRYPT_OK );
+		}
+
+	/* This personality isn't present yet, find out where we can add the 
+	   object data */
+	pkcs12infoPtr = pkcs12FindFreeEntry( pkcs12info, maxNoPkcs12objects, 
+										 NULL );
+	if( pkcs12infoPtr == NULL )
+		return( CRYPT_ERROR_OVERFLOW );
+	*pkcs12infoPtrPtr = ( PKCS12_INFO * ) pkcs12infoPtr;
 
 	return( CRYPT_OK );
 	}
 
-/* Read key-derivation information */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-static int readKeyDerivationInfo( INOUT STREAM *stream, 
-								  OUT_BUFFER( saltMaxLen, *saltLen ) void *salt,
-								  IN_LENGTH_SHORT_MIN( 16 ) const int saltMaxLen,
-								  OUT_LENGTH_SHORT_Z int *saltLen,
-								  OUT_INT_SHORT_Z int *iterations )
-	{
-	long intValue;
-	int status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( salt, saltMaxLen ) );
-	assert( isWritePtr( saltLen, sizeof( int ) ) );
-	assert( isWritePtr( iterations, sizeof( int ) ) );
-
-	REQUIRES( saltMaxLen >= 16 && saltMaxLen < MAX_INTLENGTH_SHORT );
-
-	/* Clear return values */
-	memset( salt, 0, min( 16, saltMaxLen ) );
-	*saltLen = *iterations = 0;
-
-	/* Read the wrapper and salt value */
-	readSequence( stream, NULL );
-	status = readOctetString( stream, salt, saltLen, 1, saltMaxLen );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Read the iteration count and make sure that it's within a sensible
-	   range */
-	status = readShortInteger( stream, &intValue );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( intValue < 1 || intValue >= MAX_KEYSETUP_ITERATIONS )
-		return( CRYPT_ERROR_BADDATA );
-	*iterations = ( int ) intValue;
-
-	return( CRYPT_OK );
-	}
+/****************************************************************************
+*																			*
+*							Import Keys/Certificates						*
+*																			*
+****************************************************************************/
 
 /* Unwrap and import an encrypted certificate */
 
@@ -249,15 +310,13 @@ static int importCertificate( const PKCS12_OBJECT_INFO *certObjectInfo,
 	status = readCMSheader( &stream, certBagOIDinfo, 
 							FAILSAFE_ARRAYSIZE( certBagOIDinfo, OID_INFO ), 
 							NULL, READCMS_FLAG_WRAPPERONLY );
-	if( cryptStatusError( status ) )
+	if( cryptStatusOK( status ) )
 		{
-		sMemDisconnect( &stream );
-		return( status );
+		status = readCMSheader( &stream, certOIDinfo, 
+								FAILSAFE_ARRAYSIZE( certOIDinfo, OID_INFO ), 
+								&length, READCMS_FLAG_INNERHEADER | \
+										 READCMS_FLAG_DEFINITELENGTH );
 		}
-	status = readCMSheader( &stream, certOIDinfo, 
-							FAILSAFE_ARRAYSIZE( certOIDinfo, OID_INFO ), 
-							&length, READCMS_FLAG_INNERHEADER | \
-									 READCMS_FLAG_DEFINITELENGTH );
 	if( cryptStatusOK( status ) && \
 		( length < MIN_OBJECT_SIZE || length > MAX_INTLENGTH_SHORT ) )
 		status = CRYPT_ERROR_BADDATA;
@@ -322,9 +381,9 @@ static int importPrivateKey( const PKCS12_OBJECT_INFO *keyObjectInfo,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Create the private-key object to import the key data into and set the 
-	   key label.  We have to set the label before we load the key or the key 
-	   load will be blocked by the kernel */
+	/* Create the private-key object that we'll be importing the key data 
+	   into and set the key label.  We have to set the label before we load 
+	   the key or the key load will be blocked by the kernel */
 	setMessageCreateObjectInfo( &createInfo, cryptAlgo );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
 							  IMESSAGE_DEV_CREATEOBJECT, &createInfo, 
@@ -374,294 +433,88 @@ static int importPrivateKey( const PKCS12_OBJECT_INFO *keyObjectInfo,
 
 /****************************************************************************
 *																			*
-*						Read PKCS #12 Object Information					*
-*																			*
-****************************************************************************/
-
-/* Read an object's attributes */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int readObjectAttributes( INOUT STREAM *stream, 
-								 INOUT PKCS12_INFO *pkcs12info )
-	{
-	int endPos, length, iterationCount, status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
-
-	/* Determine how big the collection of attributes is */
-	status = readSet( stream, &length );
-	if( cryptStatusError( status ) )
-		return( status );
-	endPos = stell( stream ) + length;
-
-	/* Read the collection of attributes */
-	for( iterationCount = 0;
-		 stell( stream ) < endPos && \
-			iterationCount < FAILSAFE_ITERATIONS_MED;
-		 iterationCount++ )
-		{
-		BYTE stringBuffer[ ( CRYPT_MAX_TEXTSIZE * 2 ) + 8 ];
-		int attributeType, stringLength, srcIndex, destIndex;
-
-		/* Read the outer wrapper and determine the attribute type based on
-		   the OID */
-		readSequence( stream, NULL );
-		status = readOID( stream, attributeOIDinfo, 
-						  FAILSAFE_ARRAYSIZE( attributeOIDinfo, OID_INFO ), 
-						  &attributeType );
-		if( cryptStatusError( status ) )
-			return( status );
-
-		/* Read the wrapper around the attribute payload */
-		status = readSet( stream, &length );
-		if( cryptStatusError( status ) )
-			return( status );
-
-		switch( attributeType )
-			{
-			case PKCS12_ATTRIBUTE_NONE:
-				/* It's a don't-care attribute, skip it */
-				if( length > 0 )
-					status = sSkip( stream, length );
-				break;
-
-			case PKCS12_ATTRIBUTE_LABEL:
-				/* Read the label, translating it from Unicode.  We assume
-				   that it's just widechar ASCII/latin-1 (which always seems
-				   to be the case), which avoids OS-specific i18n 
-				   headaches */
-				status = readCharacterString( stream, stringBuffer, 
-									CRYPT_MAX_TEXTSIZE * 2, &stringLength,
-									BER_STRING_BMP );
-				if( cryptStatusError( status ) )
-					break;
-				for( srcIndex = destIndex = 0; srcIndex < stringLength;
-					 srcIndex +=2, destIndex++ )
-					{
-					pkcs12info->label[ destIndex ] = \
-								stringBuffer[ srcIndex + 1 ];
-					}
-				pkcs12info->labelLength = destIndex;
-				break;
-
-			case PKCS12_ATTRIBUTE_ID:
-				/* It's a binary-blob ID, usually a 32-bit little-endian 
-				   integer, remember it in case it's needed later */
-				status = readOctetString( stream, pkcs12info->id, 
-										  &pkcs12info->idLength, 
-										  1, CRYPT_MAX_HASHSIZE );
-				break;
-
-			default:
-				retIntError();
-			}
-		if( cryptStatusError( status ) )
-			return( status );
-		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
-
-	return( CRYPT_OK );
-	}
-
-/* Read object information */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
-static int readObjectInfo( INOUT STREAM *stream, 
-						   OUT PKCS12_OBJECT_INFO *pkcs12objectInfo,
-						   const BOOLEAN isPrivateKey,
-						   INOUT ERROR_INFO *errorInfo )
-	{
-	const char *objectName = isPrivateKey ? "private-key" : "certificate";
-	int payloadOffset = DUMMY_INIT, payloadLength, status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( pkcs12objectInfo, sizeof( PKCS12_OBJECT_INFO ) ) );
-	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
-
-	REQUIRES( errorInfo != NULL );
-
-	/* Clear return value */
-	memset( pkcs12objectInfo, 0, sizeof( PKCS12_OBJECT_INFO ) );
-
-	/* If we're reading a private key then it's held within CMS Data which
-	   in turn contains a pkcs12ShroudedKeyBag, strip the encapsulation to 
-	   get to the encryption information */
-	if( isPrivateKey )
-		{
-		status = readCMSheader( stream, keyBagOIDinfo, 
-						   FAILSAFE_ARRAYSIZE( keyBagOIDinfo, OID_INFO ),
-						   NULL, READCMS_FLAG_NONE );
-		}
-	else
-		{
-		/* We're reading a public certificate held within CMS EncryptedData, 
-		   skip the encapsulation to get to the encryption information */
-		readSequence( stream, NULL );
-		status = readFixedOID( stream, OID_CMS_DATA, 
-							   sizeofOID( OID_CMS_DATA ) );
-		}
-	if( cryptStatusError( status ) )
-		{
-		retExt( status, 
-				( status, errorInfo, 
-				  "Invalid %s object header", objectName ) );
-		}
-
-	/* Read the encryption algorithm information */
-	status = readProtAlgoInfo( stream, &pkcs12objectInfo->cryptAlgo,
-							   &pkcs12objectInfo->keySize );
-	if( cryptStatusError( status ) )
-		{
-		retExt( status, 
-				( status, errorInfo, 
-				  "Invalid %s protection algorithm", objectName ) );
-		}
-	
-	/* Read the key-derivation parameters */
-	status = readKeyDerivationInfo( stream, pkcs12objectInfo->salt,
-									CRYPT_MAX_HASHSIZE, 
-									&pkcs12objectInfo->saltSize,
-									&pkcs12objectInfo->iterations );
-	if( cryptStatusError( status ) )
-		{
-		retExt( status, 
-				( status, errorInfo, 
-				  "Invalid %s protection parameters", objectName ) );
-		}
-
-	/* Read the start of the encrypted content.  This has a variety of 
-	   encapsulations depending on how its hidden inside the PKCS #12 
-	   object so we read it as a generic object.  readGenericHole()
-	   disallows indefinite-length encodings so we know that the returned 
-	   payload length will have a definite value */
-	status = readGenericHole( stream, &payloadLength, MIN_OBJECT_SIZE, 
-							  DEFAULT_TAG );
-	if( cryptStatusOK( status ) )
-		{
-		payloadOffset = stell( stream );
-		status = sSkip( stream, payloadLength );
-		}
-	if( cryptStatusError( status ) )
-		{
-		retExt( status, 
-				( status, errorInfo, 
-				  "Invalid %s payload data", objectName ) );
-		}
-	pkcs12objectInfo->payloadOffset = payloadOffset;
-	pkcs12objectInfo->payloadSize = payloadLength;
-
-	return( CRYPT_OK );
-	}
-
-/****************************************************************************
-*																			*
 *							Read PKCS #12 Keys								*
 *																			*
 ****************************************************************************/
 
-/* Read a single object in a keyset */
+/* Read a set of objects in a keyset */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
-static int readObject( INOUT STREAM *stream, 
-					   OUT PKCS12_INFO *pkcs12info, 
-					   const BOOLEAN isPrivateKey,
-					   INOUT ERROR_INFO *errorInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 6 ) ) \
+static int readObjects( INOUT STREAM *stream, 
+						OUT_ARRAY( maxNoPkcs12objects ) PKCS12_INFO *pkcs12info, 
+						IN_LENGTH_SHORT const int maxNoPkcs12objects, 
+						IN_LENGTH_MIN( 32 ) const long endPos,
+						const BOOLEAN isEncryptedCert,
+						INOUT ERROR_INFO *errorInfo )
 	{
-	PKCS12_OBJECT_INFO *pkcs12objectInfo = \
-				isPrivateKey ? &pkcs12info->keyInfo : &pkcs12info->certInfo;
-	STREAM objectStream;
-	BYTE buffer[ MIN_OBJECT_SIZE + 8 ];
-	const char *objectName = isPrivateKey ? "private-key" : "certificate";
-	void *objectData;
-	int headerSize = DUMMY_INIT, objectLength = DUMMY_INIT, status;
+	int iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
-	
+	assert( isWritePtr( pkcs12info, sizeof( PKCS12_INFO ) * \
+									maxNoPkcs12objects ) );
+
+	REQUIRES( maxNoPkcs12objects >= 1 && \
+			  maxNoPkcs12objects < MAX_INTLENGTH_SHORT );
+	REQUIRES( endPos >= 32 && endPos < MAX_INTLENGTH );
 	REQUIRES( errorInfo != NULL );
 
-	/* Clear return values */
-	memset( pkcs12info, 0, sizeof( PKCS12_INFO ) );
-
-	/* Read the current object.  We can't use getObjectLength() here because 
-	   we're reading from a file rather than a memory stream so we have to
-	   grab the first MIN_OBJECT_SIZE bytes from the file stream and decode
-	   them to see what's next */
-	status = sread( stream, buffer, MIN_OBJECT_SIZE );
-	if( cryptStatusOK( status ) )
+	/* Read each object in the current collection */
+	for( iterationCount = 0; 
+		 stell( stream ) < endPos && iterationCount < FAILSAFE_ITERATIONS_MED;
+		 iterationCount++ )
 		{
-		STREAM headerStream;
+		PKCS12_INFO localPkcs12Info, *pkcs12infoPtr;
+		PKCS12_OBJECT_INFO *pkcs12ObjectInfoPtr;
+		BOOLEAN isCertificate = FALSE;
 
-		sMemConnect( &headerStream, buffer, MIN_OBJECT_SIZE );
-		status = readGenericHole( &headerStream, &objectLength, 
-								  MIN_OBJECT_SIZE, DEFAULT_TAG );
-		if( cryptStatusOK( status ) )
-			headerSize = stell( &headerStream );
-		sMemDisconnect( &headerStream );
-		}
-	if( cryptStatusError( status ) )
-		{
-		retExt( status, 
-				( status, errorInfo, 
-				  "Couldn't read %s object data", objectName ) );
-		}
-	if( objectLength < MIN_OBJECT_SIZE || \
-		objectLength > MAX_INTLENGTH_SHORT )
-		{
-		retExt( status, 
-				( status, errorInfo, 
-				  "Invalid %s object length %d", objectName, objectLength ) );
-		}
+		/* Read one object */
+		status = pkcs12ReadObject( stream, &localPkcs12Info, 
+								   isEncryptedCert, errorInfo );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( localPkcs12Info.flags & ( PKCS12_FLAG_CERT | \
+									  PKCS12_FLAG_ENCCERT ) )
+			isCertificate = TRUE;
 
-	/* Allocate storage for the object and copy the already-read portion to 
-	   the start of the storage */
-	objectLength += headerSize;
-	if( ( objectData = clAlloc( "readObject", objectLength ) ) == NULL )
-		return( CRYPT_ERROR_MEMORY );
-	memcpy( objectData, buffer, MIN_OBJECT_SIZE );
+		/* Find the location where we'll copy over the new object data */
+		status = findObjectEntryLocation( &pkcs12infoPtr, pkcs12info, 
+										  maxNoPkcs12objects, 
+										  localPkcs12Info.idLength <= 0 ? \
+												NULL : localPkcs12Info.id,
+										  localPkcs12Info.idLength,
+										  localPkcs12Info.flags );
+		if( cryptStatusError( status ) )
+			{
+			pkcs12freeObjectEntry( isCertificate ? \
+					&localPkcs12Info.certInfo : &localPkcs12Info.keyInfo );
+			if( status == CRYPT_ERROR_OVERFLOW )
+				{
+				retExt( CRYPT_ERROR_OVERFLOW, 
+						( CRYPT_ERROR_OVERFLOW, errorInfo, 
+						  "No more room in keyset data to add further "
+						  "PKCS #12 items" ) );
+				}
+			retExt( status, 
+					( status, errorInfo, 
+					  "Couldn't reconcile ID-less object with existing "
+					  "PKCS #12 objects" ) );
+			}
 
-	/* Read the remainder of the object into the memory buffer and check 
-	   that the overall object is valid */
-	status = sread( stream, ( BYTE * ) objectData + MIN_OBJECT_SIZE,
-					objectLength - MIN_OBJECT_SIZE );
-	if( cryptStatusOK( status ) )
-		status = checkObjectEncoding( objectData, objectLength );
-	if( cryptStatusError( status ) )
-		{
-		clFree( "readObject", objectData );
-		retExt( status, 
-				( status, errorInfo, 
-				  "Invalid %s object data", objectName ) );
+		/* Copy the newly-read PKCS #12 object information into the PKCS #12
+		   keyset info */
+		pkcs12ObjectInfoPtr = isCertificate ? &pkcs12infoPtr->certInfo : \
+											  &pkcs12infoPtr->keyInfo;
+		if( pkcs12ObjectInfoPtr->data != NULL )
+			{
+			pkcs12freeObjectEntry( isCertificate ? \
+					&localPkcs12Info.certInfo : &localPkcs12Info.keyInfo );
+			retExt( CRYPT_ERROR_BADDATA, 
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Multiple conflicting %s found in keyset",
+					  isCertificate ? "certificates" : "keys" ) );
+			}
+		copyObjectInfo( pkcs12infoPtr, &localPkcs12Info, isCertificate );
 		}
-
-	/* Read the object information from the in-memory object data */
-	sMemConnect( &objectStream, objectData, objectLength );
-	status = readObjectInfo( &objectStream, pkcs12objectInfo, isPrivateKey, 
-							 errorInfo );
-	if( cryptStatusOK( status ) && stell( &objectStream ) < objectLength )
-		{
-		/* There are object attributes present, read these as well.  Note 
-		   that these apply to the overall set of objects, so we read them
-		   into the general information rather than the per-object 
-		   information */
-		status = readObjectAttributes( &objectStream, pkcs12info );
-		}
-	sMemDisconnect( &objectStream );
-	if( cryptStatusError( status ) )
-		{
-		clFree( "readObject", objectData );
-		retExt( status, 
-				( status, errorInfo, "Invalid %s information",
-				  isPrivateKey ? "private key" : "certificate" ) );
-		}
-
-	/* Remember the encoded object data */
-	pkcs12objectInfo->data = objectData;
-	pkcs12objectInfo->dataSize = objectLength;
-	ENSURES( rangeCheck( pkcs12objectInfo->payloadOffset, 
-						 pkcs12objectInfo->payloadSize,
-						 pkcs12objectInfo->dataSize ) );
 
 	return( CRYPT_OK );
 	}
@@ -669,7 +522,7 @@ static int readObject( INOUT STREAM *stream,
 /* Read an entire keyset */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
-int readPkcs12Keyset( INOUT STREAM *stream, 
+int pkcs12ReadKeyset( INOUT STREAM *stream, 
 					  OUT_ARRAY( maxNoPkcs12objects ) PKCS12_INFO *pkcs12info, 
 					  IN_LENGTH_SHORT const int maxNoPkcs12objects, 
 					  IN_LENGTH const long endPos,
@@ -690,37 +543,44 @@ int readPkcs12Keyset( INOUT STREAM *stream,
 	/* Clear return value */
 	memset( pkcs12info, 0, sizeof( PKCS12_INFO ) * maxNoPkcs12objects );
 
-	/* Scan all of the objects in the keyset */
+	/* Scan all of the objects in the keyset.  This gets quite complicated
+	   because there are multiple points at which we can have a SET/SEQUENCE
+	   OF and depending on the implementation multiple objects may be stored
+	   at any of these points, so we have to handle multiple nesting points
+	   at which we can find more than one of an object */
 	for( status = CRYPT_OK, iterationCount = 0;
 		 cryptStatusOK( status ) && stell( stream ) < endPos && \
 			iterationCount < FAILSAFE_ITERATIONS_MED; iterationCount++ )
 		{
-		PKCS12_INFO *pkcs12infoPtr = &pkcs12info[ 0 ];
-					/* Because of the lack of indexing information we can't 
-					   connect multiple keys and certificates, so we have to 
-					   assume that whatever we find in the way of keys and 
-					   certificates is connected.  This means that there's 
-					   effectively only one set of objects present, which is 
-					   also implied by MAX_PKCS12_OBJECTS being 1 */
-		PKCS12_INFO localPkcs12Info;
-		int isCertificate;
+		long length, innerEndPos = CRYPT_ERROR;
+		int isEncrypted, noEOCs = 0;
 
-		/* Read the CMS header encapsulation for the object and the first
-		   layer of inner nesting.  At this point we get to more PKCS #12 
-		   stupidity, if we hit CMS EncryptedData (isCertificate == TRUE) 
-		   then it's actually a certificate (that doesn't need to be 
-		   encrypted), and if we hit CMS Data (isCertificate == FALSE) then 
-		   it's a private key wrapped within a bizarre reinvention of CMS 
-		   EncryptedData that's nested within the CMS Data */
-		status = isCertificate = \
+		/* Read the CMS header encapsulation for the object.  At this point 
+		   we get to more PKCS #12 stupidity, if we hit CMS EncryptedData 
+		   (isEncrypted == TRUE) then it's actually a certificate (that 
+		   doesn't need to be encrypted), and if we hit CMS Data 
+		   (isEncrypted == FALSE) then it's usually a private key wrapped 
+		   within a bizarre reinvention of CMS EncryptedData that's nested 
+		   within the CMS Data, although in some rare cases it may be a 
+		   SEQUENCE OF certificates and/or private key data that doesn't 
+		   correspond to either of the above.  The combinations are:
+
+			Data
+				SEQUENCE OF
+					ShroundedKeyBag | CertBag
+			
+			EncryptedData
+				Data (= Certificate) 
+
+		   So if we find EncryptedData then we know that it's definitely a 
+		   certificate (so far nothing has tried to put private keys in
+		   EncryptedData, although the spec allows it).  If we find Data 
+		   then it could be anything, and we have to keep looking at a lower
+		   level */
+		status = isEncrypted = \
 			readCMSheader( stream, keyDataOIDinfo, 
 						   FAILSAFE_ARRAYSIZE( keyDataOIDinfo, OID_INFO ),
-						   NULL, READCMS_FLAG_NONE );
-		if( !cryptStatusError( status ) && !isCertificate )
-			{
-			/* Skip the SET OF PKCS12Bag encapsulation */
-			status = readSequence( stream, NULL );
-			}
+						   &length, READCMS_FLAG_NONE );
 		if( cryptStatusError( status ) )
 			{
 			retExt( CRYPT_ERROR_BADDATA, 
@@ -728,63 +588,107 @@ int readPkcs12Keyset( INOUT STREAM *stream,
 					  "Invalid PKCS #12 object header" ) );
 			}
 
-		/* Read the object */
-		status = readObject( stream, &localPkcs12Info, !isCertificate, 
-							 errorInfo );
+		/* Find out where the collection of PKCS #12 objects in the current
+		   set of objects ends.  There may be only one, or many, and they
+		   may or may not be of the same type */
+		if( length != CRYPT_UNUSED )
+			innerEndPos = stell( stream ) + length;
+		else
+			{
+			/* In order to get to this point without finding a length we
+			   need to have encountered three indefinite-length wrappers,
+			   which means that we need to skip three EOCs at the end */
+			noEOCs = 3;
+			}
+		if( !isEncrypted )
+			{
+			int innerLength;
+
+			/* Skip the SET OF PKCS12Bag encapsulation */
+			status = readSequenceI( stream, &innerLength );
+			if( cryptStatusError( status ) )
+				return( status );
+			if( length == CRYPT_UNUSED && innerLength != CRYPT_UNUSED )
+				innerEndPos = stell( stream ) + innerLength;
+			}
+		if( innerEndPos == CRYPT_ERROR )
+			{
+			int innerLength;
+
+			/* We still haven't got any length information, at this point 
+			   the best that we can do is assume that there's a single 
+			   encapsulated object present (which, in the rare situations
+			   where this case arises, always seems to be the case) and
+			   explicitly find its length before we can continue */
+			status = getStreamObjectLength( stream, &innerLength );
+			if( cryptStatusError( status ) )
+				return( status );
+			innerEndPos = stell( stream ) + innerLength;
+
+			/* In practice it's not quite this simple.  Firstly, this
+			   approach is somewhat risky because we're calling 
+			   getStreamObjectLength() on a stream that could in theory be 
+			   non-seekable (although in practice file streams are always 
+			   seekable so this is more a theoretical than an actual 
+			   problem).  In addition PKCS #12 files usually contain a
+			   single object that fits easily within the stream buffer, 
+			   so even if the stream was non-seekable the call would 
+			   usually work.
+
+			   Secondly, and more critically, readObjects() calls
+			   pkcs12ReadObject() which calls readRawObjectAlloc(), which
+			   needs a definite length, again because it's dealing with a 
+			   non-seekable stream (and in this case it really may be a non-
+			   seekable stream).  Since we're dealing with an indefinite
+			   length, readRawObjectAlloc() can't continue.
+			   
+			   A kludge workaround for this would be to pass the innerLength 
+			   value in to readObjects() as a length hint and to tell it to 
+			   bypass the call to readRawObjectAlloc() in favour of a direct
+			   malloc() and fixed-length read, duplicating part of 
+			   readRawObjectAlloc().  For now we'll leave this until there's 
+			   an actual demand for it */
+			retExt( CRYPT_ERROR_BADDATA, 
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Couldn't get PKCS #12 object length information" ) );
+
+			}
+
+		/* Read the set of objects */
+		status = readObjects( stream, pkcs12info, maxNoPkcs12objects,
+							  innerEndPos, isEncrypted, errorInfo );
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/* We now run into yet another problem with PKCS #12's lack of 
-		   indexing information.  The PKCS #15 code would now do a 
-		   findEntry() to find the entry that matches what we've just read 
-		   and attach that to whatever's already present for an existing 
-		   entry if required (so for example it'd attach a certificate to a 
-		   previously-read private key), however with PKCS #12 there's no 
-		   way to do this so we have to assume that there's just one private 
-		   key matched up with one certificate, and nothing else.  It's a 
-		   bit unclear how we should respond to the presence of multiple 
-		   keys and certificates, in theory we could ignore all but the 
-		   first one, but there's no way to tell if e.g. the first 
-		   certificate belongs with the second key, so we treat any further 
-		   keys and certificates as an error */
-		if( isCertificate )
+		/* Skip any EOCs that may be present.  In the simplest case where
+		   the data was encoded using all indefinte-length encoding we know
+		   how many EOCs are present and skip them all */
+		if( noEOCs > 0 )
 			{
-			if( pkcs12infoPtr->certInfo.data != NULL )
+			int i;
+
+			for( i = 0; i < noEOCs; i++ )
 				{
-				pkcs12freeObjectEntry( &pkcs12infoPtr->certInfo );
-				retExt( CRYPT_ERROR_BADDATA, 
-						( CRYPT_ERROR_BADDATA, errorInfo, 
-						  "Multiple conflicting certificates found in "
-						  "keyset" ) );
+				const int value = checkEOC( stream );
+				if( cryptStatusError( value ) )
+					return( value );
+				if( value == FALSE )
+					return( CRYPT_ERROR_BADDATA );
 				}
-			memcpy( &pkcs12infoPtr->certInfo, &localPkcs12Info.certInfo, 
-					sizeof( PKCS12_OBJECT_INFO ) );
 			}
 		else
 			{
-			if( pkcs12infoPtr->keyInfo.data != NULL )
-				{
-				pkcs12freeObjectEntry( &pkcs12infoPtr->keyInfo );
-				retExt( CRYPT_ERROR_BADDATA, 
-						( CRYPT_ERROR_BADDATA, errorInfo, 
-						  "Multiple conflicting keys found in keyset" ) );
-				}
-			memcpy( &pkcs12infoPtr->keyInfo, &localPkcs12Info.keyInfo, 
-					sizeof( PKCS12_OBJECT_INFO ) );
-			}
-		if( pkcs12infoPtr->labelLength <= 0 && \
-			localPkcs12Info.labelLength > 0 )
-			{
-			memcpy( pkcs12infoPtr->label, localPkcs12Info.label,
-					localPkcs12Info.labelLength );
-			pkcs12infoPtr->labelLength = localPkcs12Info.labelLength;
-			}
-		if( pkcs12infoPtr->idLength <= 0 && \
-			localPkcs12Info.idLength > 0 )
-			{
-			memcpy( pkcs12infoPtr->id, localPkcs12Info.id,
-					localPkcs12Info.idLength );
-			pkcs12infoPtr->idLength = localPkcs12Info.idLength;
+			/* If the data was encoded using a mixture of definite and 
+			   indefinite encoding there may be EOC's present even though 
+			   the length is known so we skip them if necessary.  We have to 
+			   make the reads speculative since the indefinite-length values 
+			   were processed inside readCMSheader(), so we don't know how 
+			   many there were */
+			if( ( status = checkEOC( stream ) ) == TRUE )
+				status = checkEOC( stream );
+			if( cryptStatusError( status ) )
+				return( status );
+			status = CRYPT_OK;	/* checkEOC() returns TRUE/FALSE */
 			}
 		}
 	
@@ -911,12 +815,12 @@ static int keyCrack( const void *encData, const int length )
 #endif /* 0 */
 
 /* Get a key from a PKCS #12 keyset.  This gets pretty ugly both because 
-   PKCS #12 keysets contain no indexing information (making it impossible to 
-   look up objects within them) and because in most cases all data, 
-   including public keys and certificates, is encrypted.  To handle this we 
-   only allow private-key reads, and treat whatever's in the keyset as being 
-   a match for any request, since without indexing information there's no 
-   way to tell whether it really is a match or not */
+   PKCS #12 keysets contain no effective indexing information (making it 
+   impossible to look up objects within them) and because in most cases all 
+   data, including public keys and certificates, is encrypted.  To handle 
+   this we only allow private-key reads, and treat whatever's in the keyset 
+   as being a match for any request, since without indexing information 
+   there's no way to tell whether it really is a match or not */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
 static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
@@ -935,7 +839,7 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 #endif /* USE_CERTIFICATES */
 	CRYPT_CONTEXT iCryptContext;
 	CRYPT_ALGO_TYPE cryptAlgo = CRYPT_ALGO_RSA;
-	const PKCS12_INFO *pkcs12infoPtr = keysetInfoPtr->keyData;
+	const PKCS12_INFO *pkcs12infoPtr;
 	const int auxInfoMaxLength = *auxInfoLength;
 	int status;
 
@@ -973,13 +877,40 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 				  "PKCS #12 keysets only support private-key reads" ) );
 		}
 
-	/* Make sure that the components that we need are present */
+	/* PKCS #12 doesn't provide any useful indexing information that we
+	   can use to look up a key apart from an optional label, so if we get 
+	   a key ID type that we can't do anything with or we're matching on
+	   the special-case key ID "[none]" we perform a fetch of the first 
+	   matching key on the basis that most PKCS #12 keysets only contain a 
+	   single key of interest */
+	if( keyIDtype == CRYPT_IKEYID_KEYID || \
+		keyIDtype == CRYPT_IKEYID_PGPKEYID || \
+		keyIDtype == CRYPT_IKEYID_ISSUERID || \
+		( keyIDlength == 6 && !strCompare( keyID, "[none]", 6 ) ) )
+		{
+		pkcs12infoPtr = pkcs12FindEntry( keysetInfoPtr->keyData,
+										 keysetInfoPtr->keyDataNoObjects,
+										 CRYPT_KEYID_NAME, NULL, 0 );
+		}
+	else
+		{
+		/* Find a private-key entry */
+		pkcs12infoPtr = pkcs12FindEntry( keysetInfoPtr->keyData,
+										 keysetInfoPtr->keyDataNoObjects,
+										 keyIDtype, keyID, keyIDlength );
+		}
+	if( pkcs12infoPtr == NULL )
+		{
+		retExt( CRYPT_ERROR_NOTFOUND, 
+				( CRYPT_ERROR_NOTFOUND, KEYSET_ERRINFO, 
+				  "No information present for this ID" ) );
+		}
 	if( pkcs12infoPtr->keyInfo.data == NULL )
 		{
 		/* There's not enough information present to get a private key */
 		retExt( CRYPT_ERROR_NOTFOUND, 
 				( CRYPT_ERROR_NOTFOUND, KEYSET_ERRINFO, 
-				  "No private key data present" ) );
+				  "No private key data present for this ID" ) );
 		}
 
 	/* If we're just checking whether an object exists, return now.  If all
@@ -997,39 +928,67 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	if( auxInfo == NULL )
 		return( CRYPT_ERROR_WRONGKEY );
 
-	/* If there's a certiticate present, import it as a data-only certificate
-	   object to be attached to the private key */
+	/* If there's a certificate present with the private key, import it as a 
+	   data-only certificate object to be attached to the private key */
 #ifdef USE_CERTIFICATES
 	if( pkcs12infoPtr->certInfo.data != NULL )
 		{
 		const PKCS12_OBJECT_INFO *certObjectInfo = &pkcs12infoPtr->certInfo;
-		BYTE certDataBuffer[ 2048 + 8 ], *certData = certDataBuffer;
-		int certDataSize = certObjectInfo->payloadSize, value;
+		const int certDataSize = certObjectInfo->payloadSize;
+		int value;
 
-		/* Set up a buffer to decrypt the certificate data */
-		if( certDataSize > 2048 )
+		/* If it's an unencrypted certificate then we can import it 
+		   directly */
+		if( pkcs12infoPtr->flags & PKCS12_FLAG_CERT )
 			{
-			if( certDataSize >= MAX_INTLENGTH_SHORT )
-				return( CRYPT_ERROR_OVERFLOW );
-			if( ( certData = clAlloc( "getItemFunction", certDataSize ) ) == NULL )
-				return( CRYPT_ERROR_MEMORY );
+			STREAM stream;
+
+			sMemConnect( &stream, 
+						 ( BYTE * ) certObjectInfo->data + \
+									certObjectInfo->payloadOffset, 
+						 certDataSize );
+			status = importCertFromStream( &stream, &iDataCert, 
+										   keysetInfoPtr->ownerHandle,
+										   CRYPT_ICERTTYPE_DATAONLY, 
+										   certDataSize );
+			sMemDisconnect( &stream );
 			}
-		memcpy( certData, ( BYTE * ) certObjectInfo->data + \
-						  certObjectInfo->payloadOffset, certDataSize );
-
-		/* Decrypt and import the certificate */
-		status = importCertificate( certObjectInfo, keysetInfoPtr->ownerHandle, 
-									auxInfo, *auxInfoLength, certData, 
-									certDataSize, &iDataCert );
-		if( cryptStatusError( status ) )
+		else
 			{
+			BYTE certDataBuffer[ 2048 + 8 ], *certData = certDataBuffer;
+
+			REQUIRES( pkcs12infoPtr->flags & PKCS12_FLAG_ENCCERT );
+
+			/* It's an encrypted certificate, we need to decrypt it before 
+			   we can import it.  First we set up a buffer to decrypt the 
+			   certificate data */
+			if( certDataSize > 2048 )
+				{
+				if( certDataSize >= MAX_INTLENGTH_SHORT )
+					return( CRYPT_ERROR_OVERFLOW );
+				if( ( certData = clAlloc( "getItemFunction", \
+										  certDataSize ) ) == NULL )
+					return( CRYPT_ERROR_MEMORY );
+				}
+			memcpy( certData, 
+					( BYTE * ) certObjectInfo->data + \
+							   certObjectInfo->payloadOffset, certDataSize );
+
+			/* Decrypt and import the certificate */
+			status = importCertificate( certObjectInfo, 
+										keysetInfoPtr->ownerHandle, 
+										auxInfo, *auxInfoLength, certData, 
+										certDataSize, &iDataCert );
 			zeroise( certData, certDataSize );
 			if( certData != certDataBuffer )
 				clFree( "getItemFunction", certData );
+			}
+		if( cryptStatusError( status ) )
+			{
 			retExt( status, 
 					( status, KEYSET_ERRINFO, 
-					  "Couldn't recreate certificate from stored "
-					  "certificate data" ) );
+					  "Couldn't recreate certificate from stored certificate "
+					  "data" ) );
 			}
 		
 		/* In yet another piece of design brilliance, the PKC algorithm 

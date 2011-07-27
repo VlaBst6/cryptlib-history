@@ -54,6 +54,10 @@
 
 #ifdef TEST_DEVICE
 
+/* Note that Fortezza support was removed as of cryptlib 3.4.0, the Fortezza 
+   test code is still present here for historical purposes but it's not 
+   longer supported in cryptlib itself */
+
 /* The device code will produce a large number of warnings because of ASCII
    <-> Unicode issues, since there aren't any PKCS #11 drivers for WinCE
    it's not worth adding a mountain of special-case code to handle this so
@@ -1270,14 +1274,6 @@ int testDevices( void )
 	{
 	int i, status;
 
-	/* Test Fortezza devices */
-#if 0
-	status = testCryptoDevice( CRYPT_DEVICE_FORTEZZA, "Fortezza card",
-							   &fortezzaDeviceInfo );
-	if( cryptStatusError( status ) && status != CRYPT_ERROR_NOTAVAIL )
-		return( status );
-#endif /* 0 */
-
 	/* Test PKCS #11 devices */
 #if 1
 	for( i = 0; pkcs11DeviceInfo[ i ].name != NULL; i++ )
@@ -2171,8 +2167,7 @@ int testUser( void )
 
 	/* Set the SO password */
 	status = cryptSetAttributeString( cryptUser, CRYPT_USERINFO_PASSWORD,
-									  TEXT( "password" ),
-									  paramStrlen( TEXT( "password" ) ) );
+									  TEST_PASSWORD, paramStrlen( TEST_PASSWORD ) );
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptSetAttributeString() failed with error code %d, "
@@ -2191,7 +2186,7 @@ int testUser( void )
 		return( FALSE );
 		}
 	status = cryptLogin( &cryptUser, TEXT( "Security officer" ),
-						 TEXT( "password" ) );
+						 TEST_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptLogin() (SO) failed with error code %d, line %d.\n",

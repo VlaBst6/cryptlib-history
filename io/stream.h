@@ -23,7 +23,7 @@
 #elif defined( __PALMOS__ )
   #include <VFSMgr.h>
 #elif defined( __UCOSII__ )
-  #include <fs_api.h>
+  #include <fs_api.h>	/* For uC/FS 2.x, renamed to fs.h in 3.x */
 #elif !defined( CONFIG_NO_STDIO )
   #include <stdio.h>
 #endif /* System-specific file I/O headers */

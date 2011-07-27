@@ -1,13 +1,19 @@
 /****************************************************************************
 *																			*
 *						SSL v3/TLS Definitions Header File					*
-*						Copyright Peter Gutmann 1998-2009					*
+*						Copyright Peter Gutmann 1998-2011					*
 *																			*
 ****************************************************************************/
 
 #ifndef _SSL_DEFINED
 
 #define _SSL_DEFINED
+
+#if defined( INC_ALL )
+  #include "scorebrd.h"
+#else
+  #include "session/scorebrd.h"
+#endif /* _STREAM_DEFINED */
 
 /****************************************************************************
 *																			*
@@ -71,6 +77,13 @@
   #pragma message( "  Building with RSA as preferred SSL/TLS cipher suite." )
 #endif /* PREFER_RSA_TO_DH with VC++ */
 
+/* SSLv2 was finally removed in MSIE and Firefox in 2008, however some 
+   implementations still send SSLv2 hellos.  Define the following to enable 
+   handling of SSLv2 client hellos.  Note that this code is not maintained,
+   and your warranty is void when you enable SSLv2 hello handling */
+
+/* #define ALLOW_SSLV2_HELLO */
+
 /* SSL/TLS protocol-specific flags that augment the general session flags:
 
 	FLAG_ALERTSENT: Whether we've already sent a close-alert.  Keeping track 
@@ -83,19 +96,26 @@
 		a data packet, when the body-read decrypts the payload it should 
 		check for a rehandshake request in the payload.
 
+	SSL_PFLAG_CLIAUTHSKIPPED: The client saw an auth-request from the server 
+		and responded with a no-certificates alert, if we later get a close
+		alert from the server then provide additional error information 
+		indicating that this may be due to the lack of a client certificate.
+
 	FLAG_GCM: The encryption used is GCM and not the usual CBC, which 
 		unifies encryption and MACing into a single operation.
 	
 	FLAG_SUITEB_128: Enforce Suite B semantics on top of the standard TLS 
-	FLAG_SUITEB_256: 1.2 + ECC + AES-GCM ones.  _128 = P256, _256 = P384
-		(that's what the spec says) */
+	FLAG_SUITEB_256: 1.2 + ECC + AES-GCM ones.  _128 = P256 + P384, 
+		_256 = P384 only */
 
 #define SSL_PFLAG_NONE				0x00	/* No protocol-specific flags */
 #define SSL_PFLAG_ALERTSENT			0x01	/* Close alert sent */
-#define SSL_PFLAG_GCM				0x02	/* Encryption uses GCM, not CBC */
-#define SSL_PFLAG_SUITEB_128		0x04	/* Enforce Suite B 128-bit semantics */
-#define SSL_PFLAG_SUITEB_256		0x08	/* Enforce Suite B 256-bit semantics */
-#define SSL_PFLAG_CHECKREHANDSHAKE	0x10	/* Check decrypted pkt.for rehandshake */
+#define SSL_PFLAG_CLIAUTHSKIPPED	0x02	/* Client auth-req.skipped */
+#define SSL_PFLAG_GCM				0x04	/* Encryption uses GCM, not CBC */
+#define SSL_PFLAG_SUITEB_128		0x08	/* Enforce Suite B 128-bit semantics */
+#define SSL_PFLAG_SUITEB_256		0x10	/* Enforce Suite B 256-bit semantics */
+#define SSL_PFLAG_CHECKREHANDSHAKE	0x20	/* Check decrypted pkt.for rehandshake */
+#define SSL_PFLAG_MAX				0x2F	/* Maximum possible flag value */
 
 /* Suite B consists of two subclasses, the 128-bit security level (AES-128 
    with P256 and SHA2-256) and the 192-bit security level (AES-256 with P384 
@@ -163,7 +183,7 @@
 #define SSL_ALERT_CERTIFICATE_REVOKED		44
 #define SSL_ALERT_CERTIFICATE_EXPIRED		45
 #define SSL_ALERT_CERTIFICATE_UNKNOWN		46
-#define SSL_ALERT_ILLEGAL_PARAMETER			47
+#define TLS_ALERT_ILLEGAL_PARAMETER			47
 #define TLS_ALERT_UNKNOWN_CA				48
 #define TLS_ALERT_ACCESS_DENIED				49
 #define TLS_ALERT_DECODE_ERROR				50
@@ -193,7 +213,8 @@
 typedef enum {
 	/* SSLv3 cipher suites (0-10) */
 	SSL_NULL_WITH_NULL, SSL_RSA_WITH_NULL_MD5, SSL_RSA_WITH_NULL_SHA,
-	SSL_RSA_EXPORT_WITH_RC4_40_MD5, SSL_RSA_WITH_RC4_128_MD5,
+	SSL_RSA_EXPORT_WITH_RC4_40_MD5,		/* Non-valid/accapted suites */
+	SSL_RSA_WITH_RC4_128_MD5, SSL_FIRST_VALID_SUITE = SSL_RSA_WITH_RC4_128_MD5,
 	SSL_RSA_WITH_RC4_128_SHA, SSL_RSA_EXPORT_WITH_RC2_CBC_40_MD5,
 	SSL_RSA_WITH_IDEA_CBC_SHA, SSL_RSA_EXPORT_WITH_DES40_CBC_SHA,
 	SSL_RSA_WITH_DES_CBC_SHA, SSL_RSA_WITH_3DES_EDE_CBC_SHA,
@@ -318,14 +339,14 @@ typedef enum {
 	TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256, TLS_ECDH_RSA_WITH_AES_256_GCM_SHA384,
 
 	/* TLS-ECC (RFC 5489) PSK cipher suites, following the pattern from above
-	   at 49203/0xC033...49185 */
+	   at 49203/0xC033...49211 */
 	TLS_ECDHE_PSK_WITH_RC4_128_SHA, TLS_ECDHE_PSK_WITH_3DES_EDE_CBC_SHA,
     TLS_ECDHE_PSK_WITH_AES_128_CBC_SHA, TLS_ECDHE_PSK_WITH_AES_256_CBC_SHA,
 	TLS_ECDHE_PSK_WITH_AES_128_CBC_SHA256, TLS_ECDHE_PSK_WITH_AES_256_CBC_SHA384,
     TLS_ECDHE_PSK_WITH_NULL_SHA, TLS_ECDHE_PSK_WITH_NULL_SHA256,
     TLS_ECDHE_PSK_WITH_NULL_SHA384,
 
-	SSL_LAST 
+	SSL_LAST_SUITE
 	} SSL_CIPHERSUITE_TYPE;
 
 /* TLS extension types */
@@ -338,16 +359,22 @@ typedef enum {
 	TLS_EXT_TRUNCATED_HMAC,		/* Use 80-bit truncated HMAC */
 	TLS_EXT_STATUS_REQUEST,		/* OCSP status request from server */
 	TLS_EXT_USER_MAPPING,		/* RFC 4681 mapping of user name to account */
-	TLS_EXT_RESERVED1,			/* For future use */
-	TLS_EXT_RESERVED2,			/* For future use */
-	TLS_EXT_CERTTYPE,			/* RFC 5081 OpenPGP key support */
+	TLS_EXT_CLIENT_AUTHZ,		/* RFC 5878 authorisation exts */
+	TLS_EXT_SERVER_AUTHZ,		/* RFC 5878 authorisation exts */
+	TLS_EXT_CERTTYPE,			/* RFC 5081/6091 OpenPGP key support */
 	TLS_EXT_ELLIPTIC_CURVES,	/* RFC 4492 ECDH/ECDSA support */
 	TLS_EXT_EC_POINT_FORMATS,	/* RFC 4492 ECDH/ECDSA support */
 	TLS_EXT_SRP,				/* RFC 5054 SRP support */
 	TLS_EXT_SIGNATURE_ALGORITHMS,	/* RFC 5246 TLSv1.2 */
 		/* 14...34 unused */
 	TLS_EXT_SESSIONTICKET = 35,	/* RFC 4507 session ticket support */
-	TLS_EXT_LAST
+	TLS_EXT_LAST,
+
+	/* The secure-renegotiation extension, for some unknown reason, is given
+	   a value of 65281 / 0xFF01, so we defined it outside the usual 
+	   extension range in order for the standard range-checking to be a bit
+	   more sensible */
+	TLS_EXT_SECURE_RENEG = 65281,/* RFC 5746 secure renegotiation */
 	} TLS_EXT_TYPE;
 
 /* SSL/TLS certificate types */
@@ -466,6 +493,24 @@ typedef struct {
 			( algo ) == CRYPT_ALGO_ECDH || ( algo ) == CRYPT_ALGO_SHA2 || \
 			( algo ) == CRYPT_ALGO_HMAC_SHA2 ) ? TRUE : FALSE )
 
+  /* Special configuration defines to enable nonstandard behaviour for 
+     Suite B tests */
+  #ifdef CONFIG_SUITEB_TESTS 
+	typedef enum {
+		SUITEB_TEST_NONE,			/* No special test behaviour */
+
+		/* RFC 5430bis tests */
+		SUITEB_TEST_CLIINVALIDCURVE,/* Client sends non-Suite B curve */
+		SUITEB_TEST_SVRINVALIDCURVE,/* Server sends non-Suite B curve */
+		SUITEB_TEST_BOTHCURVES,		/* Client must send P256 and P384 as supp.curves */
+		SUITEB_TEST_BOTHSIGALGOS,	/* Client must send SHA256 and SHA384 as sig.algos */
+
+		SUITEB_TEST_LAST
+		} SUITEB_TEST_VALUE;
+
+	extern SUITEB_TEST_VALUE suiteBTestValue;
+	extern BOOLEAN suiteBTestClientCert;
+  #endif /* CONFIG_SUITEB_TESTS */
 #endif /* Suite B algorithms only */
 
 /****************************************************************************
@@ -516,12 +561,13 @@ typedef struct SL {
 	int originalVersion;		/* Original version set by the user before
 								   it was modified based on what the peer
 								   requested */
-#if 0	/* 28/01/08 Disabled since it's now finally removed in MSIE and 
-		   Firefox */
+#ifdef ALLOW_SSLV2_HELLO	/* 28/01/08 Disabled since it's now finally 
+							   removed in MSIE and Firefox */
 	BOOLEAN isSSLv2;			/* Client hello is SSLv2 */
-#endif /* 0 */
+#endif /* ALLOW_SSLV2_HELLO */
 	BOOLEAN hasExtensions;		/* Hello has TLS extensions */
 	BOOLEAN needSNIResponse;	/* Server needs to respond to SNI */
+	BOOLEAN needRenegResponse;	/* Server needs to respond to reneg.ind.*/
 
 	/* ECC-related information.  Since ECC algorithms have a huge pile of
 	   parameters we need to parse any extensions that the client sends in 
@@ -538,7 +584,7 @@ typedef struct SL {
 	   and sendECCPointExtn values indicate which curve to use and whether 
 	   the server needs to respond with a point-extension indicator */
 	BOOLEAN disableECC;			/* Extn.disabled use of ECC suites */
-	int eccCurveID;				/* cryptlib ID of ECC curve to use */
+	CRYPT_ECCCURVE_TYPE eccCurveID;	/* cryptlib ID of ECC curve to use */
 	BOOLEAN sendECCPointExtn;	/* Whether svr.has to respond with ECC point ext.*/
 	const void *eccSuiteInfoPtr;	/* ECC suite information */
 
@@ -830,9 +876,24 @@ int refreshHSStream( INOUT SESSION_INFO *sessionInfoPtr,
 
 /* Prototypes for functions in ssl_suites.c */
 
+#ifndef CONFIG_SUITEB
+
 CHECK_RETVAL \
 int getCipherSuiteInfo( OUT const CIPHERSUITE_INFO ***cipherSuiteInfoPtrPtrPtr,
-						OUT_INT_Z int *noSuiteEntries );
+						OUT_INT_Z int *noSuiteEntries,
+						const BOOLEAN isServer );
+#else
+
+#define getCipherSuiteInfo( infoPtr, noEntries, isServer ) \
+		getSuiteBCipherSuiteInfo( infoPtr, noEntries, isServer, suiteBinfo )
+
+CHECK_RETVAL \
+int getSuiteBCipherSuiteInfo( OUT const CIPHERSUITE_INFO ***cipherSuiteInfoPtrPtrPtr,
+							  OUT_INT_Z int *noSuiteEntries,
+							  const BOOLEAN isServer,
+							  IN_FLAGS_Z( SSL ) const int suiteBinfo );
+
+#endif /* CONFIG_SUITEB */
 
 /* Prototypes for functions in ssl_wr.c */
 

@@ -26,20 +26,20 @@ static const MESSAGE_ACL FAR_BSS messageParamACLTbl[] = {
 	/* Certs can only be signed by (private-key) PKC contexts */
 	{ MESSAGE_CRT_SIGN,
 	  { ST_CTX_PKC,
-		ST_NONE } },
+		ST_NONE, ST_NONE } },
 
 	/* Signatures can be checked with a raw PKC context or a cert or cert
 	   chain.  The object being checked can also be checked against a CRL,
 	   against revocation data in a cert store, or against an RTCS or OCSP
 	   responder */
 	{ MESSAGE_CRT_SIGCHECK,
-	  { ST_CTX_PKC | ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_CRL | \
-					 ST_KEYSET_DBMS,
+	  { ST_CTX_PKC | ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_CRL,
+	    ST_KEYSET_DBMS,
 		ST_SESS_RTCS | ST_SESS_OCSP } },
 
 	/* End-of-ACL marker */
-	{ MESSAGE_NONE, { ST_NONE, ST_NONE } },
-	{ MESSAGE_NONE, { ST_NONE, ST_NONE } }
+	{ MESSAGE_NONE, { ST_NONE, ST_NONE, ST_NONE } },
+	{ MESSAGE_NONE, { ST_NONE, ST_NONE, ST_NONE } }
 	};
 
 /****************************************************************************
@@ -462,7 +462,8 @@ typedef struct {
 
 	/* Object type checking information: Object subtypes for which this
 	   message is valid (for object-type-specific message) */
-	const OBJECT_SUBTYPE subTypeA, subTypeB;/* Object subtype for which msg.valid */
+	const OBJECT_SUBTYPE subTypeA, subTypeB, subTypeC;
+										/* Object subtype for which msg.valid */
 
 	/* Message type checking information used to assertion-check the function
 	   preconditions */
@@ -490,70 +491,70 @@ typedef struct {
 	} MESSAGE_HANDLING_INFO;
 
 static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
-	{ MESSAGE_NONE, ROUTE_NONE, 0, PARAMTYPE_NONE_NONE },
+	{ MESSAGE_NONE, ROUTE_NONE, 0, 0, 0, PARAMTYPE_NONE_NONE },
 
 	/* Control messages.  These messages aren't routed, are valid for all
 	   object types and subtypes, take no (or minimal) parameters, and are
 	   handled by the kernel */
 	{ MESSAGE_DESTROY,				/* Destroy the object */
-	  ROUTE_NONE, ST_ANY_A, ST_ANY_B,
+	  ROUTE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_NONE_NONE,
 	  PRE_DISPATCH( SignalDependentObjects ) },
 	{ MESSAGE_INCREFCOUNT,			/* Increment object ref.count */
-	  ROUTE_NONE, ST_ANY_A, ST_ANY_B,
+	  ROUTE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_NONE_NONE,
 	  HANDLE_INTERNAL( incRefCount ) },
 	{ MESSAGE_DECREFCOUNT,			/* Decrement object ref.count */
-	  ROUTE_NONE, ST_ANY_A, ST_ANY_B,
+	  ROUTE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_NONE_NONE,
 	  HANDLE_INTERNAL( decRefCount ) },
 	{ MESSAGE_GETDEPENDENT,			/* Get dependent object */
-	  ROUTE_NONE, ST_ANY_A, ST_ANY_B,
+	  ROUTE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_DATA_OBJTYPE,
 	  HANDLE_INTERNAL( getDependentObject ) },
 	{ MESSAGE_SETDEPENDENT,			/* Set dependent object (e.g. ctx->dev) */
-	  ROUTE_NONE, ST_ANY_A, ST_ANY_B,
+	  ROUTE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_DATA_SETDEPTYPE,
 	  HANDLE_INTERNAL( setDependentObject ) },
 	{ MESSAGE_CLONE,				/* Clone the object (only valid for ctxs) */
-	  ROUTE_FIXED( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV | ST_CTX_HASH, ST_NONE,
+	  ROUTE_FIXED( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV | ST_CTX_HASH, ST_NONE, ST_NONE, 
 	  PARAMTYPE_NONE_ANY,
 	  HANDLE_INTERNAL( cloneObject ) },
 
 	/* Attribute messages.  These messages are implicitly routed by attribute
 	   type, more specific checking is performed using the attribute ACL's */
 	{ MESSAGE_GETATTRIBUTE,			/* Get numeric object attribute */
-	  ROUTE_IMPLICIT, ST_ANY_A, ST_ANY_B,
+	  ROUTE_IMPLICIT, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_DATA_ANY,
 	  PRE_POST_DISPATCH( CheckAttributeAccess, MakeObjectExternal ) },
 	{ MESSAGE_GETATTRIBUTE_S,		/* Get string object attribute */
-	  ROUTE_IMPLICIT, ST_ANY_A, ST_ANY_B,
+	  ROUTE_IMPLICIT, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_DATA_ANY,
 	  PRE_DISPATCH( CheckAttributeAccess ) },
 	{ MESSAGE_SETATTRIBUTE,			/* Set numeric object attribute */
-	  ROUTE_IMPLICIT, ST_ANY_A, ST_ANY_B,
+	  ROUTE_IMPLICIT, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_DATA_ANY,
 	  PRE_POST_DISPATCH( CheckAttributeAccess, ChangeStateOpt ) },
 	{ MESSAGE_SETATTRIBUTE_S,		/* Set string object attribute */
-	  ROUTE_IMPLICIT, ST_ANY_A, ST_ANY_B,
+	  ROUTE_IMPLICIT, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_DATA_ANY,
 	  PRE_POST_DISPATCH( CheckAttributeAccess, ChangeStateOpt ) },
 	{ MESSAGE_DELETEATTRIBUTE,		/* Delete object attribute */
-	  ROUTE_IMPLICIT, ST_CTX_ANY | ST_CERT_ANY, ST_SESS_ANY | ST_USER_NORMAL | ST_USER_SO,
+	  ROUTE_IMPLICIT, ST_CTX_ANY | ST_CERT_ANY, ST_NONE, ST_SESS_ANY | ST_USER_NORMAL | ST_USER_SO,
 	  PARAMTYPE_NONE_ANY,
 	  PRE_DISPATCH( CheckAttributeAccess ) },
 
 	/* General messages to objects */
 	{ MESSAGE_COMPARE,				/* Compare objs.or obj.properties */
-	  ROUTE_SPECIAL( CompareMessageTarget ), ST_CTX_ANY | ST_CERT_ANY, ST_NONE,
+	  ROUTE_SPECIAL( CompareMessageTarget ), ST_CTX_ANY | ST_CERT_ANY, ST_NONE, ST_NONE, 
 	  PARAMTYPE_DATA_COMPARETYPE,
 	  PRE_DISPATCH( CheckCompareParam ) },
 	{ MESSAGE_CHECK,				/* Check object info */
-	  ROUTE_NONE, ST_ANY_A, ST_ANY_B,
+	  ROUTE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C,
 	  PARAMTYPE_NONE_CHECKTYPE,
 	  PRE_POST_DISPATCH( CheckCheckParam, ForwardToDependentObject ) },
 	{ MESSAGE_SELFTEST,				/* Perform a self-test */
-	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_SYSTEM, ST_NONE, 
+	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_SYSTEM, ST_NONE, 
 	  PARAMTYPE_NONE_NONE,
 	  NULL, NULL,
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
@@ -563,97 +564,97 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	   response to a control message, so we set the checking to disallow
 	   everything to catch any that arrive from outside */
 	{ MESSAGE_CHANGENOTIFY,			/* Notification of obj.status chge.*/
-	  ROUTE_NONE, ST_NONE, ST_NONE, PARAMTYPE_NONE_NONE },
+	  ROUTE_NONE, ST_NONE, ST_NONE, ST_NONE, PARAMTYPE_NONE_NONE },
 
 	/* Object-type-specific messages: Contexts */
 	{ MESSAGE_CTX_ENCRYPT,			/* Context: Action = encrypt */
-	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV | ST_CTX_PKC, ST_NONE,
+	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV | ST_CTX_PKC, ST_NONE, ST_NONE, 
 	  PARAMTYPE_DATA_LENGTH,
 	  PRE_POST_DISPATCH( CheckActionAccess, UpdateUsageCount ) },
 	{ MESSAGE_CTX_DECRYPT,			/* Context: Action = decrypt */
-	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV | ST_CTX_PKC, ST_NONE,
+	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV | ST_CTX_PKC, ST_NONE, ST_NONE, 
 	  PARAMTYPE_DATA_LENGTH,
 	  PRE_POST_DISPATCH( CheckActionAccess, UpdateUsageCount ) },
 	{ MESSAGE_CTX_SIGN,				/* Context: Action = sign */
-	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_PKC, ST_NONE,
+	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_PKC, ST_NONE, ST_NONE, 
 	  PARAMTYPE_DATA_LENGTH,
 	  PRE_POST_DISPATCH( CheckActionAccess, UpdateUsageCount ) },
 	{ MESSAGE_CTX_SIGCHECK,			/* Context: Action = sigcheck */
-	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_PKC, ST_NONE,
+	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_PKC, ST_NONE, ST_NONE, 
 	  PARAMTYPE_DATA_LENGTH,
 	  PRE_POST_DISPATCH( CheckActionAccess, UpdateUsageCount ) },
 	{ MESSAGE_CTX_HASH,				/* Context: Action = hash */
-	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_HASH | ST_CTX_MAC, ST_NONE,
+	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_HASH | ST_CTX_MAC, ST_NONE, ST_NONE, 
 	  PARAMTYPE_DATA_LENGTH,
 	  PRE_POST_DISPATCH( CheckActionAccess, UpdateUsageCount ) },
 	{ MESSAGE_CTX_GENKEY,			/* Context: Generate a key */
 	  ROUTE( OBJECT_TYPE_CONTEXT ), 
-		ST_CTX_CONV | ST_CTX_PKC | ST_CTX_MAC | ST_CTX_GENERIC, ST_NONE,
+		ST_CTX_CONV | ST_CTX_PKC | ST_CTX_MAC | ST_CTX_GENERIC, ST_NONE, ST_NONE, 
 	  PARAMTYPE_NONE_NONE,
 	  PRE_POST_DISPATCH( CheckState, ChangeState ) },
 	{ MESSAGE_CTX_GENIV,			/* Context: Generate an IV */
-	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV, ST_NONE,
+	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV, ST_NONE, ST_NONE, 
 	  PARAMTYPE_NONE_NONE },
 
 	/* Object-type-specific messages: Certificates */
 	{ MESSAGE_CRT_SIGN,				/* Cert: Action = sign cert */
 	  ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL | \
-		ST_CERT_OCSP_REQ | ST_CERT_OCSP_RESP, ST_NONE,
+		ST_CERT_OCSP_REQ | ST_CERT_OCSP_RESP, ST_NONE, ST_NONE, 
 	  PARAMTYPE_NONE_ANY,
 	  PRE_POST_DISPATCH( CheckStateParamHandle, ChangeState ) },
 	{ MESSAGE_CRT_SIGCHECK,			/* Cert: Action = check/verify cert */
 	  ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL | \
-		ST_CERT_RTCS_RESP | ST_CERT_OCSP_RESP, ST_NONE,
+		ST_CERT_RTCS_RESP | ST_CERT_OCSP_RESP, ST_NONE, ST_NONE, 
 	  PARAMTYPE_NONE_ANY,
 	  PRE_DISPATCH( CheckParamHandleOpt ) },
 	{ MESSAGE_CRT_EXPORT,			/* Cert: Export encoded cert data */
-	  ROUTE( OBJECT_TYPE_CERTIFICATE ), ST_CERT_ANY, ST_NONE,
+	  ROUTE( OBJECT_TYPE_CERTIFICATE ), ST_CERT_ANY, ST_NONE, ST_NONE, 
 	  PARAMTYPE_DATA_FORMATTYPE,
 	  PRE_DISPATCH( CheckExportAccess ) },
 
 	/* Object-type-specific messages: Devices */
 	{ MESSAGE_DEV_QUERYCAPABILITY,	/* Device: Query capability */
-	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_ANY },
 	{ MESSAGE_DEV_EXPORT,			/* Device: Action = export key */
-	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_MECHTYPE,
 	  PRE_DISPATCH( CheckMechanismWrapAccess ), 
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_IMPORT,			/* Device: Action = import key */
-	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_MECHTYPE,
 	  PRE_DISPATCH( CheckMechanismWrapAccess ),
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_SIGN,				/* Device: Action = sign */
-	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_MECHTYPE,
 	  PRE_DISPATCH( CheckMechanismSignAccess ),
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_SIGCHECK,			/* Device: Action = sig.check */
-	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_MECHTYPE,
 	  PRE_DISPATCH( CheckMechanismSignAccess ),
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_DERIVE,			/* Device: Action = derive key */
-	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_MECHTYPE,
 	  PRE_DISPATCH( CheckMechanismDeriveAccess ),
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_KDF,				/* Device: Action = KDF key */
-	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_MECHTYPE,
 	  PRE_DISPATCH( CheckMechanismKDFAccess ),
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_CREATEOBJECT,		/* Device: Create object */
-	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_OBJTYPE,
 	  PRE_POST_DISPATCH( CheckCreate, MakeObjectExternal ),
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_CREATEOBJECT_INDIRECT,/* Device: Create obj.from data */
-	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
+	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_NONE, ST_DEV_ANY, ST_NONE, 
 	  PARAMTYPE_DATA_OBJTYPE,
 	  PRE_POST_DISPATCH( CheckCreate, MakeObjectExternal ),
 	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
@@ -661,54 +662,54 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	/* Object-type-specific messages: Envelopes */
 	{ MESSAGE_ENV_PUSHDATA,			/* Envelope: Push data */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_ENVELOPE, OBJECT_TYPE_SESSION ),
-		ST_NONE, ST_ENV_ANY | ST_SESS_ANY_DATA,
+		ST_NONE, ST_ENV_ANY, ST_SESS_ANY_DATA,
 	  PARAMTYPE_DATA_NONE,
 	  PRE_DISPATCH( CheckData ) },
 	{ MESSAGE_ENV_POPDATA,			/* Envelope: Pop data */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_ENVELOPE, OBJECT_TYPE_SESSION ),
-		ST_NONE, ST_ENV_ANY | ST_SESS_ANY_DATA,
+		ST_NONE, ST_ENV_ANY, ST_SESS_ANY_DATA,
 	  PARAMTYPE_DATA_NONE,
 	  PRE_DISPATCH( CheckData ) },
 
 	/* Object-type-specific messages: Keysets */
 	{ MESSAGE_KEY_GETKEY,			/* Keyset: Instantiate ctx/cert */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_KEYSET, OBJECT_TYPE_DEVICE ),
-		ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
+		ST_NONE, ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
 	  PARAMTYPE_DATA_ITEMTYPE,
 	  PRE_POST_DISPATCH( CheckKeysetAccess, MakeObjectExternal ) },
 	{ MESSAGE_KEY_SETKEY,			/* Keyset: Add ctx/cert */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_KEYSET, OBJECT_TYPE_DEVICE ),
-		ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
+		ST_NONE, ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
 	  PARAMTYPE_DATA_ITEMTYPE,
 	  PRE_DISPATCH( CheckKeysetAccess ) },
 	{ MESSAGE_KEY_DELETEKEY,		/* Keyset: Delete key */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_KEYSET, OBJECT_TYPE_DEVICE ),
-		ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
+		ST_NONE, ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
 	  PARAMTYPE_DATA_ITEMTYPE,
 	  PRE_DISPATCH( CheckKeysetAccess ) },
 	{ MESSAGE_KEY_GETFIRSTCERT,		/* Keyset: Get first cert in sequence */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_KEYSET, OBJECT_TYPE_DEVICE ),
-		ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
+		ST_NONE, ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
 	  PARAMTYPE_DATA_ITEMTYPE,
 	  PRE_DISPATCH( CheckKeysetAccess ) },
 	{ MESSAGE_KEY_GETNEXTCERT,		/* Keyset: Get next cert in sequence */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_KEYSET, OBJECT_TYPE_DEVICE ),
-		ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
+		ST_NONE, ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
 	  PARAMTYPE_DATA_ITEMTYPE,
 	  PRE_POST_DISPATCH( CheckKeysetAccess, MakeObjectExternal ) },
 	{ MESSAGE_KEY_CERTMGMT,			/* Keyset: Cert management */
 	  ROUTE_FIXED( OBJECT_TYPE_KEYSET ),
-		ST_KEYSET_DBMS_STORE, ST_NONE,
+		ST_NONE, ST_KEYSET_DBMS_STORE, ST_NONE,
 	  PARAMTYPE_DATA_CERTMGMTTYPE,
 	  PRE_POST_DISPATCH( CheckCertMgmtAccess, MakeObjectExternal ) },
 
 	/* Object-type-specific messages: Users */
 	{ MESSAGE_USER_USERMGMT,		/* User: User management */
-	  ROUTE_FIXED( OBJECT_TYPE_USER ), ST_NONE, ST_USER_SO, 
+	  ROUTE_FIXED( OBJECT_TYPE_USER ), ST_NONE, ST_NONE, ST_USER_SO, 
 	  PARAMTYPE_ANY_USERMGMTTYPE,
 	  PRE_POST_DISPATCH( CheckUserMgmtAccess, HandleZeroise ) },
 	{ MESSAGE_USER_TRUSTMGMT,		/* User: Trust management */
-	  ROUTE_FIXED( OBJECT_TYPE_USER ), ST_NONE, ST_USER_SO, 
+	  ROUTE_FIXED( OBJECT_TYPE_USER ), ST_NONE, ST_NONE, ST_USER_SO, 
 	  PARAMTYPE_ANY_TRUSTMGMTTYPE,
 	  PRE_DISPATCH( CheckTrustMgmtAccess ) },
 
@@ -822,15 +823,24 @@ int initSendMessage( INOUT KERNEL_DATA *krnlDataPtr )
 
 	/* Perform a consistency check on various things that need to be set
 	   up in a certain way for things to work properly */
-	assert( MESSAGE_CTX_DECRYPT == MESSAGE_CTX_ENCRYPT + 1 );
-	assert( MESSAGE_CTX_SIGN == MESSAGE_CTX_DECRYPT + 1 );
-	assert( MESSAGE_CTX_SIGCHECK == MESSAGE_CTX_SIGN + 1 );
-	assert( MESSAGE_CTX_HASH == MESSAGE_CTX_SIGCHECK + 1 );
-	assert( MESSAGE_CTX_GENKEY == MESSAGE_CTX_HASH + 1 );
-	assert( MESSAGE_GETATTRIBUTE_S == MESSAGE_GETATTRIBUTE + 1 );
-	assert( MESSAGE_SETATTRIBUTE == MESSAGE_GETATTRIBUTE_S + 1 );
-	assert( MESSAGE_SETATTRIBUTE_S == MESSAGE_SETATTRIBUTE + 1 );
-	assert( MESSAGE_DELETEATTRIBUTE == MESSAGE_SETATTRIBUTE_S + 1 );
+	static_assert( MESSAGE_CTX_DECRYPT == MESSAGE_CTX_ENCRYPT + 1, \
+				   "Message value" );
+	static_assert( MESSAGE_CTX_SIGN == MESSAGE_CTX_DECRYPT + 1, \
+				   "Message value" );
+	static_assert( MESSAGE_CTX_SIGCHECK == MESSAGE_CTX_SIGN + 1, \
+				   "Message value" );
+	static_assert( MESSAGE_CTX_HASH == MESSAGE_CTX_SIGCHECK + 1, \
+				   "Message value" );
+	static_assert( MESSAGE_CTX_GENKEY == MESSAGE_CTX_HASH + 1, \
+				   "Message value" );
+	static_assert( MESSAGE_GETATTRIBUTE_S == MESSAGE_GETATTRIBUTE + 1, \
+				   "Message value" );
+	static_assert( MESSAGE_SETATTRIBUTE == MESSAGE_GETATTRIBUTE_S + 1, \
+				   "Message value" );
+	static_assert( MESSAGE_SETATTRIBUTE_S == MESSAGE_SETATTRIBUTE + 1, \
+				   "Message value" );
+	static_assert( MESSAGE_DELETEATTRIBUTE == MESSAGE_SETATTRIBUTE_S + 1, \
+				   "Message value" );
 
 	/* Perform a consistency check on various internal values and constants */
 	assert( ACTION_PERM_COUNT == 6 );
@@ -843,8 +853,12 @@ int initSendMessage( INOUT KERNEL_DATA *krnlDataPtr )
 		const MESSAGE_ACL *messageParamACL = &messageParamACLTbl[ i ];
 
 		ENSURES( isParamMessage( messageParamACL->type ) && \
-				 !( messageParamACL->objectACL.subTypeA & SUBTYPE_CLASS_B ) && \
-				 !( messageParamACL->objectACL.subTypeB & SUBTYPE_CLASS_A ) );
+				 !( messageParamACL->objectACL.subTypeA & ( SUBTYPE_CLASS_B | \
+															SUBTYPE_CLASS_C ) ) && \
+				 !( messageParamACL->objectACL.subTypeB & ( SUBTYPE_CLASS_A | \
+															SUBTYPE_CLASS_C ) ) && \
+				 !( messageParamACL->objectACL.subTypeC & ( SUBTYPE_CLASS_A | \
+															SUBTYPE_CLASS_B ) ) );
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( messageParamACLTbl, MESSAGE_ACL ) );
 
@@ -866,8 +880,12 @@ int initSendMessage( INOUT KERNEL_DATA *krnlDataPtr )
 				   messageInfo->routingFunction == NULL ) || \
 				 ( messageInfo->routingTarget != OBJECT_TYPE_NONE && \
 				   messageInfo->routingFunction != NULL ) );
-		ENSURES( !( messageInfo->subTypeA & SUBTYPE_CLASS_B ) && \
-				 !( messageInfo->subTypeB & SUBTYPE_CLASS_A ) );
+		ENSURES( !( messageInfo->subTypeA & ( SUBTYPE_CLASS_B | \
+											  SUBTYPE_CLASS_C ) ) && \
+				 !( messageInfo->subTypeB & ( SUBTYPE_CLASS_A | \
+											  SUBTYPE_CLASS_C ) ) && \
+				 !( messageInfo->subTypeC & ( SUBTYPE_CLASS_A | \
+											  SUBTYPE_CLASS_B ) ) );
 		ENSURES( ( messageInfo->flags & MESSAGE_HANDLING_FLAG_INTERNAL ) || \
 				 messageInfo->messageType == MESSAGE_SELFTEST || \
 				 messageInfo->messageType == MESSAGE_CHANGENOTIFY || \
@@ -1483,7 +1501,8 @@ int krnlSendMessage( IN_HANDLE const int objectHandle,
 	/* Now that the message has been routed to its intended target, make sure
 	   that it's valid for the target object subtype */
 	if( !isValidSubtype( handlingInfoPtr->subTypeA, objectInfoPtr->subType ) && \
-		!isValidSubtype( handlingInfoPtr->subTypeB, objectInfoPtr->subType ) )
+		!isValidSubtype( handlingInfoPtr->subTypeB, objectInfoPtr->subType ) && \
+		!isValidSubtype( handlingInfoPtr->subTypeC, objectInfoPtr->subType ) )
 		{
 		MUTEX_UNLOCK( objectTable );
 		return( CRYPT_ARGERROR_OBJECT );
@@ -1493,6 +1512,8 @@ int krnlSendMessage( IN_HANDLE const int objectHandle,
 	REQUIRES( isValidSubtype( handlingInfoPtr->subTypeA, \
 							  objectInfoPtr->subType ) || \
 			  isValidSubtype( handlingInfoPtr->subTypeB, \
+							  objectInfoPtr->subType ) || \
+			  isValidSubtype( handlingInfoPtr->subTypeC, \
 							  objectInfoPtr->subType ) );
 
 	/* If this message is processed internally, handle it now.  These
@@ -1723,7 +1744,8 @@ int krnlSendMessage( IN_HANDLE const int objectHandle,
 		   processing */
 		if( isDestroy )
 			{
-			destroyObjectData( localObjectHandle );
+			status = destroyObjectData( localObjectHandle );
+			ENSURES( cryptStatusOK( status ) );
 			dequeueAllMessages( localObjectHandle );
 			}
 		else

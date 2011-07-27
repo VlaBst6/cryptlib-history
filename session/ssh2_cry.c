@@ -363,7 +363,7 @@ int initSecurityContextsSSH( INOUT SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusOK( status ) && sessionInfoPtr->version == 1 && \
 		sessionInfoPtr->cryptAlgo == CRYPT_ALGO_IDEA )
 		{
-		const CRYPT_MODE_TYPE cryptMode = CRYPT_MODE_CFB;
+		const int cryptMode = CRYPT_MODE_CFB;	/* int vs.enum */
 
 		/* SSHv1 uses stream ciphers in places, for which we have to set the
 		   mode explicitly */

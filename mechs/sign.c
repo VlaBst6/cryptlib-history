@@ -182,7 +182,7 @@ C_RET cryptCreateSignatureEx( C_OUT_OPT void C_PTR signature,
 		case CRYPT_FORMAT_CMS:
 		case CRYPT_FORMAT_SMIME:
 			{
-			CRYPT_CERTTYPE_TYPE certType;
+			int certType;	/* int vs.enum */
 
 			/* Make sure that the signing context has a certificate attached 
 			   to it */
@@ -319,7 +319,7 @@ C_RET cryptCheckSignatureEx( C_IN void C_PTR signature,
 	if( formatType == CRYPT_FORMAT_CMS || \
 		formatType == CRYPT_FORMAT_SMIME )
 		{
-		CRYPT_CERTTYPE_TYPE certType;
+		int certType;	/* int vs.enum */
 
 		/* Make sure that the sig check key includes a certificate */
 		status = krnlSendMessage( sigCheckKey, MESSAGE_GETATTRIBUTE,
@@ -427,8 +427,7 @@ int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength 
 						   IN_HANDLE const CRYPT_CONTEXT iHashContext,
 						   IN_OPT const SIGPARAMS *sigParams )
 	{
-	CRYPT_CERTTYPE_TYPE certType;
-	int status;
+	int certType, status;	/* int vs.enum */
 
 	assert( signature == NULL || isWritePtr( signature, signatureMaxLength ) );
 	assert( isWritePtr( signatureLength, sizeof( int ) ) );

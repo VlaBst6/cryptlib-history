@@ -1,3 +1,12 @@
+Changes in 3.4.1 release
+========================
+
+This is a maintenance release for new OS and compiler versions, and
+specifically VS 2010, which has trouble with the VS 2005 project files that
+were included in previous releases.  Apart from various code updates, it adds
+client-side SSL/TLS session resumption alongside the existing server-side
+session resumption.
+
 Changes in 3.4 release
 ======================
 

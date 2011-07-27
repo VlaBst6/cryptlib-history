@@ -19,6 +19,11 @@
   #include "keyset/pkcs15.h"
 #endif /* Compiler-specific includes */
 
+/* Define the following to enable a workaround for a MAC keysize bug in
+   authEnc private key data in cryptlib 3.4.0 */
+
+#define MAC_KEYSIZE_BUG
+
 #ifdef USE_PKCS15
 
 /* OID information used to read a PKCS #15 keyset */
@@ -114,11 +119,10 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							 OUT_FLAGS_Z( ACTION ) int *privkeyActionFlags, 
 							 INOUT ERROR_INFO *errorInfo )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
 	CRYPT_CONTEXT iCryptContext;
 	CRYPT_CERTIFICATE iDataCert = CRYPT_ERROR;
 	STREAM stream;
-	int status;
+	int pkcAlgo, status;
 
 	assert( isReadPtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	assert( isReadPtr( keyID, keyIDlength ) );
@@ -231,15 +235,15 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	   the actions of the public key we set its action flags to the union of 
 	   the two */
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &pkcAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) && pkcs15infoPtr->pubKeyData != NULL )
 		{
-		status = getPermittedActions( pkcs15infoPtr->pubKeyUsage, cryptAlgo,
+		status = getPermittedActions( pkcs15infoPtr->pubKeyUsage, pkcAlgo,
 									  pubkeyActionFlags );
 		}
 	if( cryptStatusOK( status ) && !publicComponentsOnly )
 		{
-		status = getPermittedActions( pkcs15infoPtr->privKeyUsage, cryptAlgo,
+		status = getPermittedActions( pkcs15infoPtr->privKeyUsage, pkcAlgo,
 									  privkeyActionFlags );
 		}
 	if( cryptStatusError( status ) )
@@ -282,7 +286,7 @@ static int importSessionKey( IN_HANDLE const CRYPT_CONTEXT iSessionKey,
 	CRYPT_CONTEXT iKeyWrapContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
-	int status;
+	int mode, status;
 
 	assert( isReadPtr( encryptedKeyData, encryptedKeyDataSize ) );
 	assert( isReadPtr( password, passwordLength ) );
@@ -302,14 +306,15 @@ static int importSessionKey( IN_HANDLE const CRYPT_CONTEXT iSessionKey,
 	if( cryptStatusError( status ) )
 		return( status );
 	iKeyWrapContext = createInfo.cryptHandle;
+	mode = queryInfo->cryptMode;	/* int vs.enum */
 	status = krnlSendMessage( iKeyWrapContext, IMESSAGE_SETATTRIBUTE, 
-							  ( MESSAGE_CAST ) &queryInfo->cryptMode, 
-							  CRYPT_CTXINFO_MODE );
+							  &mode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) && \
 		queryInfo->keySetupAlgo != CRYPT_ALGO_NONE )
 		{
+		const int algorithm = queryInfo->keySetupAlgo;	/* int vs.enum */
 		status = krnlSendMessage( iKeyWrapContext, IMESSAGE_SETATTRIBUTE,
-								  ( MESSAGE_CAST ) &queryInfo->keySetupAlgo,
+								  ( MESSAGE_CAST ) &algorithm, 
 								  CRYPT_CTXINFO_KEYING_ALGO );
 		}
 	if( cryptStatusOK( status ) )
@@ -368,21 +373,27 @@ CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
 static int initKeys( IN_HANDLE const CRYPT_CONTEXT iGenericContext,
 					 OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 					 OUT_HANDLE_OPT CRYPT_CONTEXT *iMacContext,
+					 OUT_HANDLE_OPT CRYPT_CONTEXT *iMacAltContext,
 					 const QUERY_INFO *queryInfo )
 	{
 	CRYPT_CONTEXT iAuthEncCryptContext, iAuthEncMacContext;
+#ifdef MAC_KEYSIZE_BUG
+	CRYPT_CONTEXT iAuthEncMacAltContext = DUMMY_INIT;
+#endif /* MAC_KEYSIZE_BUG */
+	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MECHANISM_KDF_INFO mechanismInfo;
 	STREAM stream;
 	int status;
 
 	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
 	assert( isWritePtr( iMacContext, sizeof( CRYPT_CONTEXT ) ) );
+	assert( isWritePtr( iMacAltContext, sizeof( CRYPT_CONTEXT ) ) );
 	assert( isReadPtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	REQUIRES( isHandleRangeValid( iGenericContext ) );
 
 	/* Clear return values */
-	*iCryptContext = *iMacContext = CRYPT_ERROR;
+	*iCryptContext = *iMacContext = *iMacAltContext = CRYPT_ERROR;
 
 	/* Recreate the encryption and MAC contexts used for the authenticated 
 	   encryption from the algorithm parameter data that was stored 
@@ -409,14 +420,14 @@ static int initKeys( IN_HANDLE const CRYPT_CONTEXT iGenericContext,
 
 	/* Derive the encryption and MAC keys from the generic-secret key */
 	setMechanismKDFInfo( &mechanismInfo, iAuthEncCryptContext, 
-						 iGenericContext, CRYPT_ALGO_HMAC_SHA, 
+						 iGenericContext, CRYPT_ALGO_HMAC_SHA1, 
 						 "encryption", 10 );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
 							  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
 	if( cryptStatusOK( status ) )
 		{
 		setMechanismKDFInfo( &mechanismInfo, iAuthEncMacContext, 
-							 iGenericContext, CRYPT_ALGO_HMAC_SHA, 
+							 iGenericContext, CRYPT_ALGO_HMAC_SHA1, 
 							 "authentication", 14 );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
 								  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
@@ -442,6 +453,54 @@ static int initKeys( IN_HANDLE const CRYPT_CONTEXT iGenericContext,
 		return( status );
 		}
 
+#ifdef MAC_KEYSIZE_BUG
+	/* Because of an error in setting the key size for the 3.4.0 cryptlib
+	   release, private-key files created by this version use a 128-bit 
+	   HMAC-SHA1 key instead of a 160-bit one.  To work around this we 
+	   create a second MAC context with a 128-bit key and try that if the
+	   initial check with the 160-bit key fails */
+	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_HMAC_SHA1 );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
+							  &createInfo, OBJECT_TYPE_CONTEXT );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iAuthEncCryptContext, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iAuthEncMacContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+	else
+		{
+		static const int macKeySize = bitsToBytes( 128 );
+
+		iAuthEncMacAltContext = createInfo.cryptHandle;
+		status = krnlSendMessage( iAuthEncMacAltContext, IMESSAGE_SETATTRIBUTE,
+								  ( MESSAGE_CAST ) &macKeySize, 
+								  CRYPT_CTXINFO_KEYSIZE );
+		}
+	if( cryptStatusOK( status ) )
+		{
+		setMechanismKDFInfo( &mechanismInfo, iAuthEncMacAltContext, 
+							 iGenericContext, CRYPT_ALGO_HMAC_SHA1, 
+							 "authentication", 14 );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
+								  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
+		}
+	if( cryptStatusOK( status ) )
+		{
+		status = krnlSendMessage( iAuthEncMacAltContext, IMESSAGE_CTX_HASH,
+								  ( MESSAGE_CAST ) queryInfo->authEncParamData,
+								  queryInfo->authEncParamLength );
+		}
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iAuthEncCryptContext, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iAuthEncMacContext, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iAuthEncMacAltContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+	*iMacAltContext = iAuthEncMacAltContext;
+#endif /* MAC_KEYSIZE_BUG */
+
 	*iCryptContext = iAuthEncCryptContext;
 	*iMacContext = iAuthEncMacContext;
 
@@ -460,6 +519,9 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							  INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_CONTEXT iCryptContext, iMacContext = CRYPT_UNUSED;
+#ifdef MAC_KEYSIZE_BUG
+	CRYPT_CONTEXT iMacAltContext = CRYPT_UNUSED;
+#endif /* MAC_KEYSIZE_BUG */
 	MECHANISM_WRAP_INFO mechanismInfo;
 	MESSAGE_DATA msgData;
 	QUERY_INFO queryInfo = DUMMY_INIT_STRUCT, contentQueryInfo;
@@ -627,7 +689,7 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 		const CRYPT_CONTEXT iGenericContext = iCryptContext;
 
 		status = initKeys( iGenericContext, &iCryptContext, &iMacContext,
-						   &contentQueryInfo );
+						   &iMacAltContext, &contentQueryInfo );
 		krnlSendNotifier( iGenericContext, IMESSAGE_DECREFCOUNT );
 		if( cryptStatusError( status ) )
 			{
@@ -660,6 +722,32 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 				status = CRYPT_ERROR_SIGNATURE;
 				}
 			}
+#ifdef MAC_KEYSIZE_BUG
+		if( status == CRYPT_ERROR_SIGNATURE )
+			{
+			/* If we got a failed MAC check, try again with a MAC context 
+			   with a 128-bit MAC key, a bug in cryptlib version 3.4.0 */
+			status = krnlSendMessage( iMacAltContext, IMESSAGE_CTX_HASH,
+									  encryptedContent, 
+									  encryptedContentLength );
+			if( cryptStatusOK( status ) )
+				status = krnlSendMessage( iMacAltContext, IMESSAGE_CTX_HASH, 
+										  "", 0 );
+			if( cryptStatusOK( status ) )
+				{
+				setMessageData( &msgData, macValue, macValueLength );
+				status = krnlSendMessage( iMacAltContext, IMESSAGE_COMPARE, 
+										  &msgData, MESSAGE_COMPARE_HASH );
+				if( cryptStatusError( status ) )
+					{
+					/* A failed MAC check is reported as a CRYPT_ERROR
+					   comparison result */
+					status = CRYPT_ERROR_SIGNATURE;
+					}
+				}
+			}
+		krnlSendNotifier( iMacAltContext, IMESSAGE_DECREFCOUNT );
+#endif /* MAC_KEYSIZE_BUG */
 		krnlSendNotifier( iMacContext, IMESSAGE_DECREFCOUNT );
 		if( cryptStatusError( status ) )
 			{

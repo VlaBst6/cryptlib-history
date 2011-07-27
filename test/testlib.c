@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								cryptlib Test Code							*
-*						Copyright Peter Gutmann 1995-2010					*
+*						Copyright Peter Gutmann 1995-2011					*
 *																			*
 ****************************************************************************/
 
@@ -42,6 +42,12 @@
   #define THREAD_DEBUG_RESUME()
 #endif /* VC++ 6.0 with Intel Thread Checker */
 
+/* Warn about nonstandard build options */
+
+#if defined( CONFIG_SUITEB_TESTS ) && defined( _MSC_VER )
+  #pragma message( "  Building Suite B command-line test configuration." )
+#endif /* CONFIG_SUITEB_TESTS with VC++ */
+
 /* Whether various keyset tests worked, the results are used later to test
    other routines.  We initially set the key read result to TRUE in case the
    keyset read tests are never called, so we can still trying reading the
@@ -66,15 +72,22 @@ void xxxPrivKeyRead( const char *fileName, const char *keyName, const char *pass
 void xxxDataImport( const char *fileName );
 void xxxSignedDataImport( const char *fileName );
 void xxxEncryptedDataImport( const char *fileName );
-void xxxEnvTest( void );
 
-/* Prototypes for custom key-creation routines */
+/* Prototype for custom key-creation routines */
 
 int createTestKeys( void );
 
 /* Prototype for stress test interface routine */
 
 void smokeTest( void );
+
+/* Prototype for Suite B test entry point */
+
+#if defined( CONFIG_SUITEB_TESTS ) 
+
+int suiteBMain( int argc, char **argv );
+
+#endif /* CONFIG_SUITEB_TESTS */
 
 /****************************************************************************
 *																			*
@@ -205,6 +218,198 @@ static void updateConfigCert( void )
 
 /****************************************************************************
 *																			*
+*								Argument Processing							*
+*																			*
+****************************************************************************/
+
+/* Flags for the tests that we want to perform */
+
+#define DO_SELFTEST				0x0001
+#define DO_LOWLEVEL				0x0002
+#define DO_RANDOM				0x0004
+#define DO_CONFIG				0x0008
+#define DO_DEVICE				0x0010
+#define DO_MIDLEVEL				0x0020
+#define DO_CERT					0x0040
+#define DO_KEYSETFILE			0x0080
+#define DO_KEYSETDBX			0x0100
+#define DO_CERTPROCESS			0x0200
+#define DO_HIGHLEVEL			0x0400
+#define DO_ENVELOPE				0x0800
+#define DO_SESSION				0x1000
+#define DO_SESSIONLOOPBACK		0x2000
+#define DO_USER					0x4000
+
+#define DO_ALL					0xFFFF
+
+/* Show usage and exit */
+
+static void usageExit( void )
+	{
+	puts( "Usage: testlib [-bcdefhiklmoprstu]" );
+
+	puts( "  Encryption function tests:" );
+	puts( "       -l = Test low-level functions" );
+	puts( "       -m = Test mid-level functions" );
+	puts( "       -i = Test high-level functions" );
+	puts( "" );
+
+	puts( "  Subsystem tests:" );
+	puts( "       -c = Test certificate subsystem" );
+	puts( "       -d = Test device subsystem" );
+	puts( "       -f = Test file keyset subsystem" );
+	puts( "       -k = Test database keyset subsystem" );
+	puts( "       -e = Test envelope subsystem" );
+	puts( "       -s = Test session subsystem" );
+	puts( "       -t = Test session subsystem via loopback interface" );
+	puts( "       -u = Test user subsystem" );
+	puts( "" );
+
+	puts( "  Miscellaneous tests:" );
+	puts( "       -r = Test entropy-gathering routines" );
+	puts( "       -b = Perform built-in self-test" );
+	puts( "       -o = Test configuration management routines" );
+	puts( "       -p = Test certificate processing" );
+	puts( "" );
+
+	puts( "  Other options:" );
+	puts( "       -h = Display this help text" );
+	puts( "       -- = End of arg list" );
+	puts( "" );
+
+	puts( "Default is to test all cryptlib subsystems." );
+	exit( EXIT_FAILURE );
+	}
+
+/* Process command-line arguments */
+
+static int processArgs( int argc, char **argv, 
+						int *argFlags, const char **zargPtrPtr )
+	{
+	const char *zargPtr = NULL;
+	BOOLEAN moreArgs = TRUE;
+
+	/* Clear return value */
+	*argFlags = 0;
+	*zargPtrPtr = NULL;
+
+	/* No args means test everything */
+	if( argc <= 0 )
+		{
+		*argFlags = DO_ALL;
+
+		return( TRUE );
+		}
+
+	/* Check for arguments */
+	while( argc > 0 && *argv[ 0 ] == '-' && moreArgs )
+		{
+		const char *argPtr = argv[ 0 ] + 1;
+
+		while( *argPtr )
+			{
+			switch( toupper( *argPtr ) )
+				{
+				case '-':
+					moreArgs = FALSE;	/* GNU-style end-of-args flag */
+					break;
+
+				case 'B':
+					*argFlags |= DO_SELFTEST;
+					break;
+
+				case 'C':
+					*argFlags |= DO_CONFIG;
+					break;
+
+				case 'D':
+					*argFlags |= DO_DEVICE;
+					break;
+
+				case 'E':
+					*argFlags |= DO_ENVELOPE;
+					break;
+
+				case 'F':
+					*argFlags |= DO_KEYSETFILE;
+					break;
+
+				case 'H':
+					usageExit();
+					break;
+
+				case 'I':
+					*argFlags |= DO_HIGHLEVEL;
+					break;
+
+				case 'K':
+					*argFlags |= DO_KEYSETDBX;
+					break;
+
+				case 'L':
+					*argFlags |= DO_LOWLEVEL;
+					break;
+
+				case 'M':
+					*argFlags |= DO_MIDLEVEL;
+					break;
+
+				case 'O':
+					*argFlags |= DO_CONFIG;
+					break;
+
+				case 'P':
+					*argFlags |= DO_CERTPROCESS;
+					break;
+
+				case 'R':
+					*argFlags |= DO_RANDOM;
+					break;
+
+				case 'S':
+					*argFlags |= DO_SESSION;
+					break;
+
+				case 'T':
+					*argFlags |= DO_SESSIONLOOPBACK;
+					break;
+
+				case 'U':
+					*argFlags |= DO_USER;
+					break;
+
+				case 'Z':
+					zargPtr = argPtr + 1;
+					if( *zargPtr == '\0' )
+						{
+						puts( "Error: Missing argument for -z option." );
+						return( FALSE );
+						}
+					while( argPtr[ 1 ] )
+						argPtr++;	/* Skip rest of arg */
+					*zargPtrPtr = zargPtr;
+					break;
+
+				default:
+					printf( "Error: Unknown argument '%c'.\n", *argPtr );
+					return( FALSE );
+				}
+			argPtr++;
+			}
+		argv++;
+		argc--;
+		}
+	if( argc > 0 )
+		{
+		printf( "Error: Unknown argument '%s'.\n", argv[ 0 ] );
+		return( FALSE );
+		}
+
+	return( TRUE );
+	}
+
+/****************************************************************************
+*																			*
 *								Misc.Kludges								*
 *																			*
 ****************************************************************************/
@@ -213,31 +418,8 @@ static void updateConfigCert( void )
    before any of the other tests are run and can be used to handle special-
    case tests that aren't part of the main test suite */
 
-void testKludge( const char *argPtr )
+static void testKludge( const char *argPtr )
 	{
-#if 0
-//	testGetBorkenKey();
-
-//	testKeyset();		/* For client-server tests */
-//	testWriteCert();	/* For client-server tests */
-	testSessionSuiteBClientServer();
-#endif
-
-#if 0
-//	testSessionTLS12();
-
-//	testKeyset();		/* For client-server tests */
-//	testWriteCert();	/* For client-server tests */
-//	testSessionSSLClientCertClientServer();
-
-//	testSessionTLS12ClientServerEccKey();
-//	testSessionTLS12ClientServerEcc384Key();
-
-//	testKeyset();		/* For client-server tests */
-//	testWriteCert();	/* For client-server tests */
-//	testSessionTLS12ClientCertClientServer();
-#endif
-
 #if 0
 	testReadCorruptedKey();
 #endif /* 0 */
@@ -280,44 +462,8 @@ void testKludge( const char *argPtr )
 *																			*
 ****************************************************************************/
 
-/* Show usage and exit */
-
-static void usageExit( void )
-	{
-	puts( "Usage: testlib [-bcefhiklmoprs] <file>" );
-
-	puts( "  Encryption function tests:" );
-	puts( "       -l = Test low-level functions" );
-	puts( "       -m = Test mid-level functions" );
-	puts( "       -i = Test high-level functions" );
-	puts( "" );
-
-	puts( "  Subsystem tests:" );
-	puts( "       -c = Test certificate subsystem" );
-	puts( "       -k = Test keyset subsystem" );
-	puts( "       -e = Test envelope subsystem" );
-	puts( "       -s = Test session subsystem" );
-	puts( "       -f = Test session subsystem via loopback interface" );
-	puts( "" );
-
-	puts( "  Miscellaneous tests:" );
-	puts( "       -r = Test entropy-gathering routines" );
-	puts( "       -b = Perform built-in self-test" );
-	puts( "       -o = Test configuration management routines" );
-	puts( "       -p = Test certificate processing" );
-	puts( "" );
-
-	puts( "  Other options:" );
-	puts( "       -h = Display this help text" );
-	puts( "       -- = End of arg list" );
-	puts( "" );
-
-	puts( "Default is to test all cryptlib subsystems." );
-	exit( EXIT_FAILURE );
-	}
-
 /* Comprehensive cryptlib stress test.  To get the following to run under
-   WinCE as a native console app, it's necessary to change the entry point
+   WinCE as a native console app it's necessary to change the entry point
    in Settings | Link | Output from WinMainCRTStartup to the undocumented
    mainACRTStartup, which calls main() rather than WinMain(), however this
    only works if the system has a native console-mode driver (most don't) */
@@ -325,114 +471,27 @@ static void usageExit( void )
 int main( int argc, char **argv )
 	{
 	const char *zargPtr = NULL;
-	BOOLEAN doSelftest = FALSE, doLowlevel = FALSE, doRandom = FALSE;
-	BOOLEAN doConfig = FALSE, doMidlevel = FALSE, doCert = FALSE;
-	BOOLEAN doKeyset = FALSE, doCertprocess = FALSE, doHighlevel = FALSE;
-	BOOLEAN doEnvelope = FALSE, doSession = FALSE, doSessionLoopback = FALSE;
-	BOOLEAN doAll = FALSE, moreArgs = TRUE;
 	BOOLEAN sessionTestError = FALSE, loopbackTestError = FALSE;
-	int status;
+	int flags, status;
 	void testSystemSpecific1( void );
 	void testSystemSpecific2( void );
 
+	/* If we're running in test mode, run the test code and exit */
+#ifdef CONFIG_SUITEB_TESTS
+	return( suiteBMain( argc, argv ) );
+#endif /* CONFIG_SUITEB_TESTS */
+
 	/* Print a general banner to let the user know what's going on */
 	printf( "testlib - cryptlib %d-bit self-test framework.\n", 
-			sizeof( long ) * 8 );
-	puts( "Copyright Peter Gutmann 1995 - 2010." );
+			( int ) sizeof( long ) * 8 );	/* Cast for gcc */
+	puts( "Copyright Peter Gutmann 1995 - 2011." );
 	puts( "" );
 
-	/* Skip the program name */
+	/* Skip the program name and process any command-line arguments */
 	argv++; argc--;
-
-	/* No args means test everything */
-	if( argc <= 0 )
-		doAll = TRUE;
-
-	/* Check for arguments */
-	while( argc > 0 && *argv[ 0 ] == '-' && moreArgs )
-		{
-		const char *argPtr = argv[ 0 ] + 1;
-
-		while( *argPtr )
-			{
-			switch( toupper( *argPtr ) )
-				{
-				case '-':
-					moreArgs = FALSE;	/* GNU-style end-of-args flag */
-					break;
-
-				case 'B':
-					doSelftest = TRUE;
-					break;
-
-				case 'C':
-					doCert = TRUE;
-					break;
-
-				case 'E':
-					doEnvelope = TRUE;
-					break;
-
-				case 'F':
-					doSessionLoopback = TRUE;
-					break;
-
-				case 'H':
-					usageExit();
-					break;
-
-				case 'I':
-					doHighlevel = TRUE;
-					break;
-
-				case 'K':
-					doKeyset = TRUE;
-					break;
-
-				case 'L':
-					doLowlevel = TRUE;
-					break;
-
-				case 'M':
-					doMidlevel = TRUE;
-					break;
-
-				case 'O':
-					doConfig = TRUE;
-					break;
-
-				case 'P':
-					doCertprocess = TRUE;
-					break;
-
-				case 'R':
-					doRandom = TRUE;
-					break;
-
-				case 'S':
-					doSession = TRUE;
-					break;
-
-				case 'Z':
-					zargPtr = argPtr + 1;
-					if( *zargPtr == '\0' )
-						{
-						puts( "Error: Missing argument for -z option." );
-						exit( EXIT_FAILURE );
-						}
-					while( argPtr[ 1 ] )
-						argPtr++;	/* Skip rest of arg */
-					break;
-
-				default:
-					printf( "Error: Unknown argument '%c'.\n", *argPtr );
-					return( EXIT_FAILURE );
-				}
-			argPtr++;
-			}
-		argv++;
-		argc--;
-		}
+	status = processArgs( argc, argv, &flags, &zargPtr );
+	if( !status )
+		exit( EXIT_FAILURE );
 
 #ifdef USE_TCHECK
 	THREAD_DEBUG_SUSPEND();
@@ -478,7 +537,10 @@ int main( int argc, char **argv )
 	/* Perform a general sanity check to make sure that the self-test is
 	   being run the right way */
 	if( !checkFileAccess() )
-		goto errorExit;
+		{
+		cryptEnd();
+		exit( EXIT_FAILURE );
+		}
 
 	/* Make sure that further system-specific features that require cryptlib 
 	   to be initialised to check are set right */
@@ -500,39 +562,41 @@ int main( int argc, char **argv )
 #endif /* SMOKE_TEST */
 
 	/* Test each block of cryptlib functionality */
-	if( ( doSelftest || doAll ) && !testSelfTest() )
+	if( ( flags & DO_SELFTEST ) && !testSelfTest() )
 		goto errorExit;
-	if( ( doLowlevel || doAll ) && !testLowLevel() )
+	if( ( flags & DO_LOWLEVEL ) && !testLowLevel() )
 		goto errorExit;
-	if( ( doRandom || doAll ) && !testRandom() )
+	if( ( flags & DO_RANDOM ) && !testRandom() )
 		goto errorExit;
-	if( ( doConfig || doAll ) && !testConfig() )
+	if( ( flags & DO_CONFIG ) && !testConfig() )
 		goto errorExit;
-	if( ( doSelftest || doAll ) && !testDevice() )
+	if( ( flags & DO_DEVICE ) && !testDevice() )
 		goto errorExit;
-	if( ( doMidlevel || doAll ) && !testMidLevel() )
+	if( ( flags & DO_MIDLEVEL ) && !testMidLevel() )
 		goto errorExit;
-	if( ( doCert || doAll ) && !testCert() )
+	if( ( flags & DO_CERT ) && !testCert() )
 		goto errorExit;
-	if( ( doKeyset || doAll ) && !testKeyset() )
+	if( ( flags & DO_KEYSETFILE ) && !testKeysetFile() )
 		goto errorExit;
-	if( ( doCertprocess || doAll ) && !testCertMgmt() )
+	if( ( flags & DO_KEYSETDBX ) && !testKeysetDatabase() )
 		goto errorExit;
-	if( ( doHighlevel || doAll ) && !testHighLevel() )
+	if( ( flags & DO_CERTPROCESS ) && !testCertMgmt() )
 		goto errorExit;
-	if( ( doEnvelope || doAll ) && !testEnveloping() )
+	if( ( flags & DO_HIGHLEVEL ) && !testHighLevel() )
 		goto errorExit;
-	if( ( doSession || doAll ) && !testSessions() )
+	if( ( flags & DO_ENVELOPE ) && !testEnveloping() )
+		goto errorExit;
+	if( ( flags & DO_SESSION ) && !testSessions() )
 		{
 		sessionTestError = TRUE;
 		goto errorExit;
 		}
-	if( ( doSessionLoopback || doAll ) && !testSessionsLoopback() )
+	if( ( flags & DO_SESSIONLOOPBACK ) && !testSessionsLoopback() )
 		{
 		loopbackTestError = TRUE;
 		goto errorExit;
 		}
-	if( ( doAll ) && !testUsers() )
+	if( ( flags & DO_USER  ) && !testUsers() )
 		goto errorExit;
 
 	/* Shut down cryptlib */

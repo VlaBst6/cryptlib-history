@@ -258,7 +258,7 @@ static int writePkiHeader( INOUT STREAM *stream,
 	BOOLEAN sendClibID = FALSE, sendCertID = FALSE, sendMacInfo = FALSE;
 	BOOLEAN sendUserID = FALSE;
 	int senderNameLength, recipNameLength, attributeLength = 0;
-	int protInfoLength = DUMMY_INIT, totalLength, status;
+	int protInfoLength = DUMMY_INIT, totalLength, hashAlgo, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -316,9 +316,10 @@ static int writePkiHeader( INOUT STREAM *stream,
 
 	/* Get any other state information that we may need */
 	status = krnlSendMessage( sessionInfoPtr->ownerHandle, 
-							  IMESSAGE_GETATTRIBUTE, &protocolInfo->hashAlgo, 
+							  IMESSAGE_GETATTRIBUTE, &hashAlgo, 
 							  CRYPT_OPTION_ENCR_HASH );
 	ENSURES( cryptStatusOK( status ) );
+	protocolInfo->hashAlgo = hashAlgo;	/* int vs.enum */
 
 	/* Determine how big the sender and recipient information will be.  We 
 	   shouldn't need to send a recipient name for an ir because it won't
@@ -592,7 +593,7 @@ int writePkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
 	else
 		{
 		status = writeSignedProtinfo( protocolInfo->authContext, 
-						protocolInfo->hashAlgo, 
+						protocolInfo->hashAlgo, protocolInfo->hashParam,
 						sessionInfoPtr->receiveBuffer, stell( &stream ),
 						protInfo, 64 + MAX_PKCENCRYPTED_SIZE, &protInfoSize );
 		}

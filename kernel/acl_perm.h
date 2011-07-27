@@ -140,16 +140,6 @@
 #define MKPERM( perm )					ACCESS_##perm
 #define MKPERM_INT( perm )				ACCESS_INT_##perm
 
-/* Context ACL macros */
-
-#ifdef USE_KEA
-  #define MKPERM_KEA( perm )			ACCESS_##perm
-  #define MKPERM_INT_KEA( perm )		ACCESS_INT_##perm
-#else
-  #define MKPERM_KEA( perm )			ACCESS_xxx_xxx
-  #define MKPERM_INT_KEA( perm )		ACCESS_INT_xxx_xxx
-#endif /* USE_KEA */
-
 /* Certificate ACL macros */
 
 #ifdef USE_CERTIFICATES

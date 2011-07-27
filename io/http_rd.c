@@ -286,7 +286,7 @@ static int readResponseHeader( INOUT STREAM *stream,
 	if( netStream->nFlags & STREAM_NFLAG_HTTPGET )
 		{
 		status = writeRequestHeader( stream, httpDataInfo->reqInfo, 
-									 NULL, 0, 0 );
+									 NULL, 0, 0, FALSE );
 		if( cryptStatusError( status ) )
 			return( status );
 		}

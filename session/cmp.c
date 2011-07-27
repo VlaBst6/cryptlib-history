@@ -233,9 +233,10 @@ int setCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 		MESSAGE_CREATEOBJECT_INFO createInfo;
 
 		REQUIRES( protocolInfo->iMacContext == CRYPT_ERROR );
-		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_HMAC_SHA );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
-								  &createInfo, OBJECT_TYPE_CONTEXT );
+		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_HMAC_SHA1 );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+								  IMESSAGE_DEV_CREATEOBJECT, &createInfo, 
+								  OBJECT_TYPE_CONTEXT );
 		if( cryptStatusError( status ) )
 			return( status );
 		protocolInfo->iMacContext = createInfo.cryptHandle;

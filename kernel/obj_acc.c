@@ -153,8 +153,7 @@ static int checkAccessValid( IN_HANDLE const int objectHandle,
 			   other than the system object */
 			if( checkType == ACCESS_CHECK_EXTACCESS )
 				{
-				if( !isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_FORTEZZA ) && \
-					!isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_PKCS11 ) && \
+				if( !isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_PKCS11 ) && \
 					!isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_CRYPTOAPI ) && \
 					!isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_HARDWARE ) )
 					return( errorCode );

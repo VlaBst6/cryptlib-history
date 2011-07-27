@@ -9,11 +9,9 @@
 #include "crypt.h"
 #ifdef INC_ALL
   #include "trustmgr.h"
-  #include "stream.h"
   #include "user.h"
 #else
   #include "cert/trustmgr.h"
-  #include "io/stream.h"
   #include "misc/user.h"
 #endif /* Compiler-specific includes */
 
@@ -147,21 +145,19 @@ static int twoPhaseConfigUpdate( INOUT USER_INFO *userInfoPtr,
 			retIntError();
 		}
 
-
-
 	/* We've got the configuration data (if there is any) in a memory 
 	   buffer, we can unlock the user object to allow external access while 
 	   we commit the in-memory data to disk.  This also sends any trusted
 	   certificates in the user object to the configuration file alongside
 	   the data */
-	status = krnlSuspendObject( iTrustedCertUserObject, &refCount );
+	status = krnlSuspendObject( userInfoPtr->objectHandle, &refCount );
 	ENSURES( cryptStatusOK( status ) );
 	commitStatus = commitConfigData( userFileName, data, length, 
 									 iTrustedCertUserObject );
 	if( disposition == CONFIG_DISPOSITION_DATA_ONLY || \
 		disposition == CONFIG_DISPOSITION_BOTH )
 		clFree( "userMessageFunction", data );
-	status = krnlResumeObject( iTrustedCertUserObject, refCount );
+	status = krnlResumeObject( userInfoPtr->objectHandle, refCount );
 	if( cryptStatusError( status ) )
 		{
 		/* Handling errors at this point is rather tricky because an error 
@@ -272,6 +268,7 @@ int getUserAttribute( INOUT USER_INFO *userInfoPtr,
 			return( status );
 			}
 
+#ifdef USE_CERTIFICATES
 		case CRYPT_IATTRIBUTE_CTL:
 			{
 			MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -299,11 +296,12 @@ int getUserAttribute( INOUT USER_INFO *userInfoPtr,
 				krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 			return( status );
 			}
+#endif /* USE_CERTIFICATES */
 		}
 
 	/* Anything else has to be a configuration option */
-	assert( attribute > CRYPT_OPTION_FIRST && \
-			attribute < CRYPT_OPTION_LAST );
+	REQUIRES( attribute > CRYPT_OPTION_FIRST && \
+			  attribute < CRYPT_OPTION_LAST );
 
 	/* A numeric-value get can never fail because we always have default 
 	   values present */
@@ -441,6 +439,7 @@ int setUserAttribute( INOUT USER_INFO *userInfoPtr,
 			return( enumTrustedCerts( userInfoPtr->trustInfoPtr, 
 									  CRYPT_UNUSED, value ) );
 
+#ifdef USE_CERTIFICATES
 		case CRYPT_IATTRIBUTE_CTL:
 			/* Add the certs via the trust list */
 			status = addTrustEntry( userInfoPtr->trustInfoPtr,
@@ -448,6 +447,7 @@ int setUserAttribute( INOUT USER_INFO *userInfoPtr,
 			if( cryptStatusOK( status ) )
 				userInfoPtr->trustInfoChanged = TRUE;
 			return( status );
+#endif /* USE_CERTIFICATES */
 		}
 
 	/* Anything else has to be a configuration option */

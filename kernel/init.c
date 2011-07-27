@@ -81,9 +81,11 @@ int krnlDispatchThread( THREAD_FUNCTION threadFunction,
 	THREAD_HANDLE dummy = THREAD_INITIALISER;
 	int status;
 
-	assert( sizeof( THREAD_STATE ) >= sizeof( THREAD_INFO ) );
 	assert( threadState == NULL || \
 			isWritePtr( threadState, sizeof( THREAD_STATE ) ) );
+
+	static_assert( sizeof( THREAD_STATE ) >= sizeof( THREAD_INFO ), \
+				   "Thread storage size" );
 
 	/* Preconditions: The parameters appear valid, and it's a valid
 	   semaphore (SEMAPHORE_NONE is valid since it indicates that the caller

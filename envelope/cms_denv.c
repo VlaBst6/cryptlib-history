@@ -454,20 +454,6 @@ static int processEnvelopeHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			break;
 
 		case ACTION_KEYEXCHANGE:
-#ifdef USE_KEA
-			status = peekTag( stream );
-			if( cryptStatusError( status ) )
-				return( status );
-			if( status != BER_SET )
-				{
-				/* There may be key agreement data present, try and read the 
-				   start of the [0] IMPLICIT SEQUENCE { [0] SET OF Certificate } */
-				readConstructed( stream, NULL, 0 );
-				status = readConstructed( stream, NULL, 0 );
-				if( cryptStatusError( status ) )
-					return( status );
-				}
-#endif /* USE_KEA */
 			envelopeInfoPtr->usage = ACTION_CRYPT;
 			*state = DEENVSTATE_SET_ENCR;
 			break;
@@ -585,10 +571,9 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
 							  INOUT STREAM *stream )
 	{
-	CRYPT_ALGO_TYPE hashAlgo = DUMMY_INIT;
 	CRYPT_CONTEXT iHashContext;
 	ACTION_LIST *actionListPtr;
-	int iterationCount, status;
+	int hashAlgo = DUMMY_INIT, iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -609,7 +594,7 @@ static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		 actionListPtr != NULL && iterationCount < FAILSAFE_ITERATIONS_MED; 
 		 actionListPtr = actionListPtr->next, iterationCount++ )
 		{
-		CRYPT_ALGO_TYPE actionHashAlgo;
+		int actionHashAlgo;
 
 		status = krnlSendMessage( actionListPtr->iCryptHandle,
 								  IMESSAGE_GETATTRIBUTE, &actionHashAlgo, 
@@ -1042,8 +1027,14 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			status = processEncryptionHeader( envelopeInfoPtr, &stream );
 			if( cryptStatusError( status ) )
 				{
-				setErrorString( ENVELOPE_ERRINFO, 
-								"Invalid encrypted content header", 32 );
+				/* We may get non-data-related errors like 
+				   CRYPT_ERROR_WRONGKEY so we only set extended error 
+				   information if it's a data-related error */
+				if( isDataError( status ) )
+					{
+					setErrorString( ENVELOPE_ERRINFO, 
+									"Invalid encrypted content header", 32 );
+					}
 				break;
 				}
 

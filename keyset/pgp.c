@@ -96,10 +96,10 @@ static int createDecryptionContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iSessionKey,
 										const void *password, 
 									IN_LENGTH_NAME const int passwordLength )
 	{
-	static const CRYPT_MODE_TYPE cryptMode = CRYPT_MODE_CFB;
 	CRYPT_CONTEXT iLocalContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
+	static const int mode = CRYPT_MODE_CFB;	/* int vs.enum */
 	int ivSize, status;
 
 	assert( isWritePtr( iSessionKey, sizeof( CRYPT_CONTEXT ) ) );
@@ -117,8 +117,7 @@ static int createDecryptionContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iSessionKey,
 		return( status );
 	iLocalContext = createInfo.cryptHandle;
 	status = krnlSendMessage( iLocalContext, IMESSAGE_SETATTRIBUTE,
-							  ( MESSAGE_CAST ) &cryptMode, 
-							  CRYPT_CTXINFO_MODE );
+							  ( MESSAGE_CAST ) &mode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) )
 		{
 		status = pgpPasswordToKey( iLocalContext, 
@@ -609,13 +608,12 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 							IN_LENGTH_NAME_Z const int passwordLength,
 							IN_FLAGS( KEYMGMT ) const int flags )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
 	PGP_INFO *pgpInfo = ( PGP_INFO * ) keysetInfoPtr->keyData, *pgpInfoPtr;
 	MESSAGE_DATA msgData;
 	BYTE iD[ CRYPT_MAX_HASHSIZE + 8 ];
 	BOOLEAN privkeyPresent;
 	char label[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
-	int iDsize = DUMMY_INIT, status;
+	int algorithm, iDsize = DUMMY_INIT, status;
 
 	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
 	assert( ( itemType == KEYMGMT_ITEM_PUBLICKEY && \
@@ -645,8 +643,8 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	if( cryptStatusOK( status ) )
 		{
 		status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE,
-								  &cryptAlgo, CRYPT_CTXINFO_ALGO );
-		if( cryptStatusOK( status ) && cryptAlgo != CRYPT_ALGO_RSA )
+								  &algorithm, CRYPT_CTXINFO_ALGO );
+		if( cryptStatusOK( status ) && algorithm != CRYPT_ALGO_RSA )
 			{
 			/* For now we can only store RSA keys because of the peculiar
 			   properties of PGP DLP keys, which are actually two keys

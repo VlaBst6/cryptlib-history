@@ -375,8 +375,9 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 
 	REQUIRES( type > CRYPT_ATTRIBUTE_NONE && type < CRYPT_ATTRIBUTE_LAST );
 
-	if( type != CRYPT_SESSINFO_PRIVATEKEY && \
-		type != CRYPT_SESSINFO_USERNAME )
+	if( type != CRYPT_SESSINFO_USERNAME && \
+		type != CRYPT_SESSINFO_PRIVATEKEY && \
+		type != CRYPT_SESSINFO_REQUEST )
 		return( CRYPT_OK );
 
 	/* If it's a user name, used for the SCEP transaction ID, make sure that
@@ -452,6 +453,31 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 		
 		return( CRYPT_OK );
 		}
+
+	/* If it's a certificate request, make sure that the SCEP protocol 
+	   attributes, which get stuffed into the request alongside the standard 
+	   PKCS #10 data, haven't been set since we need to set them ourselves */
+	if( type == CRYPT_SESSINFO_REQUEST )
+		{
+		const CRYPT_CERTIFICATE cryptCertRequest = \
+									*( ( CRYPT_CERTIFICATE * ) data );
+		MESSAGE_DATA msgData;
+
+		/* Make sure that this attribute isn't already present */
+		setMessageData( &msgData, NULL, 0 );
+		status = krnlSendMessage( cryptCertRequest, IMESSAGE_GETATTRIBUTE_S,
+								  &msgData, CRYPT_CERTINFO_CHALLENGEPASSWORD );
+		if( cryptStatusOK( status ) )
+			{
+			setErrorInfo( sessionInfoPtr, CRYPT_CERTINFO_CHALLENGEPASSWORD,
+						  CRYPT_ERRTYPE_ATTR_PRESENT );
+			return( CRYPT_ARGERROR_NUM1 );
+			}
+
+		return( CRYPT_OK );
+		}
+
+	ENSURES( type == CRYPT_SESSINFO_PRIVATEKEY );
 
 	/* Make sure that there aren't any conflicts with existing attributes */
 	if( !checkAttributesConsistent( sessionInfoPtr, type ) )

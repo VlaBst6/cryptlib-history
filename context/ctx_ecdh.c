@@ -51,7 +51,8 @@
 
 /* Perform a pairwise consistency test on a public/private key pair */
 
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN pairwiseConsistencyTest( INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	CONTEXT_INFO checkContextInfo;
 	PKC_INFO contextData, *pkcInfo = &contextData;
@@ -59,6 +60,8 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 	KEYAGREE_PARAMS keyAgreeParams1, keyAgreeParams2;
 	const CAPABILITY_INFO *capabilityInfoPtr;
 	int bnStatus = BN_STATUS, status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* The ECDH pairwise check is a bit more complex than the one for the 
 	   other algorithms because there's no matched public/private key pair, 
@@ -143,6 +146,7 @@ static const FAR_BSS ECC_KEY ecdhTestKey = {
 	  0xB9, 0x7D, 0xF1, 0x49, 0x8D, 0x50, 0xD2, 0xC8 }
 	};
 
+CHECK_RETVAL \
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -158,15 +162,15 @@ static int selfTest( void )
 	pkcInfo->curveType = CRYPT_ECCCURVE_P256;
 	status = importBignum( &pkcInfo->eccParam_qx, ecdhTestKey.qx, 
 						   ecdhTestKey.qxLen, ECCPARAM_MIN_QX, 
-						   ECCPARAM_MAX_QX, NULL, SHORTKEY_CHECK_ECC );
+						   ECCPARAM_MAX_QX, NULL, KEYSIZE_CHECK_ECC );
 	if( cryptStatusOK( status ) ) 
 		status = importBignum( &pkcInfo->eccParam_qy, ecdhTestKey.qy, 
 							   ecdhTestKey.qyLen, ECCPARAM_MIN_QY, 
-							   ECCPARAM_MAX_QY, NULL, SHORTKEY_CHECK_NONE );
+							   ECCPARAM_MAX_QY, NULL, KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) ) 
 		status = importBignum( &pkcInfo->eccParam_d, ecdhTestKey.d, 
 							   ecdhTestKey.dLen, ECCPARAM_MIN_D, 
-							   ECCPARAM_MAX_D, NULL, SHORTKEY_CHECK_NONE );
+							   ECCPARAM_MAX_D, NULL, KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) ) 
 		{
 		staticDestroyContext( &contextInfo );
@@ -198,60 +202,31 @@ static int selfTest( void )
    'Fn' to the name since some systems already have 'encrypt' and 'decrypt' 
    in their standard headers */
 
-static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+					  IN_LENGTH_FIXED( sizeof( KEYAGREE_PARAMS ) ) int noBytes )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	KEYAGREE_PARAMS *keyAgreeParams = ( KEYAGREE_PARAMS * ) buffer;
 	int status;
 
-	UNUSED_ARG( noBytes );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( keyAgreeParams, sizeof( KEYAGREE_PARAMS ) ) );
 
-	assert( noBytes == sizeof( KEYAGREE_PARAMS ) );
-	assert( !BN_is_zero( &pkcInfo->dlpParam_y ) );
+	REQUIRES( noBytes == sizeof( KEYAGREE_PARAMS ) );
+	REQUIRES( !BN_is_zero( &pkcInfo->eccParam_qx ) && \
+			  !BN_is_zero( &pkcInfo->eccParam_qy ) );
 
 	/* Q is generated either at keygen time for static ECDH or as a side-
 	   effect of the implicit generation of the d value for ephemeral ECDH, 
 	   so all we have to do is encode it in X9.62 point form to the output */
-#if 1
 	status = exportECCPoint( keyAgreeParams->publicValue, CRYPT_MAX_PKCSIZE,
 							 &keyAgreeParams->publicValueLen, 
 							 &pkcInfo->eccParam_qx, &pkcInfo->eccParam_qy,
 							 bitsToBytes( pkcInfo->keySizeBits ) );
 	if( cryptStatusError( status ) )
 		return( status );
-#else	/* Needed for old TLS code which reversed the order of the ECDH 
-		   ops so phase 2 was called before phase 1 */
-	{
-	bnStatus = BN_STATUS; 
-
-	/* When used with TLS context (with an ECDHE-* suite and with cryptlib 
-	   as the client) encryptFn() and decryptFn() are called in the wrong 
-	   order.  The net effect is that pkcInfo->eccParam_qx and 
-	   pkcInfo->eccParam_qy do NOT contain at that point our Q point but 
-	   the public point from the peer.  If we apply what the comment above 
-	   suggests then we send to the server the same public point that he 
-	   sent us, and the server will not compute the same premaster secret as
-	   we do.  The code below recomputes our Q point from the private value 
-	   d */
-	CK( EC_POINT_mul( pkcInfo->ecCTX, pkcInfo->tmpPoint,
-					  &pkcInfo->eccParam_d, NULL, NULL, pkcInfo->bnCTX ) );
-	if( bnStatusError( bnStatus ) )
-		return( getBnStatus( bnStatus ) );
-	CK( EC_POINT_get_affine_coordinates_GFp( pkcInfo->ecCTX,
-											 pkcInfo->tmpPoint,
-											 &pkcInfo->tmp1,
-											 &pkcInfo->tmp2,
-											 pkcInfo->bnCTX ) );
-	if( bnStatusError( bnStatus ) )
-		return( getBnStatus( bnStatus ) );
-	status = exportECCPoint( keyAgreeParams->publicValue, CRYPT_MAX_PKCSIZE,
-							 &keyAgreeParams->publicValueLen, 
-							 &pkcInfo->tmp1, &pkcInfo->tmp2,
-							 bitsToBytes( pkcInfo->keySizeBits ) );
-	if( cryptStatusError( status ) )
-		return( status );
-	}
-#endif /* 1 */
 
 	/* Perform side-channel attack checks if necessary */
 	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
@@ -265,7 +240,10 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Perform phase 2 of ECDH ("import") */
 
-static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int decryptFn( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+					  IN_LENGTH_FIXED( sizeof( KEYAGREE_PARAMS ) ) int noBytes )
 	{
 	KEYAGREE_PARAMS *keyAgreeParams = ( KEYAGREE_PARAMS * ) buffer;
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
@@ -274,10 +252,14 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	BIGNUM *x = &pkcInfo->tmp1, *y = &pkcInfo->tmp2;
 	int bnStatus = BN_STATUS, status;
 
-	assert( noBytes == sizeof( KEYAGREE_PARAMS ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( keyAgreeParams, sizeof( KEYAGREE_PARAMS ) ) );
 	assert( isReadPtr( keyAgreeParams->publicValue, 
 					   keyAgreeParams->publicValueLen ) );
-	assert( keyAgreeParams->publicValueLen >= MIN_PKCSIZE_ECCPOINT );
+
+	REQUIRES( noBytes == sizeof( KEYAGREE_PARAMS ) );
+	REQUIRES( keyAgreeParams->publicValueLen >= MIN_PKCSIZE_ECCPOINT && \
+			  keyAgreeParams->publicValueLen < MAX_INTLENGTH_SHORT );
 
 	/* The other party's Q value will be stored with the key agreement info 
 	   in X9.62 point form rather than having been read in when we read the 
@@ -288,7 +270,7 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 							 MIN_PKCSIZE_ECC_THRESHOLD, 
 							 CRYPT_MAX_PKCSIZE_ECC, 
 							 bitsToBytes( pkcInfo->keySizeBits ),
-							 &pkcInfo->eccParam_p, SHORTKEY_CHECK_ECC );
+							 &pkcInfo->eccParam_p, KEYSIZE_CHECK_ECC );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -342,10 +324,18 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Load key components into an encryption context */
 
-static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
-					const int keyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+					IN_BUFFER_OPT( keyLength ) const void *key,
+					IN_LENGTH_SHORT_OPT const int keyLength )
 	{
-	int status;
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( key == NULL && keyLength == 0 ) || \
+			( isReadPtr( key, keyLength ) && \
+			  keyLength == sizeof( CRYPT_PKCINFO_ECC ) ) );
+
+	REQUIRES( ( key == NULL && keyLength == 0 ) || \
+			  ( key != NULL && keyLength == sizeof( CRYPT_PKCINFO_ECC ) ) );
 
 #ifndef USE_FIPS140
 	/* Load the key component from the external representation into the 
@@ -354,6 +344,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		{
 		PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 		const CRYPT_PKCINFO_ECC *eccKey = ( CRYPT_PKCINFO_ECC * ) key;
+		int status;
 
 		contextInfoPtr->flags |= ( eccKey->isPublicKey ) ? \
 							CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
@@ -362,32 +353,32 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 			status = importBignum( &pkcInfo->eccParam_p, eccKey->p, 
 								   bitsToBytes( eccKey->pLen ), 
 								   ECCPARAM_MIN_P, ECCPARAM_MAX_P, 
-								   NULL, SHORTKEY_CHECK_ECC );
+								   NULL, KEYSIZE_CHECK_ECC );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_a, eccKey->a, 
 									   bitsToBytes( eccKey->aLen ), 
 									   ECCPARAM_MIN_A, ECCPARAM_MAX_A, 
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_b, eccKey->b, 
 									   bitsToBytes( eccKey->bLen ), 
 									   ECCPARAM_MIN_B, ECCPARAM_MAX_B, 
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_gx, eccKey->gx, 
 									   bitsToBytes( eccKey->gxLen ), 
 									   ECCPARAM_MIN_GX, ECCPARAM_MAX_GX, 
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_gy, eccKey->gy, 
 									   bitsToBytes( eccKey->gyLen ), 
 									   ECCPARAM_MIN_GY, ECCPARAM_MAX_GY, 
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_n, eccKey->n, 
 									   bitsToBytes( eccKey->nLen ), 
 									   ECCPARAM_MIN_N, ECCPARAM_MAX_N, 
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
@@ -401,17 +392,17 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		status = importBignum( &pkcInfo->eccParam_qx, eccKey->qx, 
 							   bitsToBytes( eccKey->qxLen ), 
 							   ECCPARAM_MIN_QX, ECCPARAM_MAX_QX, 
-							   NULL, SHORTKEY_CHECK_NONE );
+							   NULL, KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->eccParam_qy, eccKey->qy, 
 								   bitsToBytes( eccKey->qyLen ), 
 								   ECCPARAM_MIN_QY, ECCPARAM_MAX_QY, 
-								   NULL, SHORTKEY_CHECK_NONE );
+								   NULL, KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) && !eccKey->isPublicKey )
 			status = importBignum( &pkcInfo->eccParam_d, eccKey->d, 
 								   bitsToBytes( eccKey->dLen ), 
 								   ECCPARAM_MIN_D, ECCPARAM_MAX_D, 
-								   NULL, SHORTKEY_CHECK_NONE );
+								   NULL, KEYSIZE_CHECK_NONE );
 		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
 		if( cryptStatusError( status ) )
 			return( status );
@@ -424,9 +415,17 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 /* Generate a key into an encryption context */
 
-static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+						IN_LENGTH_SHORT_MIN( MIN_PKCSIZE_ECC * 8 ) \
+							const int keySizeBits )
 	{
 	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE_ECC ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) );
 
 	status = generateECCkey( contextInfoPtr, keySizeBits );
 	if( cryptStatusOK( status ) &&

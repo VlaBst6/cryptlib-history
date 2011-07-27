@@ -36,7 +36,7 @@
 
 MAJ		= 3
 MIN		= 4
-PLV		= 0
+PLV		= 1
 PROJ	= cl
 LIBNAME	= lib$(PROJ).a
 SLIBNAME = lib$(PROJ).so.$(MAJ).$(MIN).$(PLV)
@@ -63,6 +63,10 @@ DYLIBNAME = lib$(PROJ).$(MAJ).$(MIN).dylib
 # If the OS supports it, the multithreaded version of cryptlib will be built.
 # To specifically disable this add -DNO_THREADS.
 #
+# If you're building the 64-bit version on a system that defaults to 32-bit
+# binaries then you can get the 64-bit version by adding "-m64" to CFLAGS
+# and LDFLAGS, at least for gcc.
+#
 # Further cc flags are gathered dynamically at runtime via the ccopts.sh
 # script.
 
@@ -83,6 +87,7 @@ SHARED_OBJ_PATH = ./shared-obj/
 SHARED_OBJ_DIR = ./shared-obj
 CPP			= $(CC) -E
 LD			= $(CC)
+LDFLAGS		=
 AR			= ar
 SHELL		= /bin/sh
 OSNAME		= `uname`
@@ -152,33 +157,29 @@ CERTOBJS	= $(OBJPATH)certrev.o $(OBJPATH)certschk.o $(OBJPATH)certsign.o \
 
 CRYPTOBJS	= $(OBJPATH)aes_modes.o $(OBJPATH)aescrypt.o $(OBJPATH)aeskey.o \
 			  $(OBJPATH)aestab.o $(OBJPATH)bfecb.o $(OBJPATH)bfenc.o \
-			  $(OBJPATH)bfskey.o $(OBJPATH)castecb.o $(OBJPATH)castenc.o \
-			  $(OBJPATH)castskey.o $(OBJPATH)descbc.o $(OBJPATH)desecb.o \
+			  $(OBJPATH)bfskey.o $(OBJPATH)descbc.o $(OBJPATH)desecb.o \
 			  $(OBJPATH)desecb3.o $(OBJPATH)desenc.o $(OBJPATH)desskey.o \
 			  $(OBJPATH)gcm.o $(OBJPATH)gf128mul.o $(OBJPATH)icbc.o \
 			  $(OBJPATH)iecb.o $(OBJPATH)iskey.o $(OBJPATH)rc2cbc.o \
 			  $(OBJPATH)rc2ecb.o $(OBJPATH)rc2skey.o $(OBJPATH)rc4enc.o \
 			  $(OBJPATH)rc4skey.o $(OBJPATH)rc5ecb.o $(OBJPATH)rc5enc.o \
-			  $(OBJPATH)rc5skey.o $(OBJPATH)skipjack.o
+			  $(OBJPATH)rc5skey.o
 
 CTXOBJS		= $(OBJPATH)ctx_3des.o $(OBJPATH)ctx_aes.o $(OBJPATH)ctx_attr.o \
-			  $(OBJPATH)ctx_bf.o $(OBJPATH)ctx_cast.o $(OBJPATH)ctx_des.o \
-			  $(OBJPATH)ctx_dh.o $(OBJPATH)ctx_dsa.o $(OBJPATH)ctx_ecdh.o \
-			  $(OBJPATH)ctx_ecdsa.o $(OBJPATH)ctx_elg.o $(OBJPATH)ctx_generic.o \
-			  $(OBJPATH)ctx_hmd5.o $(OBJPATH)ctx_hrmd.o $(OBJPATH)ctx_hsha.o \
-			  $(OBJPATH)ctx_hsha2.o $(OBJPATH)ctx_idea.o $(OBJPATH)ctx_md2.o \
-			  $(OBJPATH)ctx_md4.o $(OBJPATH)ctx_md5.o $(OBJPATH)ctx_misc.o \
+			  $(OBJPATH)ctx_bf.o $(OBJPATH)ctx_des.o $(OBJPATH)ctx_dh.o \
+			  $(OBJPATH)ctx_dsa.o $(OBJPATH)ctx_ecdh.o $(OBJPATH)ctx_ecdsa.o \
+			  $(OBJPATH)ctx_elg.o $(OBJPATH)ctx_generic.o $(OBJPATH)ctx_hmd5.o \
+			  $(OBJPATH)ctx_hrmd.o $(OBJPATH)ctx_hsha.o $(OBJPATH)ctx_hsha2.o \
+			  $(OBJPATH)ctx_idea.o $(OBJPATH)ctx_md5.o $(OBJPATH)ctx_misc.o \
 			  $(OBJPATH)ctx_rc2.o $(OBJPATH)ctx_rc4.o $(OBJPATH)ctx_rc5.o \
 			  $(OBJPATH)ctx_ripe.o $(OBJPATH)ctx_rsa.o $(OBJPATH)ctx_sha.o \
-			  $(OBJPATH)ctx_sha2.o $(OBJPATH)ctx_skip.o $(OBJPATH)kg_dlp.o \
-			  $(OBJPATH)kg_ecc.o $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o \
-			  $(OBJPATH)keyload.o $(OBJPATH)key_id.o $(OBJPATH)key_rd.o \
-			  $(OBJPATH)key_wr.o
+			  $(OBJPATH)ctx_sha2.o $(OBJPATH)kg_dlp.o $(OBJPATH)kg_ecc.o \
+			  $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o $(OBJPATH)keyload.o \
+			  $(OBJPATH)key_id.o $(OBJPATH)key_rd.o $(OBJPATH)key_wr.o
 
-DEVOBJS		= $(OBJPATH)dev_attr.o $(OBJPATH)fortezza.o $(OBJPATH)hardware.o \
-			  $(OBJPATH)hw_dummy.o $(OBJPATH)pkcs11.o $(OBJPATH)pkcs11_init.o \
-			  $(OBJPATH)pkcs11_pkc.o $(OBJPATH)pkcs11_rd.o \
-			  $(OBJPATH)pkcs11_wr.o $(OBJPATH)system.o
+DEVOBJS		= $(OBJPATH)dev_attr.o $(OBJPATH)hardware.o $(OBJPATH)hw_dummy.o \
+			  $(OBJPATH)pkcs11.o $(OBJPATH)pkcs11_init.o $(OBJPATH)pkcs11_pkc.o \
+			  $(OBJPATH)pkcs11_rd.o $(OBJPATH)pkcs11_wr.o $(OBJPATH)system.o
 
 ENCDECOBJS	= $(OBJPATH)asn1_algid.o $(OBJPATH)asn1_chk.o $(OBJPATH)asn1_rd.o \
 			  $(OBJPATH)asn1_wr.o $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o \
@@ -189,8 +190,8 @@ ENVOBJS		= $(OBJPATH)cms_denv.o $(OBJPATH)cms_env.o $(OBJPATH)cms_envpre.o \
 			  $(OBJPATH)pgp_denv.o $(OBJPATH)pgp_env.o $(OBJPATH)res_actn.o \
 			  $(OBJPATH)res_denv.o $(OBJPATH)res_env.o
 
-HASHOBJS	= $(OBJPATH)md2dgst.o $(OBJPATH)md4dgst.o $(OBJPATH)md5dgst.o \
-			  $(OBJPATH)rmddgst.o $(OBJPATH)sha1dgst.o $(OBJPATH)sha2.o
+HASHOBJS	= $(OBJPATH)md5dgst.o $(OBJPATH)rmddgst.o $(OBJPATH)sha1dgst.o \
+			  $(OBJPATH)sha2.o
 
 IOOBJS		= $(OBJPATH)cmp_tcp.o $(OBJPATH)dns.o $(OBJPATH)dns_srv.o \
 			  $(OBJPATH)file.o $(OBJPATH)http_rd.o $(OBJPATH)http_parse.o \
@@ -203,8 +204,8 @@ KEYSETOBJS	= $(OBJPATH)dbms.o $(OBJPATH)ca_add.o $(OBJPATH)ca_clean.o \
 			  $(OBJPATH)dbx_misc.o $(OBJPATH)dbx_rd.o $(OBJPATH)dbx_wr.o \
 			  $(OBJPATH)http.o $(OBJPATH)key_attr.o $(OBJPATH)ldap.o \
 			  $(OBJPATH)odbc.o $(OBJPATH)pgp.o $(OBJPATH)pgp_rd.o \
-			  $(OBJPATH)pkcs12.o $(OBJPATH)pkcs12_rd.o $(OBJPATH)pkcs12_wr.o \
-			  $(OBJPATH)pkcs15.o $(OBJPATH)pkcs15_add.o \
+			  $(OBJPATH)pkcs12.o $(OBJPATH)pkcs12_rd.o $(OBJPATH)pkcs12_rdo.o \
+			  $(OBJPATH)pkcs12_wr.o $(OBJPATH)pkcs15.o $(OBJPATH)pkcs15_add.o \
 			  $(OBJPATH)pkcs15_adpb.o $(OBJPATH)pkcs15_adpr.o \
 			  $(OBJPATH)pkcs15_atrd.o $(OBJPATH)pkcs15_atwr.o \
 			  $(OBJPATH)pkcs15_get.o $(OBJPATH)pkcs15_getp.o \
@@ -265,7 +266,8 @@ OBJS		= $(BNOBJS) $(CERTOBJS) $(CRYPTOBJS) $(CTXOBJS) $(DEVOBJS) \
 
 TESTOBJS	= certimp.o certproc.o certs.o devices.o envelope.o highlvl.o \
 			  keydbx.o keyfile.o loadkey.o lowlvl.o s_cmp.o s_scep.o \
-			  sreqresp.o ssh.o ssl.o stress.o testfunc.o testlib.o utils.o
+			  sreqresp.o ssh.o ssl.o stress.o suiteb.o testfunc.o testlib.o \
+			  utils.o
 
 # Various functions all make use of certain headers so we define the
 # dependencies once here
@@ -277,7 +279,7 @@ ASN1_DEP = $(IO_DEP) enc_dec/asn1.h enc_dec/asn1_ext.h
 CERT_DEP = cert/cert.h cert/certfn.h
 
 CRYPT_DEP	= cryptlib.h crypt.h cryptkrn.h misc/config.h misc/consts.h \
-			  misc/int_api.h misc/os_spec.h
+			  misc/debug.h misc/int_api.h misc/os_spec.h
 
 KERNEL_DEP	= kernel/acl.h kernel/kernel.h kernel/thread.h
 
@@ -587,9 +589,6 @@ $(OBJPATH)ctx_attr.o:	$(CRYPT_DEP) context/context.h context/ctx_attr.c
 $(OBJPATH)ctx_bf.o:		$(CRYPT_DEP) context/context.h crypt/blowfish.h context/ctx_bf.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_bf.o context/ctx_bf.c
 
-$(OBJPATH)ctx_cast.o:	$(CRYPT_DEP) context/context.h crypt/cast.h context/ctx_cast.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_cast.o context/ctx_cast.c
-
 $(OBJPATH)ctx_des.o:	$(CRYPT_DEP) context/context.h crypt/testdes.h crypt/des.h \
 						context/ctx_des.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_des.o context/ctx_des.c
@@ -627,12 +626,6 @@ $(OBJPATH)ctx_hsha2.o:	$(CRYPT_DEP) context/context.h crypt/sha2.h context/ctx_h
 $(OBJPATH)ctx_idea.o:	$(CRYPT_DEP) context/context.h crypt/idea.h context/ctx_idea.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_idea.o context/ctx_idea.c
 
-$(OBJPATH)ctx_md2.o:	$(CRYPT_DEP) context/context.h crypt/md2.h context/ctx_md2.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_md2.o context/ctx_md2.c
-
-$(OBJPATH)ctx_md4.o:	$(CRYPT_DEP) context/context.h crypt/md4.h context/ctx_md4.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_md4.o context/ctx_md4.c
-
 $(OBJPATH)ctx_md5.o:	$(CRYPT_DEP) context/context.h crypt/md5.h context/ctx_md5.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_md5.o context/ctx_md5.c
 
@@ -659,9 +652,6 @@ $(OBJPATH)ctx_sha.o:	$(CRYPT_DEP) context/context.h crypt/sha.h context/ctx_sha.
 
 $(OBJPATH)ctx_sha2.o:	$(CRYPT_DEP) context/context.h crypt/sha2.h context/ctx_sha2.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_sha2.o context/ctx_sha2.c
-
-$(OBJPATH)ctx_skip.o:	$(CRYPT_DEP) context/context.h context/ctx_skip.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_skip.o context/ctx_skip.c
 
 $(OBJPATH)kg_dlp.o:		$(CRYPT_DEP) context/context.h bn/bn_prime.h context/kg_dlp.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)kg_dlp.o context/kg_dlp.c
@@ -710,16 +700,6 @@ $(OBJPATH)bfenc.o:		crypt/osconfig.h crypt/blowfish.h crypt/bflocl.h crypt/bfenc
 $(OBJPATH)bfskey.o:		crypt/osconfig.h crypt/blowfish.h crypt/bflocl.h crypt/bfpi.h \
 						crypt/bfskey.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)bfskey.o crypt/bfskey.c
-
-$(OBJPATH)castecb.o:	crypt/osconfig.h crypt/cast.h crypt/castlcl.h crypt/castecb.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)castecb.o crypt/castecb.c
-
-$(OBJPATH)castenc.o:	crypt/osconfig.h crypt/cast.h crypt/castlcl.h crypt/castenc.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)castenc.o crypt/castenc.c
-
-$(OBJPATH)castskey.o:	crypt/osconfig.h crypt/cast.h crypt/castlcl.h crypt/castsbox.h \
-						crypt/castskey.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)castskey.o crypt/castskey.c
 
 $(OBJPATH)descbc.o:		crypt/osconfig.h crypt/des.h crypt/deslocl.h crypt/descbc.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)descbc.o crypt/descbc.c
@@ -777,17 +757,7 @@ $(OBJPATH)rc5enc.o:		crypt/osconfig.h crypt/rc5.h crypt/rc5locl.h crypt/rc5enc.c
 $(OBJPATH)rc5skey.o:	crypt/osconfig.h crypt/rc5.h crypt/rc5locl.h crypt/rc5skey.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)rc5skey.o crypt/rc5skey.c
 
-$(OBJPATH)skipjack.o:	crypt/skipjack.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)skipjack.o crypt/skipjack.c
-
 # crypt subdirectory - hash algos
-
-$(OBJPATH)md2dgst.o:	crypt/osconfig.h crypt/md2.h crypt/md2dgst.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)md2dgst.o crypt/md2dgst.c
-
-$(OBJPATH)md4dgst.o:	crypt/osconfig.h crypt/md4.h crypt/md4locl.h \
-						crypt/md4dgst.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)md4dgst.o crypt/md4dgst.c
 
 $(OBJPATH)md5dgst.o:	crypt/osconfig.h crypt/md5.h crypt/md5locl.h \
 						crypt/md5dgst.c
@@ -808,9 +778,6 @@ $(OBJPATH)sha2.o:		crypt/osconfig.h crypt/sha.h crypt/sha1locl.h crypt/sha2.c
 
 $(OBJPATH)dev_attr.o:	$(CRYPT_DEP) device/device.h device/dev_attr.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)dev_attr.o device/dev_attr.c
-
-$(OBJPATH)fortezza.o:	$(CRYPT_DEP) device/device.h device/fortezza.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)fortezza.o device/fortezza.c
 
 $(OBJPATH)hardware.o:	$(CRYPT_DEP) device/device.h device/hardware.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)hardware.o device/hardware.c
@@ -1043,6 +1010,9 @@ $(OBJPATH)pkcs12.o:		$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.h keyset/pkcs12.
 
 $(OBJPATH)pkcs12_rd.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.h keyset/pkcs12_rd.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs12_rd.o keyset/pkcs12_rd.c
+
+$(OBJPATH)pkcs12_rdo.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.h keyset/pkcs12_rdo.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs12_rdo.o keyset/pkcs12_rdo.c
 
 $(OBJPATH)pkcs12_wr.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.h keyset/pkcs12_wr.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs12_wr.o keyset/pkcs12_wr.c
@@ -1448,6 +1418,9 @@ ssl.o:					cryptlib.h crypt.h test/test.h test/ssl.c
 stress.o:				cryptlib.h crypt.h test/test.h test/stress.c
 						$(CC) $(CFLAGS) test/stress.c
 
+suiteb.o:				cryptlib.h crypt.h test/test.h test/suiteb.c
+						$(CC) $(CFLAGS) test/suiteb.c
+
 testfunc.o:				cryptlib.h crypt.h test/test.h test/testfunc.c
 						$(CC) $(CFLAGS) test/testfunc.c
 
@@ -1781,6 +1754,11 @@ dgux:
 #		gas syntax, so we can only build it if we're using the PHUX native
 #		development tools.
 #
+#		The HP compilers emit bogus warnings about (signed) char <->
+#		unsigned char conversion, to get rid of these we use +W 563,604
+#		to disable warning 563 (Argument is not the correct type) and 604
+#		(Pointers are not assignment-compatible).
+#
 #		Finally, the default PHUX system ships with a non-C compiler (C++)
 #		with most of the above bugs, but that can't process standard C code
 #		either.  To detect this we feed it a C-compiler option and check for
@@ -1812,7 +1790,7 @@ HP-UX:
 			else \
 				if [ `getconf CPU_VERSION` -ge 532 ] ; then \
 					./tools/buildasm.sh $(AS) $(OBJPATH) ; \
-					make $(DEFINES) CFLAGS="$(CFLAGS) +O3 +ESlit +DA2.0 +DS2.0 -Ae -D_REENTRANT" ; \
+					make $(DEFINES) CFLAGS="$(CFLAGS) +O3 +ESlit +DA2.0 +DS2.0 -Ae +W 563,604 -D_REENTRANT" ; \
 				else \
 					make $(DEFINES) CFLAGS="$(CFLAGS) +O3 -D_REENTRANT" ; \
 				fi ; \
@@ -2028,9 +2006,14 @@ itgoaway:
 #				code block it becomes a pain having to track them down
 #				whenever the code changes, and -O2 isn't really much
 #				different than -O3 anyway.
+#
+#				We only build the asm code if we're doing a 32-bit build,
+#				since it's 32-bit only.
 
 SunOS:
-	@./tools/buildasm.sh $(AS) $(OBJPATH)
+	@if [ `echo $(CFLAGS) | grep -c -- '-m64'` = 0 ] ; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+	fi
 	@- if [ `uname -r | tr -d '[A-Z].' | cut -c 1` = '4' ] ; then \
 		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CC=gcc \
 			CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3" ; \
@@ -2553,6 +2536,20 @@ target-xmk-ppc:
 	@make OSNAME=xmk target-init
 	make $(XDEFINES) OSNAME=XMK CC=powerpc-eabi-gcc CFLAGS="$(XCFLAGS) \
 		-DCONFIG_DATA_LITTLEENDIAN -D__XMK__ -fomit-frame-pointer -O3 \
+		`./tools/ccopts-crosscompile.sh $(CC)`"
+
+# Non-OS target or proprietary OS.  This will trigger #errors at various
+# locations in the code where you need to fill in the blanks for whatever
+# your OS (or non-OS) requires.
+
+target-68k:
+	@make OSNAME=moto68 target-init
+
+	make $(XDEFINES) OSNAME=moto68 CC=mcc68k.exe CFLAGS="$(XCFLAGS) \
+		-DCONFIG_DATA_BIGENDIAN -D__m68k__ -pCPU32 -c -g -zc -Mca -Md5 \
+		-Kha5 -NScode -nKf -Oc -S -DTVA_68K=1 -DIS_COOPERATIVE=1 \
+		-DTVA_FUNCTION_FRAME_SUPPORT=0 -Os -Oe -OXc2 -OXcs2 -OXk2 -OXrep1 \
+		-nOj -OXrf -OXsr \
 		`./tools/ccopts-crosscompile.sh $(CC)`"
 
 #****************************************************************************

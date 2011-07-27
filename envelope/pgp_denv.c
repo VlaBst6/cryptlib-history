@@ -1240,9 +1240,15 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 				if( status == CRYPT_ENVELOPE_RESOURCE )
 					break;
 
-				setErrorString( ENVELOPE_ERRINFO, 
-								"Invalid PGP encrypted data packet header", 
-								40 );
+				/* We may get non-data-related errors like 
+				   CRYPT_ERROR_WRONGKEY so we only set extended error 
+				   information if it's a data-related error */
+				if( isDataError( status ) )
+					{
+					setErrorString( ENVELOPE_ERRINFO, 
+									"Invalid PGP encrypted data packet header", 
+									40 );
+					}
 				break;
 				}
 

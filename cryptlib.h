@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								cryptlib Header File						*
-*						Copyright Peter Gutmann 1992-2010					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -9,9 +9,9 @@
 
 #define _CRYPTLIB_DEFINED
 
-/* The current cryptlib version: 3.4.0 */
+/* The current cryptlib version: 3.4.1 */
 
-#define CRYPTLIB_VERSION	3400
+#define CRYPTLIB_VERSION	3410
 
 /* Fixup for Windows support.  We need to include windows.h for various types
    and prototypes needed for DLL's.  In addition wincrypt.h defines some
@@ -142,15 +142,29 @@
   #else
 	#define C_NONNULL_ARG( argIndex )	__attribute__(( nonnull argIndex ))
   #endif /* _CRYPT_DEFINED */
-#elif defined( _MSC_VER ) && defined( _PREFAST_ ) 
-  #define C_CHECK_RETVAL			__checkReturn
-  #define C_NONNULL_ARG( argIndex )
-  #undef C_IN_OPT
-  #define C_IN_OPT					__in_opt const
-  #undef C_OUT_OPT
-  #define C_OUT_OPT					__out_opt
-  #undef C_INOUT
-  #define C_INOUT					__inout
+#elif defined( _MSC_VER ) && defined( _PREFAST_ )
+  #ifdef __ATTR_SAL				/* Attribute SAL */
+	#define C_CHECK_RETVAL			_Check_return_ \
+									_Success_( result == CRYPT_OK )
+	#define C_NONNULL_ARG( argIndex )
+	#undef C_IN_OPT
+	#define C_IN_OPT				_In_opt_ const
+	#undef C_OUT_OPT
+	#define C_OUT_OPT				_Out_opt_
+	#undef C_INOUT
+	#define C_INOUT					_Inout_
+  #else
+	#define C_CHECK_RETVAL			__checkReturn \
+									__success( result == CRYPT_OK ) \
+									__range( MAX_ERROR, CRYPT_OK )
+	#define C_NONNULL_ARG( argIndex )
+	#undef C_IN_OPT
+	#define C_IN_OPT				__in_opt const
+	#undef C_OUT_OPT
+	#define C_OUT_OPT				__out_opt
+	#undef C_INOUT
+	#define C_INOUT					__inout
+  #endif /* Declspec vs. Attribute SAL */
 #else
   #define C_CHECK_RETVAL
   #define C_NONNULL_ARG( argIndex )
@@ -185,27 +199,27 @@ typedef enum {						/* Algorithms */
 	/* Conventional encryption */
 	CRYPT_ALGO_DES,					/* DES */
 	CRYPT_ALGO_3DES,				/* Triple DES */
-	CRYPT_ALGO_IDEA,				/* IDEA */
-	CRYPT_ALGO_CAST,				/* CAST-128 */
-	CRYPT_ALGO_RC2,					/* RC2 */
+	CRYPT_ALGO_IDEA,				/* IDEA (only used for PGP 2.x) */
+	CRYPT_ALGO_RESERVED1,			/* Formerly CAST-128 */
+	CRYPT_ALGO_RC2,					/* RC2 (disabled by default) */
 	CRYPT_ALGO_RC4,					/* RC4 */
 	CRYPT_ALGO_RC5,					/* RC5 */
 	CRYPT_ALGO_AES,					/* AES */
 	CRYPT_ALGO_BLOWFISH,			/* Blowfish */
-	CRYPT_ALGO_SKIPJACK,			/* Skipjack */
+	CRYPT_ALGO_RESERVED2,			/* Formerly Skipjack */
 
 	/* Public-key encryption */
 	CRYPT_ALGO_DH = 100,			/* Diffie-Hellman */
 	CRYPT_ALGO_RSA,					/* RSA */
 	CRYPT_ALGO_DSA,					/* DSA */
 	CRYPT_ALGO_ELGAMAL,				/* ElGamal */
-	CRYPT_ALGO_KEA,					/* KEA */
+	CRYPT_ALGO_RESERVED3,			/* Formerly KEA */
 	CRYPT_ALGO_ECDSA,				/* ECDSA */
 	CRYPT_ALGO_ECDH,				/* ECDH */
 
 	/* Hash algorithms */
-	CRYPT_ALGO_MD2 = 200,			/* MD2 */
-	CRYPT_ALGO_MD4,					/* MD4 */
+	CRYPT_ALGO_RESERVED4 = 200,		/* Formerly MD2 */
+	CRYPT_ALGO_RESERVED5,			/* Formerly MD4 */
 	CRYPT_ALGO_MD5,					/* MD5 */
 	CRYPT_ALGO_SHA1,				/* SHA/SHA1 */
 		CRYPT_ALGO_SHA = CRYPT_ALGO_SHA1,	/* Older form */
@@ -217,7 +231,7 @@ typedef enum {						/* Algorithms */
 	/* MAC's */
 	CRYPT_ALGO_HMAC_MD5 = 300,		/* HMAC-MD5 */
 	CRYPT_ALGO_HMAC_SHA1,			/* HMAC-SHA */
-		CRYPT_ALGO_HMAC_SHA = CRYPT_ALGO_HMAC_SHA1,	/* Older form */
+		CRYPT_ALGO_HMAC_SHA_ = CRYPT_ALGO_HMAC_SHA1,	/* Older form */
 	CRYPT_ALGO_HMAC_RIPEMD160,		/* HMAC-RIPEMD-160 */
 	CRYPT_ALGO_HMAC_SHA2,			/* HMAC-SHA2 */
 	CRYPT_ALGO_HMAC_SHAng,			/* HMAC-future-SHA-nextgen */
@@ -248,14 +262,14 @@ typedef enum {						/* Algorithms */
 	/* In order that we can scan through a range of algorithms with
 	   cryptQueryCapability(), we define the following boundary points for
 	   each algorithm class */
-	CRYPT_ALGO_FIRST_CONVENTIONAL = CRYPT_ALGO_DES,
-	CRYPT_ALGO_LAST_CONVENTIONAL = CRYPT_ALGO_DH - 1,
-	CRYPT_ALGO_FIRST_PKC = CRYPT_ALGO_DH,
-	CRYPT_ALGO_LAST_PKC = CRYPT_ALGO_MD2 - 1,
-	CRYPT_ALGO_FIRST_HASH = CRYPT_ALGO_MD2,
-	CRYPT_ALGO_LAST_HASH = CRYPT_ALGO_HMAC_MD5 - 1,
-	CRYPT_ALGO_FIRST_MAC = CRYPT_ALGO_HMAC_MD5,
-	CRYPT_ALGO_LAST_MAC = CRYPT_ALGO_HMAC_MD5 + 99	/* End of mac algo.range */
+	CRYPT_ALGO_FIRST_CONVENTIONAL = 1,
+	CRYPT_ALGO_LAST_CONVENTIONAL = 99,
+	CRYPT_ALGO_FIRST_PKC = 100,
+	CRYPT_ALGO_LAST_PKC = 199,
+	CRYPT_ALGO_FIRST_HASH = 200,
+	CRYPT_ALGO_LAST_HASH = 299,
+	CRYPT_ALGO_FIRST_MAC = 300,
+	CRYPT_ALGO_LAST_MAC = 399
 	} CRYPT_ALGO_TYPE;
 
 typedef enum {						/* Block cipher modes */
@@ -299,7 +313,7 @@ typedef enum {						/* Keyset types */
 
 typedef enum {						/* Crypto device types */
 	CRYPT_DEVICE_NONE,				/* No crypto device */
-	CRYPT_DEVICE_FORTEZZA,			/* Fortezza card */
+	CRYPT_DEVICE_FORTEZZA,			/* Fortezza card - Placeholder only */
 	CRYPT_DEVICE_PKCS11,			/* PKCS #11 crypto token */
 	CRYPT_DEVICE_CRYPTOAPI,			/* Microsoft CryptoAPI */
 	CRYPT_DEVICE_HARDWARE,			/* Generic crypo HW plugin */
@@ -1277,8 +1291,6 @@ typedef enum {
 	CRYPT_IATTRIBUTE_KEYID,			/* Key ID */
 	CRYPT_IATTRIBUTE_KEYID_PGP2,	/* PGP 2 key ID */
 	CRYPT_IATTRIBUTE_KEYID_OPENPGP,	/* OpenPGP key ID */
-	CRYPT_IATTRIBUTE_KEY_KEADOMAINPARAMS,/* Key agreement domain parameters */
-	CRYPT_IATTRIBUTE_KEY_KEAPUBLICVALUE,/* Key agreement public value */
 	CRYPT_IATTRIBUTE_KEY_SPKI,		/* SubjectPublicKeyInfo */
 	CRYPT_IATTRIBUTE_KEY_PGP,		/* PGP-format public key */
 	CRYPT_IATTRIBUTE_KEY_SSH,		/* SSH-format public key */
@@ -2024,7 +2036,6 @@ C_RET cryptDeleteAttribute( C_IN CRYPT_HANDLE cryptHandle,
    or key data.  These are due to be replaced once a suitable alternative can
    be found */
 
-C_NONNULL_ARG( ( 1 ) ) \
 C_RET cryptAddRandom( C_IN void C_PTR randomData, C_IN int randomDataLength );
 C_CHECK_RETVAL C_NONNULL_ARG( ( 1, 3 ) ) \
 C_RET cryptQueryObject( C_IN void C_PTR objectData,

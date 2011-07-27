@@ -246,7 +246,7 @@ int readMacInfo( INOUT STREAM *stream,
 		}
 
 	/* This is a new set of parameters, recreate the MAC context with them */
-	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_HMAC_SHA );
+	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_HMAC_SHA1 );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
@@ -302,7 +302,7 @@ int writeMacInfo( INOUT STREAM *stream,
 	paramSize = ( int ) sizeofObject( protocolInfo->saltSize ) + \
 				sizeofAlgoID( CRYPT_ALGO_SHA1 ) + \
 				sizeofShortInteger( protocolInfo->iterations ) + \
-				sizeofAlgoID( CRYPT_ALGO_HMAC_SHA );
+				sizeofAlgoID( CRYPT_ALGO_HMAC_SHA1 );
 
 	/* Write the wrapper */
 	writeSequence( stream, sizeofOID( OID_ENTRUST_MAC ) + \
@@ -320,7 +320,7 @@ int writeMacInfo( INOUT STREAM *stream,
 					  DEFAULT_TAG );
 	writeAlgoID( stream, CRYPT_ALGO_SHA1 );
 	writeShortInteger( stream, protocolInfo->iterations, DEFAULT_TAG );
-	return( writeAlgoID( stream, CRYPT_ALGO_HMAC_SHA ) );
+	return( writeAlgoID( stream, CRYPT_ALGO_HMAC_SHA1 ) );
 	}
 
 /****************************************************************************
@@ -380,6 +380,7 @@ int checkMessageSignature( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 						   IN_LENGTH_SHORT const int signatureLength,
 						   IN_HANDLE const CRYPT_HANDLE iAuthContext )
 	{
+	CRYPT_CONTEXT iHashContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	int status;
 
@@ -425,14 +426,25 @@ int checkMessageSignature( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 							  OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-	status = hashMessageContents( createInfo.cryptHandle, message,
-								  messageLength );
+	iHashContext = createInfo.cryptHandle;
+	if( protocolInfo->hashParam != 0 )
+		{
+		/* Some hash algorithms have variable output size, in which case 
+		   we need to explicitly tell the context which one we're working 
+		   with */
+		status = krnlSendMessage( iHashContext, IMESSAGE_SETATTRIBUTE,
+								  &protocolInfo->hashParam, 
+								  CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	status = hashMessageContents( iHashContext, message, messageLength );
 	if( cryptStatusOK( status ) )
 		{
 		status = checkRawSignature( signature, signatureLength, 
-									iAuthContext, createInfo.cryptHandle );
+									iAuthContext, iHashContext );
 		}
-	krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+	krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
 	return( status );
 	}
 
@@ -493,9 +505,10 @@ int writeMacProtinfo( IN_HANDLE const CRYPT_CONTEXT iMacContext,
 	return( status );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5, 7 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 4, 6, 8 ) ) \
 int writeSignedProtinfo( IN_HANDLE const CRYPT_CONTEXT iSignContext,
 						 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+						 IN_RANGE( 0, 999 ) const int hashParam,
 						 IN_BUFFER( messageLength ) const void *message, 
 						 IN_LENGTH_SHORT const int messageLength,
 						 OUT_BUFFER( protInfoMaxLength, *protInfoLength ) \
@@ -513,6 +526,7 @@ int writeSignedProtinfo( IN_HANDLE const CRYPT_CONTEXT iSignContext,
 
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( isHashAlgo( hashAlgo ) );
+	REQUIRES( hashParam >= 0 && hashParam <= 999 );
 	REQUIRES( messageLength > 0 && messageLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( protInfoMaxLength >= 32 && \
 			  protInfoMaxLength < MAX_INTLENGTH_SHORT );
@@ -524,6 +538,17 @@ int writeSignedProtinfo( IN_HANDLE const CRYPT_CONTEXT iSignContext,
 	if( cryptStatusError( status ) )
 		return( status );
 	iHashContext = createInfo.cryptHandle;
+	if( hashParam != 0 )
+		{
+		/* Some hash algorithms have variable output size, in which case
+		   we need to explicitly tell the context which one we're working
+		   with */
+		status = krnlSendMessage( iHashContext, IMESSAGE_SETATTRIBUTE,
+								  ( MESSAGE_CAST ) &hashParam, 
+								  CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	status = hashMessageContents( iHashContext, message, messageLength );
 	if( cryptStatusError( status ) )
 		{

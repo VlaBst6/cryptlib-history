@@ -564,14 +564,14 @@ static int initKeys( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Derive the encryption and MAC keys from the generic-secret key */
 	setMechanismKDFInfo( &mechanismInfo, iAuthEncCryptContext, 
-						 iSessionKeyContext, CRYPT_ALGO_HMAC_SHA, 
+						 iSessionKeyContext, CRYPT_ALGO_HMAC_SHA1, 
 						 "encryption", 10 );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
 							  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
 	if( cryptStatusOK( status ) )
 		{
 		setMechanismKDFInfo( &mechanismInfo, iAuthEncMacContext, 
-							 iSessionKeyContext, CRYPT_ALGO_HMAC_SHA, 
+							 iSessionKeyContext, CRYPT_ALGO_HMAC_SHA1, 
 							 "authentication", 14 );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
 								  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
@@ -749,6 +749,7 @@ static int importSessionKey( const CONTENT_LIST *contentListPtr,
 	if( sessionKeyInfoPtr->type == CONTENT_CRYPT )
 		{
 		const CONTENT_ENCR_INFO *encrInfo = &sessionKeyInfoPtr->clEncrInfo;
+		int mode;
 
 		/* It's conventional encrypted data, import the session key and
 		   set the encryption mode */
@@ -758,9 +759,9 @@ static int importSessionKey( const CONTENT_LIST *contentListPtr,
 								  OBJECT_TYPE_CONTEXT );
 		if( cryptStatusError( status ) )
 			return( status );
+		mode = encrInfo->cryptMode;	/* int vs.enum */
 		status = krnlSendMessage( createInfo.cryptHandle, 
-								  IMESSAGE_SETATTRIBUTE,
-								  ( MESSAGE_CAST ) &encrInfo->cryptMode,
+								  IMESSAGE_SETATTRIBUTE, &mode,
 								  CRYPT_CTXINFO_MODE );
 		if( cryptStatusError( status ) )
 			{
@@ -805,14 +806,16 @@ static int importSessionKey( const CONTENT_LIST *contentListPtr,
 *																			*
 ****************************************************************************/
 
-/* Add signature verification information */
+/* Add signature verification information.  Note that the hashAlgo parameter
+   is an int instead of the more obvious CRYPT_ALGO_TYPE because this 
+   function is a function parameter of type CHECKACTIONFUNCTION for which 
+   the second argument is a generic integer parameter */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int findHashActionFunction( const ACTION_LIST *actionListPtr,
-								   IN_INT_Z const int hashAlgo )
+								   const int hashAlgo )
 	{
-	CRYPT_ALGO_TYPE actionCryptAlgo;
-	int status;
+	int actionCryptAlgo, status;
 
 	assert( isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 
@@ -1041,7 +1044,7 @@ static int addPasswordInfo( const CONTENT_LIST *contentListPtr,
 	CRYPT_CONTEXT iCryptContext;
 	const CONTENT_ENCR_INFO *encrInfo = &contentListPtr->clEncrInfo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	int status;
+	int mode, status;
 
 	assert( isReadPtr( contentListPtr, sizeof( CONTENT_LIST ) ) );
 	assert( isReadPtr( password, passwordLength ) );
@@ -1068,8 +1071,8 @@ static int addPasswordInfo( const CONTENT_LIST *contentListPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	iCryptContext = createInfo.cryptHandle;
-	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-							  ( MESSAGE_CAST ) &encrInfo->cryptMode,
+	mode = encrInfo->cryptMode;	/* int vs.enum */
+	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &mode, 
 							  CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) )
 		{
@@ -1089,9 +1092,12 @@ static int addPasswordInfo( const CONTENT_LIST *contentListPtr,
 
 			/* Load the derivation information into the context */
 			if( encrInfo->keySetupAlgo != CRYPT_ALGO_NONE )
+				{
+				const int algorithm = encrInfo->keySetupAlgo;	/* int vs.enum */
 				status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-										  ( MESSAGE_CAST ) &encrInfo->keySetupAlgo,
+										  ( MESSAGE_CAST ) &algorithm,
 										  CRYPT_CTXINFO_KEYING_ALGO );
+				}
 			if( cryptStatusOK( status ) )
 				status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
 										  ( MESSAGE_CAST ) &encrInfo->keySetupIterations,
@@ -1483,10 +1489,10 @@ static int addDeenvelopeInfoString( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	status = matchInfoObject( &contentListPtr, envelopeInfoPtr, envInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, ENVELOPE_ERRINFO,
-				  "Added item doesn't match any envelope information "
-				  "object" ) );
+		retExtArg( status,
+				   ( status, ENVELOPE_ERRINFO,
+					 "Added item doesn't match any envelope information "
+					 "object" ) );
 		}
 
 	/* If we've been given a password and we need private key information, 

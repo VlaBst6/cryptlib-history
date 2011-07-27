@@ -529,8 +529,8 @@ static int readBignumInteger( INOUT STREAM *stream,
 							  IN_LENGTH_PKC const int maxLength, 
 							  IN_OPT TYPECAST( BIGNUM * ) const void *maxRange, 
 							  IN_TAG_EXT const int tag,
-							  IN_ENUM_OPT( SHORTKEY_CHECK ) \
-								const SHORTKEY_CHECK_TYPE checkType )
+							  IN_ENUM_OPT( KEYSIZE_CHECK ) \
+								const KEYSIZE_CHECK_TYPE checkType )
 	{
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	int length, status;
@@ -543,8 +543,8 @@ static int readBignumInteger( INOUT STREAM *stream,
 				maxLength <= CRYPT_MAX_PKCSIZE );
 	REQUIRES_S( tag == NO_TAG || tag == DEFAULT_TAG || \
 				( tag >= 0 && tag < MAX_TAG_VALUE ) );
-	REQUIRES_S( checkType >= SHORTKEY_CHECK_NONE && \
-				checkType < SHORTKEY_CHECK_LAST );
+	REQUIRES_S( checkType >= KEYSIZE_CHECK_NONE && \
+				checkType < KEYSIZE_CHECK_LAST );
 
 	/* Read the integer header info */
 	status = length = readIntegerHeader( stream, tag );
@@ -581,7 +581,7 @@ int readBignumTag( INOUT STREAM *stream,
 				   IN_TAG_EXT const int tag )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength, 
-							   maxRange, tag, SHORTKEY_CHECK_NONE ) );
+							   maxRange, tag, KEYSIZE_CHECK_NONE ) );
 	}
 
 /* Special-case bignum read routine that explicitly checks for a too-short 
@@ -596,7 +596,7 @@ int readBignumChecked( INOUT STREAM *stream,
 					   IN_OPT TYPECAST( BIGNUM * ) const void *maxRange )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength, 
-							   maxRange, DEFAULT_TAG, SHORTKEY_CHECK_PKC ) );
+							   maxRange, DEFAULT_TAG, KEYSIZE_CHECK_PKC ) );
 	}
 #endif /* USE_PKC */
 
@@ -1748,4 +1748,89 @@ int readGenericObjectHeader( INOUT STREAM *stream,
 
 	return( readLongObjectHeader( stream, length, ANY_TAG, 
 								  READOBJ_FLAG_UNIVERSAL ) );
+	}
+
+/* Read an arbitrary-length constructed object's data into a memory buffer.  
+   This is the arbitrary-length form of readRawObject() */
+
+#define OBJECT_HEADER_DATA_SIZE		16
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int readRawObjectAlloc( INOUT STREAM *stream, 
+						OUT_BUFFER_ALLOC_OPT( *length ) void **objectPtrPtr, 
+						OUT_LENGTH_Z int *objectLengthPtr,
+						IN_LENGTH_SHORT_MIN( 32 ) const int minLength, 
+						IN_LENGTH_SHORT const int maxLength )
+	{
+	STREAM headerStream;
+	BYTE buffer[ OBJECT_HEADER_DATA_SIZE + 8 ];
+	void *objectData;
+	int objectLength, headerSize = DUMMY_INIT, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( objectPtrPtr, sizeof( void * ) ) );
+	assert( isWritePtr( objectLengthPtr, sizeof( int ) ) );
+
+	REQUIRES_S( minLength >= OBJECT_HEADER_DATA_SIZE && \
+				minLength < maxLength && \
+				maxLength < MAX_INTLENGTH_SHORT );
+
+	/* Clear return values */
+	*objectPtrPtr = NULL;
+	*objectLengthPtr = 0;
+
+	/* Find out how much data we need to read.  This may be a non-seekable
+	   stream so we have to grab the first OBJECT_HEADER_DATA_SIZE bytes 
+	   from the stream and decode them to see what's next */
+	status = sread( stream, buffer, OBJECT_HEADER_DATA_SIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	sMemConnect( &headerStream, buffer, OBJECT_HEADER_DATA_SIZE );
+	status = readGenericHole( &headerStream, &objectLength, 
+							  OBJECT_HEADER_DATA_SIZE, DEFAULT_TAG );
+	if( cryptStatusOK( status ) )
+		headerSize = stell( &headerStream );
+	sMemDisconnect( &headerStream );
+	if( cryptStatusError( status ) )
+		{
+		sSetError( stream, status );
+		return( status );
+		}
+
+	/* Make sure that the object has a sensible length */
+	if( objectLength < minLength || objectLength > maxLength )
+		{
+		sSetError( stream, CRYPT_ERROR_BADDATA );
+		return( status );
+		}
+
+	/* Allocate storage for the object data and copy the already-read 
+	   portion to the start of the storage */
+	objectLength += headerSize;
+	if( ( objectData = clAlloc( "readObjectData", objectLength ) ) == NULL )
+		{
+		/* This isn't technically a stream error, but all ASN.1 stream 
+		   functions need to set the stream error status */
+		sSetError( stream, CRYPT_ERROR_MEMORY );
+		return( CRYPT_ERROR_MEMORY );
+		}
+	memcpy( objectData, buffer, OBJECT_HEADER_DATA_SIZE );
+
+	/* Read the remainder of the object data into the memory buffer and 
+	   check that the overall object is valid */
+	status = sread( stream, ( BYTE * ) objectData + OBJECT_HEADER_DATA_SIZE,
+					objectLength - OBJECT_HEADER_DATA_SIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = checkObjectEncoding( objectData, objectLength );
+	if( cryptStatusError( status ) )
+		{
+		sSetError( stream, CRYPT_ERROR_BADDATA );
+		return( status );
+		}
+
+	*objectPtrPtr = objectData;
+	*objectLengthPtr = objectLength;
+
+	return( CRYPT_OK );
 	}

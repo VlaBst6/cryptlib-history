@@ -436,7 +436,8 @@ static int loadECCparams( INOUT CONTEXT_INFO *contextInfoPtr )
 /* Get the nominal size of an ECC field based on an CRYPT_ECCCURVE_TYPE */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
-int getECCFieldSize( IN_ENUM( CRYPT_ECCCURVE ) const CRYPT_ECCCURVE_TYPE fieldID,
+int getECCFieldSize( IN_ENUM( CRYPT_ECCCURVE ) \
+						const CRYPT_ECCCURVE_TYPE fieldID,
 					 OUT_INT_Z int *fieldSize )
 	{
 	int i;
@@ -468,7 +469,8 @@ int getECCFieldSize( IN_ENUM( CRYPT_ECCCURVE ) const CRYPT_ECCCURVE_TYPE fieldID
 /* Get a CRYPT_ECCCURVE_TYPE based on a nominal ECC field size */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
-static int getECCFieldID( IN_LENGTH_SHORT_MIN( MIN_PKCSIZE_ECC ) const int fieldSize,
+static int getECCFieldID( IN_LENGTH_SHORT_MIN( MIN_PKCSIZE_ECC ) \
+								const int fieldSize,
 						  OUT_ENUM_OPT( CRYPT_ECCCURVE ) 
 								CRYPT_ECCCURVE_TYPE *fieldID )
 	{
@@ -1046,14 +1048,21 @@ int generateECCkey( INOUT CONTEXT_INFO *contextInfoPtr,
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	CRYPT_ECCCURVE_TYPE fieldID;
-	int status;
+	int keySizeBits, status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	REQUIRES( keyBits >= bytesToBits( MIN_PKCSIZE_ECC ) && \
 			  keyBits <= bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) );
 
-	/* Find the fieldID matching the requested key size */
+	/* Find the fieldID matching the requested key size.  This gets a bit
+	   complicated because with fixed-parameter curves the key size is taken 
+	   to indicate the closest matching curve size (if we didn't do this and
+	   required that the caller specify exact sizes to match the predefined
+	   curves then they'd end up having to play guessing games to match
+	   byte-valued key sizes to oddball curve sizes like P521).  To handle
+	   this we first map the key size to the matching curve, and then 
+	   retrieve the actual key size in bits from the ECC parameter data */
 	status = getECCFieldID( bitsToBytes( keyBits ), &fieldID );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -1061,6 +1070,7 @@ int generateECCkey( INOUT CONTEXT_INFO *contextInfoPtr,
 	status = loadECCparams( contextInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
+	keySizeBits = pkcInfo->keySizeBits;
 
 	/* Initialise the mass of variables required by the ECC operations */
 	status = initECCVariables( pkcInfo );
@@ -1068,7 +1078,7 @@ int generateECCkey( INOUT CONTEXT_INFO *contextInfoPtr,
 		return( status );
 
 	/* Generate the private key */
-	status = generateECCPrivateValue( pkcInfo, keyBits );
+	status = generateECCPrivateValue( pkcInfo, keySizeBits );
 	if( cryptStatusError( status ) )
 		return( status );
 

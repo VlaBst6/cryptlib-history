@@ -551,14 +551,14 @@ static int envelopeMessageFunction( INOUT TYPECAST( ENVELOPE_INFO * ) \
 		   the caller pushes data but doesn't flush it, there will be a few
 		   bytes left that can't be popped).  For enveloping, destroying the 
 		   envelope while it's in any state other than STATE_PREDATA or 
-		   STATE_FINISHED is regarded as an error.  For de-enveloping we have 
-		   to be more careful since deenveloping information required to 
-		   resolve the envelope state could be unavailable so we shouldn't 
-		   return an error if something like a signature check remains to be 
-		   done.  What we therefore do is check to see whether we've processed 
-		   any data yet and report an error if there's data left in the 
-		   envelope or if we're destroying it in the middle of processing 
-		   data */
+		   STATE_FINISHED or if there's data still left in the buffer is 
+		   regarded as an error.  For de-enveloping we have to be more 
+		   careful since deenveloping information required to resolve the 
+		   envelope state could be unavailable so we shouldn't return an 
+		   error if something like a signature check remains to be done.  
+		   What we therefore do is check to see whether we've processed any 
+		   data yet and report an error if there's data left in the envelope 
+		   or if we're destroying it in the middle of processing data */
 		if( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE )
 			{
 			const BOOLEAN isAuthEnvelope = \
@@ -602,6 +602,8 @@ static int envelopeMessageFunction( INOUT TYPECAST( ENVELOPE_INFO * ) \
 			   destroying the envelope yet */
 			if( envelopeInfoPtr->state != STATE_PREDATA && \
 				envelopeInfoPtr->state != STATE_FINISHED )
+				status = CRYPT_ERROR_INCOMPLETE;
+			if( envelopeInfoPtr->bufPos > 0 )
 				status = CRYPT_ERROR_INCOMPLETE;
 			}
 

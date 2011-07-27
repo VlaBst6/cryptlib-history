@@ -17,6 +17,16 @@
   #include "session/ssl.h"
 #endif /* Compiler-specific includes */
 
+/* Testing the SSL/TLS code gets a bit complicated because in the presence 
+   of the session cache every session after the first one will be a resumed 
+   session.  To deal with this we disable the client-side session cache in 
+   the VC++ 6 debug build */
+
+#if defined( __WINDOWS__ ) && defined( _MSC_VER ) && ( _MSC_VER == 1200 ) && \
+	!defined( NDEBUG ) && 1
+  #define NO_SESSION_CACHE
+#endif /* VC++ 6.0 debug build */
+
 #ifdef USE_SSL
 
 /****************************************************************************
@@ -25,32 +35,90 @@
 *																			*
 ****************************************************************************/
 
+#ifdef CONFIG_SUITEB
+
+/* For Suite B the first suite must be ECDHE/AES128-GCM/SHA256 or 
+   ECDHE/AES256-GCM/SHA384 depending on the security level and the second 
+   suite, at the 128-bit security level, must be ECDHE/AES256-GCM/SHA384 */
+
+CHECK_RETVAL_BOOL \
+static int checkSuiteBSelection( IN_RANGE( SSL_FIRST_VALID_SUITE, \
+										   SSL_LAST_SUITE - 1 ) \
+									const int cipherSuite,
+								 const int flags,
+								 const BOOLEAN isFirstSuite )
+	{
+	REQUIRES( cipherSuite >= SSL_FIRST_VALID_SUITE && \
+			  cipherSuite < SSL_LAST_SUITE );
+	REQUIRES( ( flags & ~( SSL_PFLAG_SUITEB ) ) == 0 );
+
+	if( isFirstSuite )
+		{
+		switch( flags )
+			{
+			case SSL_PFLAG_SUITEB_128:
+				if( cipherSuite == TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 )
+					return( TRUE );
+				break;
+
+			case SSL_PFLAG_SUITEB_256:
+				if( cipherSuite == TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 )
+					return( TRUE );
+				break;
+
+			default:
+				retIntError();
+			}
+		}
+	else
+		{
+		switch( flags )
+			{
+			case SSL_PFLAG_SUITEB_128:
+				if( cipherSuite == TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 )
+					return( TRUE );
+				break;
+
+			case SSL_PFLAG_SUITEB_256:
+				/* For the 256-bit level there are no further requirements */
+				return( TRUE );
+
+			default:
+				retIntError();
+			}
+		}
+
+	return( FALSE );
+	}
+#endif /* CONFIG_SUITEB */
+
 /* Encode a list of available algorithms */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int writeCipherSuiteList( INOUT STREAM *stream, 
 								 const BOOLEAN usePSK, 
 								 const BOOLEAN useTLS12,
-								 const int suiteBinfo )
+								 const BOOLEAN isServer,
+								 IN_FLAGS_Z( SSL ) const int suiteBinfo )
 	{
 	const CIPHERSUITE_INFO **cipherSuiteInfo;
-#ifdef CONFIG_SUITEB
-	BOOLEAN firstSuite = TRUE;
-#endif /* CONFIG_SUITEB */
 	int availableSuites[ 32 + 8 ], cipherSuiteCount = 0, suiteIndex;
 	int cipherSuiteInfoSize, status;
+#ifdef CONFIG_SUITEB
+	int suiteNo = 0;
+#endif /* CONFIG_SUITEB */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
+#ifdef CONFIG_SUITEB
+	REQUIRES( suiteBinfo >= SSL_PFLAG_NONE && suiteBinfo < SSL_PFLAG_MAX );
+#endif /* CONFIG_SUITEB */
+
 	/* Get the information for the supported cipher suites */
-	status = getCipherSuiteInfo( &cipherSuiteInfo, &cipherSuiteInfoSize );
+	status = getCipherSuiteInfo( &cipherSuiteInfo, &cipherSuiteInfoSize, 
+								 isServer );
 	if( cryptStatusError( status ) )
 		return( status );
-
-#if defined( CONFIG_SUITEB ) && 0
-	/* Add a non-Suite B suite for Suite B compliance testing */
-	availableSuites[ cipherSuiteCount++ ] = TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256;
-#endif /* CONFIG_SUITEB special-case */
 
 	/* Walk down the list of algorithms (and the corresponding cipher
 	   suites) remembering each one that's available for use */
@@ -67,22 +135,20 @@ static int writeCipherSuiteList( INOUT STREAM *stream,
 		const CRYPT_ALGO_TYPE macAlgo = cipherSuiteInfoPtr->macAlgo;
 		const int suiteFlags = cipherSuiteInfoPtr->flags;
 
+		/* Make sure that the cipher suite is appropriate for SuiteB use if 
+		   necessary */
 #ifdef CONFIG_SUITEB
-		/* For Suite B the first suite must be ECDHE/AES128-GCM/SHA256 or 
-		   ECDHE/AES256-GCM/SHA384 depending on the security level */
-		if( firstSuite && suiteBinfo != 0 )
+		if( suiteNo == 0 || suiteNo == 1 )
 			{
-			const int cipherSuite = cipherSuiteInfoPtr->cipherSuite;
-
-			if( ( suiteBinfo == SSL_PFLAG_SUITEB_128 && \
-				  cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 ) || \
-				( suiteBinfo == SSL_PFLAG_SUITEB_256 && \
-				  cipherSuite != TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 ) )
+			if( !checkSuiteBSelection( cipherSuiteInfoPtr->cipherSuite,
+									   ( suiteBinfo == 0 ) ? \
+											SSL_PFLAG_SUITEB_128 : suiteBinfo, 
+									   ( suiteNo == 0 ) ? TRUE : FALSE ) )
 				{
 				suiteIndex++;
 				continue;
 				}
-			firstSuite = FALSE;
+			suiteNo++;
 			}
 #endif /* CONFIG_SUITEB */
 
@@ -142,6 +208,10 @@ static int writeCipherSuiteList( INOUT STREAM *stream,
 			{
 			availableSuites[ cipherSuiteCount++ ] = \
 						cipherSuiteInfo[ suiteIndex++ ]->cipherSuite;
+#ifdef CONFIG_SUITEB
+			if( suiteNo == 0 || suiteNo == 1 )
+				break;	/* Suite B has special requirements for initial suites */
+#endif /* CONFIG_SUITEB */
 			}
 		ENSURES( suiteIndex < cipherSuiteInfoSize );
 		ENSURES( cipherSuiteCount < 32 );
@@ -251,12 +321,56 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 								 INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
+#ifndef NO_SESSION_CACHE
+	const ATTRIBUTE_LIST *attributeListPtr;
+#endif /* NO_SESSION_CACHE */
 	STREAM *stream = &handshakeInfo->stream;
+	SCOREBOARD_LOOKUP_RESULT lookupResult;
 	MESSAGE_DATA msgData;
-	int packetOffset, length, status;
+	BYTE sentSessionID[ MAX_SESSIONID_SIZE + 8 ];
+	BOOLEAN sessionIDsent = FALSE;
+	int packetOffset, length, sentSessionIDlength = DUMMY_INIT, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+
+	/* Check whether we have (potentially) cached data available for the
+	   server.  If we've had the connection to the remote system provided
+	   by the user (for example as an already-connected socket) then there
+	   won't be any server name information present, so we can only
+	   perform a session resume if we've established the connection
+	   ourselves */
+#ifndef NO_SESSION_CACHE
+	attributeListPtr = findSessionInfo( sessionInfoPtr->attributeList,
+										CRYPT_SESSINFO_SERVER_NAME );
+	if( attributeListPtr != NULL )
+		{
+		status = lookupScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
+							SCOREBOARD_KEY_FQDN, attributeListPtr->value,
+							attributeListPtr->valueLength, &lookupResult );
+		if( !cryptStatusError( status ) )
+			{
+			/* We've got cached data for the server available, remember the 
+			   session ID so that we can send it to the server */
+			status = attributeCopyParams( handshakeInfo->sessionID, 
+										  MAX_SESSIONID_SIZE, 
+										  &handshakeInfo->sessionIDlength,
+										  lookupResult.key, 
+										  lookupResult.keySize );
+			ENSURES( cryptStatusOK( status ) );
+
+			/* Make a copy of the session ID that we're sending so that we 
+			   can check it against what the server sends back to us later.  
+			   This isn't technically necessary, but if we request the reuse 
+			   of a session with ID X and the server comes back to us with a 
+			   response indicating we should reuse session Y then there's 
+			   something funny going on */
+			memcpy( sentSessionID, handshakeInfo->sessionID, 
+					handshakeInfo->sessionIDlength );
+			sentSessionIDlength = handshakeInfo->sessionIDlength;
+			}
+		}
+#endif /* NO_SESSION_CACHE */
 
 	/* Get the nonce that's used to randomise all crypto ops */
 	setMessageData( &msgData, handshakeInfo->clientNonce, SSL_NONCE_SIZE );
@@ -305,13 +419,20 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	sputc( stream, sessionInfoPtr->version );
 	handshakeInfo->clientOfferedVersion = sessionInfoPtr->version;
 	swrite( stream, handshakeInfo->clientNonce, SSL_NONCE_SIZE );
-	sputc( stream, 0 );	/* No session ID */
+	sputc( stream, handshakeInfo->sessionIDlength );
+	if( handshakeInfo->sessionIDlength > 0 )
+		{
+		swrite( stream, handshakeInfo->sessionID, 
+				handshakeInfo->sessionIDlength );
+		sessionIDsent = TRUE;
+		}
 	status = writeCipherSuiteList( stream,
 						findSessionInfo( sessionInfoPtr->attributeList,
 										 CRYPT_SESSINFO_USERNAME ) != NULL ? \
 							TRUE : FALSE,
 						( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 ) ? \
 							TRUE : FALSE,
+						isServer( sessionInfoPtr ),
 						sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB );
 	if( cryptStatusOK( status ) )
 		{
@@ -368,10 +489,65 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 	sMemConnect( stream, sessionInfoPtr->receiveBuffer, length );
 	status = processHelloSSL( sessionInfoPtr, handshakeInfo, stream, FALSE );
-	if( cryptStatusError( status ) && status != OK_SPECIAL )
+	if( cryptStatusError( status ) )
 		{
-		sMemDisconnect( stream );
-		return( status );
+		int resumedSessionID;
+
+		if( status != OK_SPECIAL )
+			{
+			sMemDisconnect( stream );
+			return( status );
+			}
+
+		/* The server has sent us a sessionID in an attempt to resume a 
+		   previous session, see if it's in the session cache.  If it's
+		   present then the server hello is followed immediately by the 
+		   change cipherspec, which is sent by the shared handshake 
+		   completion code */
+		resumedSessionID = \
+			lookupScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
+					SCOREBOARD_KEY_SESSIONID_CLI, handshakeInfo->sessionID, 
+					handshakeInfo->sessionIDlength,
+					&lookupResult );
+#ifdef CONFIG_SUITEB_TESTS 
+		resumedSessionID = CRYPT_ERROR;	/* Disable for Suite B tests */
+#endif /* CONFIG_SUITEB_TESTS */
+		if( !cryptStatusError( resumedSessionID ) )
+			{
+			sMemDisconnect( stream );
+
+			/* Make sure that the session that the server OK'd for resumption
+			   was the one that we actually asked for */
+			if( !sessionIDsent || \
+				( handshakeInfo->sessionIDlength != sentSessionIDlength || \
+				  memcmp( handshakeInfo->sessionID, sentSessionID,
+						  sentSessionIDlength ) ) )
+				{
+				/* Something very odd is going on, the server has told us to 
+				   resume a session that we didn't ask for or don't know 
+				   about */
+				retExt( CRYPT_ERROR_INVALID,
+						( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+						  "Server indicated that a non-valid session should "
+						  "be resumed" ) );
+				}
+
+			/* We're resuming a previous session, remember the premaster 
+			   secret */
+			status = attributeCopyParams( handshakeInfo->premasterSecret, 
+										  SSL_SECRET_SIZE,
+										  &handshakeInfo->premasterSecretSize,
+										  lookupResult.data, 
+										  lookupResult.dataSize );
+			ENSURES( cryptStatusOK( status ) );
+
+			/* Tell the caller that it's a resumed session */
+			DEBUG_PRINT(( "Resuming session with server based on "
+						  "sessionID = \n" ));
+			DEBUG_DUMP_DATA( handshakeInfo->sessionID, 
+							 handshakeInfo->sessionIDlength );
+			return( OK_SPECIAL );
+			}
 		}
 
 	return( CRYPT_OK );
@@ -422,8 +598,8 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 			sMemDisconnect( stream );
 			return( status );
 			}
-		readUint16( stream );
-		status = readUniversal16( stream );
+		readUint16( stream );				/* Type */
+		status = readUniversal16( stream );	/* Value */
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
@@ -623,9 +799,9 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		uint24	len
 		byte	certTypeLen
 		byte[]	certType
-	 [	uint16	sigHashListLen		-- TLS 1.2 ]
-	 [		byte	hashAlgoID		-- TLS 1.2 ]
-	 [		byte	sigAlgoID		-- TLS 1.2 ]
+	  [	uint16	sigHashListLen		-- TLS 1.2 ]
+	  [		byte	hashAlgoID		-- TLS 1.2 ]
+	  [		byte	sigAlgoID		-- TLS 1.2 ]
 		uint16	caNameListLen
 			uint16	caNameLen
 			byte[]	caName
@@ -639,6 +815,9 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	   CAs to authorise access to their site.  Because of this, all that we 
 	   do here is perform a basic sanity check and remember that we may need 
 	   to submit a certificate later on.
+
+	   See the long comment in the cert-request handling code in ssl_svr.c 
+	   for the handling of the sigHashList.
 
 	   Since we're about to peek ahead into the stream to see if we need to
 	   process a server certificate request, we have to refresh the stream 
@@ -666,9 +845,14 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 			return( status );
 			}
 		status = length = sgetc( stream );
-		if( cryptStatusError( status ) || \
-			length < 1 || length > 64 || \
-			cryptStatusError( sSkip( stream, length ) ) )
+		if( !cryptStatusError( status ) )
+			{
+			if( length < 1 || length > 64 )
+				status = CRYPT_ERROR_BADDATA;
+			}
+		if( !cryptStatusError( status ) )
+			status = sSkip( stream, length );
+		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
 			retExt( CRYPT_ERROR_BADDATA,
@@ -679,9 +863,15 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
 			{
 			status = length = readUint16( stream );
-			if( cryptStatusError( status ) || \
-				length < UINT16_SIZE || length > 64 || \
-				cryptStatusError( sSkip( stream, length ) ) )
+			if( !cryptStatusError( status ) )
+				{
+				if( length < UINT16_SIZE || length > 64 || \
+					( length % UINT16_SIZE ) != 0 )
+					status = CRYPT_ERROR_BADDATA;
+				}
+			if( !cryptStatusError( status ) )
+				status = sSkip( stream, length );
+			if( cryptStatusError( status ) )
 				{
 				sMemDisconnect( stream );
 				retExt( CRYPT_ERROR_BADDATA,
@@ -753,6 +943,7 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 			   (some just request one anyway even though they can't do 
 			   anything with it) so from here on we just continue as if 
 			   nothing had happened */
+			sessionInfoPtr->protocolFlags |= SSL_PFLAG_CLIAUTHSKIPPED;
 			needClientCert = FALSE;
 			}
 

@@ -390,6 +390,7 @@ typedef struct {
 	   useMACreceive flag (in theory the two should match, but there are
 	   implementations that use MACs one way and sigs the other) */
 	CRYPT_ALGO_TYPE hashAlgo;				/* Hash algo for signature */
+	int hashParam;							/* Optional parameter for hash algo.*/
 	CRYPT_CONTEXT iMacContext;				/* MAC context */
 	BUFFER( CRYPT_MAX_HASHSIZE, saltSize ) \
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];	/* MAC password salt  */
@@ -526,9 +527,10 @@ int writeMacProtinfo( IN_HANDLE const CRYPT_CONTEXT iMacContext,
 							void *protInfo, 
 					  IN_LENGTH_SHORT_MIN( 16 ) const int protInfoMaxLength,
 					  OUT_LENGTH_SHORT_Z int *protInfoLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5, 7 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 4, 6, 8 ) ) \
 int writeSignedProtinfo( IN_HANDLE const CRYPT_CONTEXT iSignContext,
 						 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+						 IN_RANGE( 0, 999 ) const int hashParam,
 						 IN_BUFFER( messageLength ) const void *message, 
 						 IN_LENGTH_SHORT const int messageLength,
 						 OUT_BUFFER( protInfoMaxLength, *protInfoLength ) \

@@ -365,7 +365,7 @@ static int getData( INOUT SESSION_INFO *sessionInfoPtr,
 	{
 	const int bytesToCopy = min( length, sessionInfoPtr->receiveBufPos );
 	READSTATE_INFO readInfo;
-	int bytesRead, remainder, status;
+	int bytesRead, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( bytesCopied, sizeof( int ) ) );
@@ -385,9 +385,11 @@ static int getData( INOUT SESSION_INFO *sessionInfoPtr,
 	   follows the decoded data */
 	if( bytesToCopy > 0 )
 		{
-		memcpy( buffer, sessionInfoPtr->receiveBuffer, bytesToCopy );
-		remainder = sessionInfoPtr->receiveBufEnd - bytesToCopy;
+		const int remainder = sessionInfoPtr->receiveBufEnd - bytesToCopy;
+
 		ENSURES( remainder >= 0 && remainder < MAX_INTLENGTH );
+
+		memcpy( buffer, sessionInfoPtr->receiveBuffer, bytesToCopy );
 		if( remainder > 0 )
 			{
 			/* There's decoded and/or non-decoded data left, move it down to

@@ -53,6 +53,43 @@
   #include <assert.h>
 #endif /* Systems without assert() */
 
+/* Assertions can't be used to detect post-prepeocessing compile-time 
+   problems, typically using expressions involving sizeof().  Newer versions
+   of the C standard added static_assert() to deal with this, since only
+   recent compilers support this we have to enable it as required, in some
+   cases using preprocessor kludges.
+   
+   In addition to the standard static_assert() we also define an alternative,
+   static_assert_opt(), for cases where the compiler isn't tough enough to
+   handle the standard static_assert().  This occurs with expressions like
+   "foo"[ 1 ] == 'o' */
+
+#define ASSERT_CONCAT_( a, b )	a##b
+#define ASSERT_CONCAT( a, b )	ASSERT_CONCAT_( a, b )
+#ifndef __COUNTER__
+  /* We need a unique name for each static assertion, ideally we'd like to 
+	 use a unique value for this but if it's not available (it's supported 
+	 in the major platforms VC++ and gcc) then we use the next-best thing */
+  #define __COUNTER__			__LINE__
+#endif /* __COUNTER__ */
+#if defined( _MSC_VER ) 
+  #if VC_GE_2010( _MSC_VER )	
+	/* Built into VC++ 2010 and up */
+  #elif VC_GE_2008( _MSC_VER )	/* Partial support in VC++ 2008 */
+	#define static_assert( expr, string )	_STATIC_ASSERT( expr )
+  #else
+	#define static_assert( expr, string ) \
+			{ enum { ASSERT_CONCAT( static_assert_, __COUNTER__ ) = 1 / ( !!( expr ) ) }; }
+  #endif /* VC++ versions */
+  #define static_assert_opt( expr, string ) \
+		  assert( expr )
+#else
+  #define static_assert( expr, string ) \
+		  { enum { ASSERT_CONCAT( static_assert_, __COUNTER__ ) = 1 / ( !!( expr ) ) }; }
+  #define static_assert_opt( expr, string ) \
+		  assert( expr )
+#endif /* VC++ vs. other compilers */
+
 /* Force an assertion failure via assert( DEBUG_WARN ) */
 
 #define DEBUG_WARN				0
@@ -63,6 +100,22 @@
 *																			*
 ****************************************************************************/
 
+/* As a safeguard the following debugging functions are only enabled by 
+   default in the Win32 debug version to prevent them from being 
+   accidentally enabled in any release version, or for the Suite B test
+   build, which is expected to dump diagnostic information to the debug
+   output.  Note that the required support functions are present for non-
+   Windows OSes, they're just disabled at this level for safety purposes 
+   because the cl32.dll with debug options safely disabled is included with 
+   the release while there's no control over which version gets built for 
+   other releases.  If you know what you're doing then you can enable the 
+   debug-dump options by defining the following when you build the code */
+
+#if !defined( NDEBUG ) && \
+	( defined( __WIN32__ ) || defined( CONFIG_SUITEB_TESTS ) )
+  #define DEBUG_DIAGNOSTIC_ENABLE
+#endif /* 0 */
+
 /* Debugging printf() that sends its output to the debug output.  Under
    Windows and eCos this is the debugger, under Unix it's the next-best
    thing, stderr, on anything else we have to use stdout.  In addition 
@@ -70,7 +123,7 @@
    contain '%' signs interpreted by printf()) we also provide an alternative 
    that just outputs a fixed text string */
 
-#if defined( NDEBUG )
+#if defined( NDEBUG ) && !defined( DEBUG_DIAGNOSTIC_ENABLE )
   #define DEBUG_PRINT( x )
   #define DEBUG_OUT( string )
 #elif defined( __WIN32__ )
@@ -113,6 +166,8 @@
   #define DEBUG_ENTER()	DEBUG_PRINT(( "Enter %s:%s:%d.\n", __FILE__, __FUNCTION__, __LINE__ ))
   #define DEBUG_IN()	DEBUG_PRINT(( "In    %s:%s:%d.\n", __FILE__, __FUNCTION__, __LINE__ ))
   #define DEBUG_EXIT()	DEBUG_PRINT(( "Exit  %s:%s:%d, status %d.\n", __FILE__, __FUNCTION__, __LINE__, status ))
+  #define DEBUG_EXIT_NONE()	\
+						DEBUG_PRINT(( "Exit  %s:%s:%d.\n", __FILE__, __FUNCTION__, __LINE__ ))
 
   #define DEBUG_DIAG( x ) \
 						DEBUG_PRINT(( "%s:%s:%d: ", __FILE__, __FUNCTION__, __LINE__ )); \
@@ -122,6 +177,8 @@
   #define DEBUG_ENTER()	DEBUG_PRINT(( "Enter %s:%d.\n", __FILE__, __LINE__ ))
   #define DEBUG_IN()	DEBUG_PRINT(( "In    %s:%d.\n", __FILE__, __LINE__ ))
   #define DEBUG_EXIT()	DEBUG_PRINT(( "Exit  %s:%d, status %d.\n", __FILE__, __LINE__, status ))
+  #define DEBUG_EXIT_NONE()	\
+						DEBUG_PRINT(( "Exit  %s:%d.\n", __FILE__, __LINE__ ))
 
   #define DEBUG_DIAG( x ) \
 						DEBUG_PRINT(( "%s:%d: ", __FILE__, __LINE__ )); \
@@ -129,17 +186,7 @@
 						DEBUG_PRINT(( ".\n" ))
 #endif /* Compiler-specific diagnotics */
 
-/* Dump a PDU to disk or screen.  As a safeguard these are only enabled by
-   default in the Win32 debug version to prevent them from being 
-   accidentally enabled in any release version.  Note that the required 
-   support functions are present for non-Windows OSes, they're just disabled 
-   at this level for safety purposes because the cl32.dll with debug options 
-   safely disabled is included with the release while there's no control 
-   over which version gets built for other releases.  If you know what 
-   you're doing then you can enable the debug-dump options by defining
-   CONFIG_DEBUG when you build the code.
-
-   The debug functions do the following:
+/* Dump a PDU to disk or screen.  The debug functions do the following:
 
 	DEBUG_DUMP_FILE: Writes a block of memory to a file in $TMP, suffix 
 		".der".
@@ -161,8 +208,14 @@
 		pulls data bytes, typically containing type information, out of a 
 		stream for display */
 
-#if !defined( NDEBUG ) && \
-	( defined( __WIN32__ ) || defined( CONFIG_DEBUG_DIAGNOSTICS ) )
+#if defined( NDEBUG ) && !defined( DEBUG_DIAGNOSTIC_ENABLE )
+  #define DEBUG_DUMP_FILE( name, data, length )
+  #define DEBUG_DUMP_CERT( name, data, length )
+  #define DEBUG_DUMP_HEX( dumpPrefix, dumpBuf, dumpLen )
+  #define DEBUG_DUMP_DATA( dumpBuf, dumpLen )
+  #define DEBUG_DUMP_STREAM( stream, position, length )
+  #define DEBUG_GET_STREAMBYTE( stream, position )		0
+#else
   #define DEBUG_DUMP_FILE	debugDumpFile
   #define DEBUG_DUMP_CERT	debugDumpFileCert
   #define DEBUG_DUMP_HEX	debugDumpHex
@@ -191,19 +244,12 @@
   CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
   int debugGetStreamByte( INOUT /*STREAM*/ void *streamPtr, 
 						  IN_LENGTH const int position );
-#else
-  #define DEBUG_DUMP_FILE( name, data, length )
-  #define DEBUG_DUMP_CERT( name, data, length )
-  #define DEBUG_DUMP_HEX( dumpPrefix, dumpBuf, dumpLen )
-  #define DEBUG_DUMP_DATA( dumpBuf, dumpLen )
-  #define DEBUG_DUMP_STREAM( stream, position, length )
-  #define DEBUG_GET_STREAMBYTE( stream, position )		0
 #endif /* Win32 debug */
 
 /* Dump a trace of a double-linked list.  This has to be done as a macro 
    because it requires in-place substitution of code */
 
-#if defined( NDEBUG )
+#if defined( NDEBUG ) && !defined( DEBUG_DIAGNOSTIC_ENABLE )
   #define DEBUG_DUMP_LIST( label, listHead, listTail, listType )
 #else
   #define DEBUG_DUMP_LIST( label, listHead, listTail, listType ) \

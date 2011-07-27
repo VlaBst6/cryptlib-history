@@ -94,7 +94,21 @@ static int readHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 	status = readHSPacketSSL( sessionInfoPtr, NULL, &length,
 							  SSL_MSG_CHANGE_CIPHER_SPEC );
 	if( cryptStatusError( status ) )
+		{
+		/* If we don't get the change cipherspec at this point this may be
+		   because the server asked us for client authentication but we 
+		   skipped it because we don't have a certificate, in which case
+		   we return extended error information indicating this */
+		if( !isServer( sessionInfoPtr ) && \
+			( sessionInfoPtr->protocolFlags & SSL_PFLAG_CLIAUTHSKIPPED ) )
+			{
+			retExtErrAlt( status, 
+						  ( status, SESSION_ERRINFO, 
+							", probably due to missing client "
+							"authentication" ) );
+			}
 		return( status );
+		}
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
 	value = sgetc( &stream );
 	sMemDisconnect( &stream );

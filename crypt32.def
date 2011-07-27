@@ -1,10 +1,10 @@
-; Definition file for 32-bit cryptlib DLL.  Although the cryptlib header
-; file already provides all the information contained in this file, the use
-; of a redundant .DEF file is necessary because of VC++ braindamage.  Many
-; non-C development environments require the use of the Pascal calling
-; convention for Windows DLL's, however when this is used (via __stdcall) in
-; VC++, it mangles the function names, which means the other environments
-; can't even see the entry points, let alone call them.
+; Definition file for the 32/64-bit cryptlib DLL.  Although the cryptlib 
+; header file already provides all the information contained in this file, 
+; the use of a redundant .DEF file is necessary because many non-C 
+; development environments require the use of the Pascal calling convention 
+; for Windows DLL's, however when this is used (via __stdcall) in VC++ it 
+; mangles the function names, which means that other environments can't even 
+; see the entry points, let alone call them.
 ;
 ; To avoid this, it's necessary to include this .DEF file to tell VC++ not to
 ; mangle the exported names.  It'll still try to mangle them, but when the

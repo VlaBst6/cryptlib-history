@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib HTTP Write Routines						*
-*						Copyright Peter Gutmann 1998-2007					*
+*						Copyright Peter Gutmann 1998-2009					*
 *																			*
 ****************************************************************************/
 
@@ -31,8 +31,8 @@
 	x..x.xx....x...xxxxxxxxxxxx.xxxxx
 
    Because of this it's easier to check for the most likely permitted
-   characters (alphanumerics), and then to check for any special-case
-   chars */
+   characters (alphanumerics) first, and only then to check for any special-
+   case characters */
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static void encodeRFC1866( INOUT STREAM *headerStream, 
@@ -40,16 +40,17 @@ static void encodeRFC1866( INOUT STREAM *headerStream,
 						   IN_LENGTH_SHORT const int stringLength )
 	{
 	static const char allowedChars[] = "$-_.!*'(),\"/\x00\x00";	/* RFC 1738 + '/' */
-	int index = 0;
+	int index;
 
 	assert( isWritePtr( headerStream, sizeof( STREAM ) ) );
 	assert( isReadPtr( string, stringLength ) );
 
 	REQUIRES_V( stringLength > 0 && stringLength < MAX_INTLENGTH_SHORT );
 
-	while( index < stringLength )
+	for( index = 0; index < stringLength && \
+					index < MAX_INTLENGTH_SHORT; index++ )
 		{
-		const int ch = byteToInt( string[ index++ ] );
+		const int ch = byteToInt( string[ index ] );
 		int i;
 
 		if( isAlnum( ch ) )
@@ -72,7 +73,7 @@ static void encodeRFC1866( INOUT STREAM *headerStream,
 			}
 		else
 			{
-			char escapeString[ 16 ];
+			char escapeString[ 8 + 8 ];
 			int escapeStringLen;
 
 			/* It's a special char, escape it */
@@ -80,6 +81,7 @@ static void encodeRFC1866( INOUT STREAM *headerStream,
 			swrite( headerStream, escapeString, escapeStringLen );
 			}
 		}
+	ENSURES_V( index < MAX_INTLENGTH_SHORT );
 	}
 
 /* If we time out when sending HTTP header data this would usually be 
@@ -133,20 +135,22 @@ int sendHTTPData( INOUT STREAM *stream,
 *																			*
 ****************************************************************************/
 
-/* Write an HTTP request header */
+/* Write an HTTP request header.  The forceGet flag is used when we should 
+   be using a POST but a broken server forces the use of a GET */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeRequestHeader( INOUT STREAM *stream, 
 						IN_OPT const HTTP_URI_INFO *httpReqInfo,
 						IN_BUFFER_OPT( contentTypeLen ) const char *contentType, 
 						IN_LENGTH_SHORT_Z const int contentTypeLen, 
-						IN_LENGTH_Z const int contentLength )
+						IN_LENGTH_Z const int contentLength,
+						const BOOLEAN forceGet )
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 	STREAM headerStream;
 	char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ];
-	const int transportFlag = ( contentLength > 0 ) ? TRANSPORT_FLAG_NONE : \
-													  TRANSPORT_FLAG_FLUSH;
+	const int transportFlag = ( contentLength > 0 && !forceGet ) ? \
+							  TRANSPORT_FLAG_NONE : TRANSPORT_FLAG_FLUSH;
 	int headerLength = DUMMY_INIT, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -173,7 +177,7 @@ int writeRequestHeader( INOUT STREAM *stream,
 		swrite( &headerStream, "CONNECT ", 8 );
 	else
 		{
-		if( contentLength > 0 )
+		if( contentLength > 0 && !forceGet )
 			swrite( &headerStream, "POST ", 5 );
 		else
 			swrite( &headerStream, "GET ", 4 );
@@ -220,34 +224,37 @@ int writeRequestHeader( INOUT STREAM *stream,
 					httpReqInfo->extraDataLen );
 			}
 		}
-	if( isHTTP10( stream ) )
-		swrite( &headerStream, " HTTP/1.0\r\n", 11 );
-	else
+	if( !forceGet )
 		{
-		swrite( &headerStream, " HTTP/1.1\r\nHost: ", 17 );
-		swrite( &headerStream, netStream->host, netStream->hostLen );
-		swrite( &headerStream, "\r\n", 2 );
-		if( netStream->nFlags & STREAM_NFLAG_LASTMSG )
-			swrite( &headerStream, "Connection: close\r\n", 19 );
-		}
-	if( contentLength > 0 )
-		{
-		char lengthString[ 8 + 8 ];
-		int lengthStringLength;
+		if( isHTTP10( stream ) )
+			swrite( &headerStream, " HTTP/1.0\r\n", 11 );
+		else
+			{
+			swrite( &headerStream, " HTTP/1.1\r\nHost: ", 17 );
+			swrite( &headerStream, netStream->host, netStream->hostLen );
+			swrite( &headerStream, "\r\n", 2 );
+			if( netStream->nFlags & STREAM_NFLAG_LASTMSG )
+				swrite( &headerStream, "Connection: close\r\n", 19 );
+			}
+		if( contentLength > 0 )
+			{
+			char lengthString[ 16 + 8 ];
+			int lengthStringLength;
 
-		/* About 5% of connections have HTTP caches present, and of those 
-		   about half get cacheing wrong, i.e. they'll cache even if the 
-		   "no-cache" value is set (from the ISCI Netalyzr result data), so 
-		   in the presence of cacheing there's a coin-toss probability of 
-		   the "Cache-Control" indicator below actually doing what it's 
-		   supposed to */
-		swrite( &headerStream, "Content-Type: ", 14 );
-		swrite( &headerStream, contentType, contentTypeLen );
-		swrite( &headerStream, "\r\nContent-Length: ", 18 );
-		lengthStringLength = sprintf_s( lengthString, 8, "%d", 
-										contentLength );
-		swrite( &headerStream, lengthString, lengthStringLength );
-		swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
+			/* About 5% of connections have HTTP caches present, and of 
+			   those about half get cacheing wrong, i.e. they'll cache even 
+			   if the "no-cache" value is set (from the ISCI Netalyzr result 
+			   data), so in the presence of cacheing there's a coin-toss 
+			   probability of the "Cache-Control" indicator below actually 
+			   doing what it's supposed to */
+			swrite( &headerStream, "Content-Type: ", 14 );
+			swrite( &headerStream, contentType, contentTypeLen );
+			swrite( &headerStream, "\r\nContent-Length: ", 18 );
+			lengthStringLength = sprintf_s( lengthString, 16, "%d", 
+											contentLength );
+			swrite( &headerStream, lengthString, lengthStringLength );
+			swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
+			}
 		}
 	status = swrite( &headerStream, "\r\n", 2 );
 	if( cryptStatusOK( status ) )
@@ -268,7 +275,7 @@ static int writeResponseHeader( INOUT STREAM *stream,
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 	STREAM headerStream;
-	char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ], lengthString[ 8 + 8 ];
+	char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ], lengthString[ 16 + 8 ];
 	int headerLength = DUMMY_INIT, lengthStringLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -289,7 +296,7 @@ static int writeResponseHeader( INOUT STREAM *stream,
 	swrite( &headerStream, "Content-Type: ", 14 );
 	swrite( &headerStream, contentType, contentTypeLen );
 	swrite( &headerStream, "\r\nContent-Length: ", 18 );
-	lengthStringLength = sprintf_s( lengthString, 8, "%d", 
+	lengthStringLength = sprintf_s( lengthString, 16, "%d", 
 									contentLength );
 	swrite( &headerStream, lengthString, lengthStringLength );
 	swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
@@ -321,6 +328,7 @@ static int writeFunction( INOUT STREAM *stream,
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 	HTTP_DATA_INFO *httpDataInfo = ( HTTP_DATA_INFO * ) buffer;
+	BOOLEAN forceGet = FALSE;
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -365,10 +373,18 @@ static int writeFunction( INOUT STREAM *stream,
 					 ( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL ) ) );
 		REQUIRES( netStream->host != NULL && netStream->hostLen > 0 );
 
+		/* If there's content present to send to the server and the only 
+		   allowed method is GET then we have to override the use of the 
+		   (correct) POST with the (incorrect) GET in order to deal with a
+		   broken server */
+		if( httpDataInfo->bufSize > 0 && \
+			( netStream->nFlags & STREAM_NFLAG_HTTPREQMASK ) == STREAM_NFLAG_HTTPGET )
+			forceGet = TRUE;
+
 		status = writeRequestHeader( stream, httpDataInfo->reqInfo, 
 									 httpDataInfo->contentType,
 									 httpDataInfo->contentTypeLen,
-									 httpDataInfo->bufSize );
+									 httpDataInfo->bufSize, forceGet );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -377,9 +393,41 @@ static int writeFunction( INOUT STREAM *stream,
 	status = netStream->bufferedTransportWriteFunction( stream, 
 							httpDataInfo->buffer, httpDataInfo->bufSize,
 							&httpDataInfo->bytesTransferred, 
-							TRANSPORT_FLAG_FLUSH );
+							forceGet ? TRANSPORT_FLAG_NONE : \
+									   TRANSPORT_FLAG_FLUSH );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( forceGet )
+		{
+		STREAM headerStream;
+		char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ];
+		int headerLength = DUMMY_INIT;
+
+		/* We've been forced to override the use of a POST with a GET due to 
+		   a broken server so the header write was split into two parts with 
+		   the request data in the middle, we now have to send the remainder 
+		   of the header */
+		sMemOpen( &headerStream, headerBuffer, HTTP_LINEBUF_SIZE );
+		if( isHTTP10( stream ) )
+			swrite( &headerStream, " HTTP/1.0\r\n", 11 );
+		else
+			{
+			swrite( &headerStream, " HTTP/1.1\r\nHost: ", 17 );
+			swrite( &headerStream, netStream->host, netStream->hostLen );
+			swrite( &headerStream, "\r\n", 2 );
+			if( netStream->nFlags & STREAM_NFLAG_LASTMSG )
+				swrite( &headerStream, "Connection: close\r\n", 19 );
+			}
+		status = swrite( &headerStream, "\r\n", 2 );
+		if( cryptStatusOK( status ) )
+			headerLength = stell( &headerStream );
+		sMemDisconnect( &headerStream );
+		ENSURES( cryptStatusOK( status ) );
+		status = sendHTTPData( stream, headerBuffer, headerLength, 
+							   TRANSPORT_FLAG_FLUSH );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	*length = maxLength;
 
 	return( CRYPT_OK );

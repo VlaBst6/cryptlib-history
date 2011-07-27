@@ -225,11 +225,10 @@ static int createStrongAlgorithmContext( OUT_HANDLE_OPT \
 											const CRYPT_CONTEXT iMasterKeyContext,
 										 const BOOLEAN isCryptContext )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
 	CRYPT_CONTEXT iLocalContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MECHANISM_KDF_INFO mechanismInfo;
-	int status;
+	int algorithm, status;
 
 	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
 
@@ -248,23 +247,23 @@ static int createStrongAlgorithmContext( OUT_HANDLE_OPT \
 	   for the algorithm that was requested */
 	if( isCryptContext )
 		{
-		status = krnlSendMessage( iCryptOwner, IMESSAGE_GETATTRIBUTE, &cryptAlgo,
-								  CRYPT_OPTION_ENCR_ALGO );
-		if( cryptStatusError( status ) || isWeakCryptAlgo( cryptAlgo ) || \
-			cryptStatusError( sizeofAlgoIDex( cryptAlgo, CRYPT_MODE_CBC, 0 ) ) )
-			cryptAlgo = CRYPT_ALGO_3DES;
+		status = krnlSendMessage( iCryptOwner, IMESSAGE_GETATTRIBUTE, 
+								  &algorithm, CRYPT_OPTION_ENCR_ALGO );
+		if( cryptStatusError( status ) || isWeakCryptAlgo( algorithm ) || \
+			cryptStatusError( sizeofAlgoIDex( algorithm, CRYPT_MODE_CBC, 0 ) ) )
+			algorithm = CRYPT_ALGO_3DES;
 		}
 	else
 		{
-		status = krnlSendMessage( iCryptOwner, IMESSAGE_GETATTRIBUTE, &cryptAlgo,
-								  CRYPT_OPTION_ENCR_MAC );
-		if( cryptStatusError( status ) || isWeakMacAlgo( cryptAlgo ) || \
-			cryptStatusError( sizeofAlgoID( cryptAlgo ) ) )
-			cryptAlgo = CRYPT_ALGO_HMAC_SHA1;
+		status = krnlSendMessage( iCryptOwner, IMESSAGE_GETATTRIBUTE, 
+								  &algorithm, CRYPT_OPTION_ENCR_MAC );
+		if( cryptStatusError( status ) || isWeakMacAlgo( algorithm ) || \
+			cryptStatusError( sizeofAlgoID( algorithm ) ) )
+			algorithm = CRYPT_ALGO_HMAC_SHA1;
 		}
 
 	/* Create the context */
-	setMessageCreateObjectInfo( &createInfo, cryptAlgo );
+	setMessageCreateObjectInfo( &createInfo, algorithm );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
@@ -296,13 +295,13 @@ static int createStrongAlgorithmContext( OUT_HANDLE_OPT \
 	if( isCryptContext )
 		{
 		setMechanismKDFInfo( &mechanismInfo, iLocalContext, 
-							 iMasterKeyContext, CRYPT_ALGO_HMAC_SHA, 
+							 iMasterKeyContext, CRYPT_ALGO_HMAC_SHA1, 
 							 "encryption", 10 );
 		}
 	else
 		{
 		setMechanismKDFInfo( &mechanismInfo, iLocalContext, 
-							 iMasterKeyContext, CRYPT_ALGO_HMAC_SHA, 
+							 iMasterKeyContext, CRYPT_ALGO_HMAC_SHA1, 
 							 "authentication", 14 );
 		}
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
@@ -341,7 +340,8 @@ static int setAlgoParams( IN_HANDLE const CRYPT_CONTEXT iGenericSecret,
 	if( attribute == CRYPT_IATTRIBUTE_ENCPARAMS )
 		status = writeCryptContextAlgoID( &stream, iCryptContext );
 	else
-		status = writeContextAlgoID( &stream, iCryptContext, 0 );
+		status = writeContextAlgoID( &stream, iCryptContext, 
+									 CRYPT_ALGO_NONE );
 	if( cryptStatusOK( status ) )
 		algorithmParamDataSize = stell( &stream );
 	sMemDisconnect( &stream );
@@ -935,6 +935,14 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 								  macDataLength );
 		}
 	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		{
+		if( newPrivKeyData != origPrivKeyData )
+			clFree( "writePrivateKey", newPrivKeyData );
+		retExt( status, 
+				( status, errorInfo, 
+				  "Couldn't MAC encryption attributes" ) );
+		}
 
 	sMemOpen( &stream, *newPrivKeyData, *newPrivKeyDataSize );
 
@@ -955,7 +963,7 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 		{
 		sMemClose( &stream );
 		if( newPrivKeyData != origPrivKeyData )
-			clFree( "addPrivateKey", newPrivKeyData );
+			clFree( "writePrivateKey", newPrivKeyData );
 		retExt( status, 
 				( status, errorInfo, 
 				  "Couldn't write private key attributes" ) );
@@ -988,6 +996,8 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 	if( cryptStatusError( status ) )
 		{
 		sMemClose( &stream );
+		if( newPrivKeyData != origPrivKeyData )
+			clFree( "writePrivateKey", newPrivKeyData );
 		retExt( status, 
 				( status, errorInfo, 
 				  "Couldn't write wrapped private key" ) );
@@ -1004,6 +1014,8 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 	if( cryptStatusError( status ) )
 		{
 		sMemClose( &stream );
+		if( newPrivKeyData != origPrivKeyData )
+			clFree( "writePrivateKey", newPrivKeyData );
 		retExt( status, 
 				( status, errorInfo, 
 				  "Couldn't write integrity check value for wrapped private "

@@ -350,16 +350,18 @@ typedef struct {
 		error information, used when (for example) an operation references 
 		a keyset, where the keyset also contains extended error information.
 
+	retExtStr() takes an additional error string pointer and is used in the
+		same way as retExtErr().
+
 	retExtErr() takes a pointer to existing error info, used when (for
 		example) a lower-level function has provided very low-level error 
 		information but the higher-level function that calls it needs to 
-		provide its own more general error information on top of it.  In
-		theory we could implement simply by mapping it to retExtStr(), but
-		because of the way it's implemented as a (pseudo-)vararg macro this
-		isn't possible.
-
-	retExtStr() takes an additional error string pointer and is used in the
-		same way as retExtErr() */
+		provide its own more general error information on top of it.  This 
+		function is typically used when the caller wants to convert 
+		something like "Low-level error string" into "High-level error 
+		string: Low-level error string".
+	retExtErrAlt() is a variation of the above that appends the additional
+		error information rather than prepending it */
 
 #ifdef USE_ERRMSGS
 
@@ -400,13 +402,18 @@ int retExtErrFn( IN_ERROR const int status,
 				 OUT ERROR_INFO *errorInfoPtr, 
 				 const ERROR_INFO *existingErrorInfoPtr, 
 				 FORMAT_STRING const char *format, ... );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
+int retExtErrAltFn( IN_ERROR const int status, 
+					OUT ERROR_INFO *errorInfoPtr, 
+					FORMAT_STRING const char *format, ... );
 
 #ifdef USE_ERRMSGS
   #define retExt( status, extStatus )		return retExtFn extStatus
   #define retExtArg( status, extStatus )	return retExtArgFn extStatus
   #define retExtObj( status, extStatus )	return retExtObjFn extStatus
-  #define retExtErr( status, extStatus )	return retExtErrFn extStatus 
   #define retExtStr( status, extStatus )	return retExtStrFn extStatus 
+  #define retExtErr( status, extStatus )	return retExtErrFn extStatus 
+  #define retExtErrAlt( status, extStatus )	return retExtErrAltFn extStatus 
   #define retExt_IntError( status, extStatus ) \
 		{ \
 		assert( INTERNAL_ERROR ); \
@@ -418,8 +425,9 @@ int retExtErrFn( IN_ERROR const int status,
   #define retExt( status, extStatus )		return status
   #define retExtArg( status, extStatus )	return status
   #define retExtObj( status, extStatus )	return status
-  #define retExtErr( status, extStatus )	return status
   #define retExtStr( status, extStatus )	return status
+  #define retExtErr( status, extStatus )	return status
+  #define retExtErrAlt( status, extStatus )	return status
   #define retExt_IntError( status, extStatus ) \
 		{ \
 		assert( INTERNAL_ERROR ); \
@@ -878,10 +886,19 @@ void freeMemPool( INOUT void *statePtr, IN void *memblock );
    The use of 'storage[ 1 ]' means that the only element that's guaranteed 
    to be valid is 'storage[ 0 ]' under strict C99 definitions, however 
    declaring it as an unsized array leads to warnings of use of a zero-sized 
-   array from many compilers so we leave it as 'storage[ 1 ]' */
+   array from many compilers so we leave it as 'storage[ 1 ]'.
+   
+   We have to insert an additional dummy value before the storage 
+   declaration to ensure the correct alignment for the storage itself, in
+   particular on 64-bit platforms with the LLP64/LP64 memory model (which 
+   means most current systems) the storage block may end up 32-bit aligned 
+   if the compiler aligns to, at most, the nearest 32-bit integer value.  We 
+   can't declare the storage as a long since under LLP64 it's only 32 bits 
+   while a pointer is still 64 bits */
 
 #define DECLARE_VARSTRUCT_VARS \
 		int storageSize; \
+		void *_align_value; \
 		BUFFER_FIXED( storageSize ) \
 		BYTE storage[ 1 ]
 
@@ -1216,11 +1233,14 @@ int createCertificateIndirect( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
    read/write routines */
 
 typedef enum {
-	SHORTKEY_CHECK_NONE,	/* Don't check for short key sizes */
-	SHORTKEY_CHECK_PKC,		/* Check for a short PKC key */
-	SHORTKEY_CHECK_ECC,		/* Check for a short ECC key */
-	SHORTKEY_CHECK_LAST		/* Last valid check type */
-	} SHORTKEY_CHECK_TYPE;
+	KEYSIZE_CHECK_NONE,		/* Don't check for short key sizes */
+	KEYSIZE_CHECK_PKC,		/* Check for a short PKC key */
+	KEYSIZE_CHECK_ECC,		/* Check for a short ECC key */
+		KEYSIZE_CHECK_LAST = KEYSIZE_CHECK_ECC + 1,
+							/* Last valid normal check type */
+	KEYSIZE_CHECK_SPECIAL,	/* Allow slightly oversize keys for DLP */
+	KEYSIZE_CHECK_LAST_SPECIAL	/* Last valid check type */
+	} KEYSIZE_CHECK_TYPE;
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int importBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr, 
@@ -1229,8 +1249,8 @@ int importBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr,
 				  IN_LENGTH_PKC const int minLength, 
 				  IN_LENGTH_PKC const int maxLength, 
 				  IN_OPT const void *maxRangePtr,
-				  IN_ENUM_OPT( SHORTKEY_CHECK ) \
-					const SHORTKEY_CHECK_TYPE checkType );
+				  IN_ENUM_OPT( KEYSIZE_CHECK ) \
+					const KEYSIZE_CHECK_TYPE checkType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int exportBignum( OUT_BUFFER( dataMaxLength, *dataLength ) void *data, 
 				  IN_LENGTH_SHORT_MIN( 16 ) const int dataMaxLength, 
@@ -1246,8 +1266,8 @@ int importECCPoint( INOUT void *bignumPtr1,
 					IN_LENGTH_PKC const int maxLength, 
 					IN_LENGTH_PKC const int fieldSize,
 					IN_OPT const void *maxRangePtr,
-					IN_ENUM( SHORTKEY_CHECK ) \
-						const SHORTKEY_CHECK_TYPE checkType );
+					IN_ENUM( KEYSIZE_CHECK ) \
+						const KEYSIZE_CHECK_TYPE checkType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4, 5) ) \
 int exportECCPoint( OUT_BUFFER_OPT( dataMaxLength, *dataLength ) void *data, 
 					IN_LENGTH_SHORT_Z const int dataMaxLength, 

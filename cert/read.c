@@ -247,8 +247,8 @@ static int readPublicKeyInfo( INOUT STREAM *stream,
 		   use in conjunction with encryption contexts so the context create 
 		   will catch the use of too-short parameters */
 		readGenericHole( stream, NULL, 4, DEFAULT_TAG );
-		status = readAlgoIDparams( stream, &certInfoPtr->publicKeyAlgo, 
-								   &parameterLength, ALGOID_CLASS_PKC );
+		status = readAlgoIDparam( stream, &certInfoPtr->publicKeyAlgo, 
+								  &parameterLength, ALGOID_CLASS_PKC );
 		if( cryptStatusOK( status ) )
 			{
 			if( parameterLength > 0 )
@@ -388,8 +388,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readCertInfo( INOUT STREAM *stream, 
 						 INOUT CERT_INFO *certInfoPtr )
 	{
-	CRYPT_ALGO_TYPE dummy;
-	int length, endPos, status;
+	CRYPT_ALGO_TYPE dummyAlgo;
+	int length, endPos, dummyInt, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
@@ -415,9 +415,9 @@ static int readCertInfo( INOUT STREAM *stream,
 	status = readSerialNumber( stream, certInfoPtr, DEFAULT_TAG );
 	if( cryptStatusOK( status ) )
 		{
-		status = readAlgoIDext( stream, &dummy, \
-								&certInfoPtr->cCertCert->hashAlgo,
-								ALGOID_CLASS_PKCSIG );
+		status = readAlgoIDex( stream, &dummyAlgo, \
+							   &certInfoPtr->cCertCert->hashAlgo,
+							   &dummyInt, ALGOID_CLASS_PKCSIG );
 		}
 	if( cryptStatusError( status ) )
 		return( status );

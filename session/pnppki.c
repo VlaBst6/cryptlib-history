@@ -237,7 +237,7 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
 	BOOLEAN substitutedAlgorithm = FALSE;
-	int value, status;
+	int pkcAlgo, keySize, status;
 
 	assert( isWritePtr( iPrivateKey, sizeof( CRYPT_CONTEXT ) ) );
 
@@ -254,28 +254,28 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 	   default PKC algorithm, however some devices don't support all 
 	   algorithm types so if this isn't available we try and fall back to 
 	   other choices */
-	status = krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &value, 
+	status = krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &pkcAlgo, 
 							  CRYPT_OPTION_PKC_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( !algoAvailable( value ) )
+	if( !algoAvailable( pkcAlgo ) )
 		{
 		/* The default algorithm type isn't available for this device, try 
 		   and fall back to an alternative */
-		switch( value )
+		switch( pkcAlgo )
 			{
 			case CRYPT_ALGO_RSA:
-				value = CRYPT_ALGO_DSA;
+				pkcAlgo = CRYPT_ALGO_DSA;
 				break;
 
 			case CRYPT_ALGO_DSA:
-				value = CRYPT_ALGO_RSA;
+				pkcAlgo = CRYPT_ALGO_RSA;
 				break;
 
 			default:
 				return( CRYPT_ERROR_NOTAVAIL );
 			}
-		if( !algoAvailable( value ) )
+		if( !algoAvailable( pkcAlgo ) )
 			return( CRYPT_ERROR_NOTAVAIL );
 
 		/* Remember that we've switched to a fallback algorithm */
@@ -295,18 +295,18 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 			   we've substituted an algorithm (for example DSA when RSA was 
 			   requested) then we genuinely can't go any further and exit
 			   with an error */
-			if( !isCryptAlgo( value ) )
+			if( !isCryptAlgo( pkcAlgo ) )
 				return( substitutedAlgorithm ? \
 						CRYPT_ERROR_NOTAVAIL : OK_SPECIAL );
 			break;
 
 		case KEY_TYPE_SIGNATURE:
-			if( !isSigAlgo( value ) )
+			if( !isSigAlgo( pkcAlgo ) )
 				return( CRYPT_ERROR_NOTAVAIL );
 			break;
 
 		case KEY_TYPE_BOTH:
-			if( !isCryptAlgo( value ) || !isSigAlgo( value ) )
+			if( !isCryptAlgo( pkcAlgo ) || !isSigAlgo( pkcAlgo ) )
 				return( CRYPT_ERROR_NOTAVAIL );
 			break;
 
@@ -316,17 +316,17 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 
 	/* Create a new key using the given PKC algorithm and of the default 
 	   size */
-	setMessageCreateObjectInfo( &createInfo, value );
+	setMessageCreateObjectInfo( &createInfo, pkcAlgo );
 	status = krnlSendMessage( iCryptDevice, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-	status = krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &value, 
+	status = krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &keySize, 
 							  CRYPT_OPTION_PKC_KEYSIZE );
 	if( cryptStatusOK( status ) )
 		{
 		status = krnlSendMessage( createInfo.cryptHandle, 
-								  IMESSAGE_SETATTRIBUTE, &value, 
+								  IMESSAGE_SETATTRIBUTE, &keySize, 
 								  CRYPT_CTXINFO_KEYSIZE );
 		}
 	if( cryptStatusOK( status ) )
@@ -434,7 +434,7 @@ static int updateKeys( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 					   IN_LENGTH_NAME const int passwordLength )
 	{
 	MESSAGE_KEYMGMT_INFO setkeyInfo;
-	int value, status;
+	int objectType, status;
 
 	assert( isReadPtr( password, passwordLength ) );
 
@@ -447,13 +447,13 @@ static int updateKeys( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 	/* Find out whether the storage object is a keyset or a device.  If it's
 	   a device there's no need to add the private key since it'll have been
 	   created inside the device */
-	status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE, &value,
-							  CRYPT_IATTRIBUTE_TYPE );
+	status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE, 
+							  &objectType, CRYPT_IATTRIBUTE_TYPE );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Add the private key and certificate to the keyset/device */
-	if( value == OBJECT_TYPE_KEYSET )
+	if( objectType == OBJECT_TYPE_KEYSET )
 		{
 		setMessageKeymgmtInfo( &setkeyInfo, CRYPT_KEYID_NONE, NULL, 0,
 							   ( MESSAGE_CAST ) password, passwordLength,
@@ -529,7 +529,7 @@ int pnpPkiSession( INOUT SESSION_INFO *sessionInfoPtr )
 							 KEY_TYPE_SIGNATURE : KEY_TYPE_BOTH;
 	const char *storageObjectName = "keyset";
 	BOOLEAN isCAcert;
-	int value, status;
+	int objectType, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
@@ -538,11 +538,11 @@ int pnpPkiSession( INOUT SESSION_INFO *sessionInfoPtr )
 	/* If we've been passed a device as the private-key storage location,
 	   create the key in the device instead of as a local object */
 	status = krnlSendMessage( sessionInfoPtr->privKeyset,
-							  IMESSAGE_GETATTRIBUTE, &value,
+							  IMESSAGE_GETATTRIBUTE, &objectType,
 							  CRYPT_IATTRIBUTE_TYPE );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( value == OBJECT_TYPE_DEVICE )
+	if( objectType == OBJECT_TYPE_DEVICE )
 		{
 		iCryptDevice = sessionInfoPtr->privKeyset;
 		storageObjectName = "device";

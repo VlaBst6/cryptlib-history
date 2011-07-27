@@ -7,11 +7,9 @@
 
 #include "crypt.h"
 #ifdef INC_ALL
-  #include "trustmgr.h"
   #include "user_int.h"
   #include "user.h"
 #else
-  #include "cert/trustmgr.h"
   #include "misc/user_int.h"
   #include "misc/user.h"
 #endif /* Compiler-specific includes */
@@ -36,16 +34,16 @@
 static const BUILTIN_OPTION_INFO FAR_BSS builtinOptionInfo[] = {
 	/* cryptlib information (read-only) */
 	MK_OPTION_S( CRYPT_OPTION_INFO_DESCRIPTION, "cryptlib security toolkit", 25, CRYPT_UNUSED ),
-	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2010", 55, CRYPT_UNUSED ),
+	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2011", 55, CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MAJORVERSION, 3, CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MINORVERSION, 4, CRYPT_UNUSED ),
-	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 0, CRYPT_UNUSED ),
+	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 1, CRYPT_UNUSED ),
 
 	/* Context options, base = 0 */
 	/* Algorithm = Conventional encryption/hash/MAC options */
 	MK_OPTION( CRYPT_OPTION_ENCR_ALGO, CRYPT_ALGO_3DES, 0 ),
 	MK_OPTION( CRYPT_OPTION_ENCR_HASH, CRYPT_ALGO_SHA1, 1 ),
-	MK_OPTION( CRYPT_OPTION_ENCR_MAC, CRYPT_ALGO_HMAC_SHA, 2 ),
+	MK_OPTION( CRYPT_OPTION_ENCR_MAC, CRYPT_ALGO_HMAC_SHA1, 2 ),
 
 	/* Algorithm = PKC options */
 	MK_OPTION( CRYPT_OPTION_PKC_ALGO, CRYPT_ALGO_RSA, 3 ),

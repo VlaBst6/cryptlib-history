@@ -69,13 +69,13 @@ static int processMechanismMessage( INOUT DEVICE_INFO *deviceInfoPtr,
 		   than sending the message through the kernel a second time because 
 		   all the kernel checking of message parameters has already been 
 		   done, this saves the overhead of a second, redundant kernel pass.  
-		   This code is currently only ever used with Fortezza devices, with 
-		   PKCS #11 devices the support for various mechanisms is too patchy 
-		   to allow us to rely on it so we always use system mechanisms 
-		   which we know will get it right.  Because it should never be used 
-		   in normal use, we throw an exception if we get here inadvertently 
-		   (if this doesn't stop execution then the krnlAcquireObject() will 
-		   since it will refuse to allocate the system object) */
+		   This code was only ever used with Fortezza devices, with PKCS #11 
+		   devices the support for various mechanisms is too patchy to allow 
+		   us to rely on it so we always use system mechanisms which we know 
+		   will get it right.  Because it should never be used in normal 
+		   use, we throw an exception if we get here inadvertently (if this 
+		   doesn't stop execution then the krnlAcquireObject() will since it 
+		   will refuse to allocate the system object) */
 		assert( INTERNAL_ERROR );
 		setMessageObjectUnlocked( messageExtInfo );
 		status = krnlSuspendObject( deviceInfoPtr->objectHandle, &refCount );
@@ -87,7 +87,7 @@ static int processMechanismMessage( INOUT DEVICE_INFO *deviceInfoPtr,
 									CRYPT_ERROR_SIGNALLED );
 		if( cryptStatusError( status ) )
 			return( status );
-		assert( deviceInfoPtr->mechanismFunctions != NULL );
+		REQUIRES( deviceInfoPtr->mechanismFunctions != NULL );
 		for( i = 0; 
 			 i < deviceInfoPtr->mechanismFunctionCount && \
 				deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE && \
@@ -235,8 +235,7 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 					messageValue == MESSAGE_CHECK_PKC_DECRYPT_AVAIL || \
 					messageValue == MESSAGE_CHECK_PKC_SIGCHECK_AVAIL || \
 					messageValue == MESSAGE_CHECK_PKC_SIGN_AVAIL ) && \
-				  ( deviceInfoPtr->type == CRYPT_DEVICE_FORTEZZA || \
-					deviceInfoPtr->type == CRYPT_DEVICE_PKCS11 || \
+				  ( deviceInfoPtr->type == CRYPT_DEVICE_PKCS11 || \
 					deviceInfoPtr->type == CRYPT_DEVICE_CRYPTOAPI || \
 					deviceInfoPtr->type == CRYPT_DEVICE_HARDWARE ) );
 
@@ -259,7 +258,7 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 		MESSAGE_KEYMGMT_INFO *getkeyInfo = \
 								( MESSAGE_KEYMGMT_INFO * ) messageDataPtr;
 
-		assert( deviceInfoPtr->getItemFunction != NULL );
+		REQUIRES( deviceInfoPtr->getItemFunction != NULL );
 
 		/* Create a context via an object in the device */
 		return( deviceInfoPtr->getItemFunction( deviceInfoPtr,
@@ -274,7 +273,7 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 		MESSAGE_KEYMGMT_INFO *setkeyInfo = \
 								( MESSAGE_KEYMGMT_INFO * ) messageDataPtr;
 
-		assert( deviceInfoPtr->setItemFunction != NULL );
+		REQUIRES( deviceInfoPtr->setItemFunction != NULL );
 
 		/* Update the device with the cert */
 		return( deviceInfoPtr->setItemFunction( deviceInfoPtr,
@@ -285,7 +284,7 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 		MESSAGE_KEYMGMT_INFO *deletekeyInfo = \
 								( MESSAGE_KEYMGMT_INFO * ) messageDataPtr;
 
-		assert( deviceInfoPtr->deleteItemFunction != NULL );
+		REQUIRES( deviceInfoPtr->deleteItemFunction != NULL );
 
 		/* Delete an object in the device */
 		return( deviceInfoPtr->deleteItemFunction( deviceInfoPtr,
@@ -297,8 +296,7 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 		MESSAGE_KEYMGMT_INFO *getnextcertInfo = \
 								( MESSAGE_KEYMGMT_INFO * ) messageDataPtr;
 
-		assert( deviceInfoPtr->getFirstItemFunction != NULL );
-
+		REQUIRES( deviceInfoPtr->getFirstItemFunction != NULL );
 		REQUIRES( getnextcertInfo->auxInfoLength == sizeof( int ) );
 		REQUIRES( messageValue == KEYMGMT_ITEM_PUBLICKEY );
 
@@ -314,8 +312,7 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 		MESSAGE_KEYMGMT_INFO *getnextcertInfo = \
 								( MESSAGE_KEYMGMT_INFO * ) messageDataPtr;
 
-		assert( deviceInfoPtr->getNextItemFunction != NULL );
-
+		REQUIRES( deviceInfoPtr->getNextItemFunction != NULL );
 		REQUIRES( getnextcertInfo->auxInfoLength == sizeof( int ) );
 
 		/* Fetch a cert in a cert chain from the device */
@@ -480,7 +477,6 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 	OBJECT_SUBTYPE subType;
 	static const MAP_TABLE subtypeMapTbl[] = {
 		{ CRYPT_DEVICE_NONE, SUBTYPE_DEV_SYSTEM },
-		{ CRYPT_DEVICE_FORTEZZA, SUBTYPE_DEV_FORTEZZA },
 		{ CRYPT_DEVICE_PKCS11, SUBTYPE_DEV_PKCS11 },
 		{ CRYPT_DEVICE_CRYPTOAPI, SUBTYPE_DEV_CRYPTOAPI },
 		{ CRYPT_DEVICE_HARDWARE, SUBTYPE_DEV_HARDWARE },
@@ -508,6 +504,11 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 	*iCryptDevice = CRYPT_ERROR;
 	*deviceInfoPtrPtr = NULL;
 
+	/* Fortezza support was removed as of cryptlib 3.4.0 so we add a special-
+	   case check to make sure that we don't try and use it */
+	if( deviceType == CRYPT_DEVICE_FORTEZZA )
+		return( CRYPT_ERROR_NOTAVAIL );
+
 	/* Set up subtype-specific information */
 	status = mapValue( deviceType, &value, subtypeMapTbl, 
 					   FAILSAFE_ARRAYSIZE( subtypeMapTbl, MAP_TABLE ) );
@@ -517,10 +518,6 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 		{
 		case CRYPT_DEVICE_NONE:
 			storageSize = sizeof( SYSTEMDEV_INFO );
-			break;
-
-		case CRYPT_DEVICE_FORTEZZA:
-			storageSize = sizeof( FORTEZZA_INFO );
 			break;
 
 		case CRYPT_DEVICE_PKCS11:
@@ -559,11 +556,6 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 							( SYSTEMDEV_INFO * ) deviceInfoPtr->storage;
 			break;
 
-		case CRYPT_DEVICE_FORTEZZA:
-			deviceInfoPtr->deviceFortezza = \
-							( FORTEZZA_INFO * ) deviceInfoPtr->storage;
-			break;
-
 		case CRYPT_DEVICE_PKCS11:
 			deviceInfoPtr->devicePKCS11 = \
 							( PKCS11_INFO * ) deviceInfoPtr->storage;
@@ -589,10 +581,6 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 		{
 		case CRYPT_DEVICE_NONE:
 			status = setDeviceSystem( deviceInfoPtr );
-			break;
-
-		case CRYPT_DEVICE_FORTEZZA:
-			status = setDeviceFortezza( deviceInfoPtr );
 			break;
 
 		case CRYPT_DEVICE_PKCS11:
@@ -777,19 +765,15 @@ typedef struct {
 	} DEVICEINIT_INFO;
 		
 #define DEV_NONE_INITED			0x00
-#define DEV_FORTEZZA_INITED		0x01
-#define DEV_PKCS11_INITED		0x02
-#define DEV_CRYPTOAPI_INITED	0x04
-#define DEV_HARDWARE_INITED		0x08
+#define DEV_PKCS11_INITED		0x01
+#define DEV_CRYPTOAPI_INITED	0x02
+#define DEV_HARDWARE_INITED		0x04
 
 CHECK_RETVAL \
 int deviceManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 								const MANAGEMENT_ACTION_TYPE action )
 	{
 	DEVICEINIT_INFO deviceInitTbl[] = {
-#ifdef USE_FORTEZZA
-		{ deviceInitFortezza, deviceEndFortezza, DEV_FORTEZZA_INITED },
-#endif /* USE_FORTEZZA */
 #ifdef USE_PKCS11
 		{ deviceInitPKCS11, deviceEndPKCS11, DEV_PKCS11_INITED },
 #endif /* USE_PKCS11 */

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						ASN.1 Algorithm Identifier Routines					*
-*						Copyright Peter Gutmann 1992-2009					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -27,31 +27,30 @@
   #include "enc_dec/asn1_oids.h"
 #endif /* Compiler-specific includes */
 
-/* Map an OID to an algorithm type.  The parameter value can be NULL if no
-   sub-algorithm is expected, but we return an error code if the OID has a
-   sub-algorithm type present */
+/* Map an OID to an algorithm type */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 5, 6 ) ) \
 static int oidToAlgorithm( IN_BUFFER( oidLength ) const BYTE *oid, 
 						   IN_RANGE( 1, MAX_OID_SIZE ) const int oidLength, 
 						   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type,
 						   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
-						   OUT_OPT_INT_Z int *parameter )
+						   OUT_INT_Z int *param1, 
+						   OUT_INT_Z int *param2 )
 	{
 	BYTE oidByte;
 	int i;
 
 	assert( isReadPtr( oid, oidLength ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
-	assert( parameter == NULL || isWritePtr( parameter, sizeof( int ) ) );
+	assert( isWritePtr( param1, sizeof( int ) ) );
+	assert( isWritePtr( param2, sizeof( int ) ) );
 
 	REQUIRES( oidLength >= MIN_OID_SIZE && oidLength <= MAX_OID_SIZE );
 	REQUIRES( type > ALGOID_CLASS_NONE && type < ALGOID_CLASS_LAST );
 
 	/* Clear return values */
 	*cryptAlgo = CRYPT_ALGO_NONE;
-	if( parameter != NULL )
-		*parameter = 0;
+	*param1 = *param2 = 0;
 
 	/* If the OID is shorter than the minimum possible algorithm OID value, 
 	   don't try and process it */
@@ -73,21 +72,10 @@ static int oidToAlgorithm( IN_BUFFER( oidLength ) const BYTE *oid,
 			algoIDinfoPtr->oid[ 6 ] == oidByte && \
 			!memcmp( algoIDinfoPtr->oid, oid, oidLength ) )
 			{
-			/* If we're expecting a sub-algorithm, return the sub-algorithm
-			   type alongside the main algorithm type */
-			if( parameter != NULL )
-				{
-				*cryptAlgo = algoIDinfoPtr->algorithm;
-				*parameter = algoIDinfoPtr->parameter;
-				return( CRYPT_OK );
-				}
-
-			/* If we're not expecting a sub-algorithm but there's one
-			   present, mark it as an error */
-			if( algoIDinfoPtr->parameter != CRYPT_ALGO_NONE )
-				return( CRYPT_ERROR_BADDATA );
-
 			*cryptAlgo = algoIDinfoPtr->algorithm;
+			*param1 = algoIDinfoPtr->param1;
+			*param2 = algoIDinfoPtr->param2;
+
 			return( CRYPT_OK );
 			}
 		}
@@ -97,65 +85,76 @@ static int oidToAlgorithm( IN_BUFFER( oidLength ) const BYTE *oid,
 	return( CRYPT_ERROR_NOTAVAIL );
 	}
 
-/* Map an algorithm and optional sub-algorithm/mode to an OID.  These
-   functions are almost identical, the only difference is that the one used
-   for checking only doesn't throw an exception when it encounters an
-   algorithm value that it can't encode as an OID */
+/* Map an algorithm and optional parameters (sub-algorithm/mode/block size) 
+   and other parameters to an OID.  This can be called either to check 
+   whether an algorithm is encodable (checkValid = FALSE) or as part of an 
+   actual encoding, throwing an exception if the parameters can't be encoded 
+   (checkValid = TRUE) */
+
+#define ALGOTOOID_REQUIRE_VALID		TRUE
+#define ALGOTOOID_CHECK_VALID		FALSE
 
 CHECK_RETVAL_PTR \
 static const BYTE *algorithmToOID( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
-								   IN_RANGE( 0, 999 ) const int parameter )
+								   IN_RANGE( 0, 999 ) const int param1,
+								   IN_RANGE( 0, 999 ) const int param2,
+								   const BOOLEAN checkValid )
 	{
+	const BYTE *oid = NULL;
 	int i;
 
 	REQUIRES_N( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
-	REQUIRES_N( parameter >= 0 && parameter <= 999 );
+	REQUIRES_N( ( param1 == 0 && param2 == 0 ) || \
+				( ( param1 > 0 && param1 <= 999 ) && param2 == 0 ) || \
+				( ( param1 > 0 && param1 <= 999 ) && \
+				  ( param2 > 0 && param2 <= 999 ) ) );
 
 	for( i = 0; algoIDinfoTbl[ i ].algorithm != CRYPT_ALGO_NONE && \
 				i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ); i++ )
 		{
 		if( algoIDinfoTbl[ i ].algorithm == cryptAlgo )
+			{
+			oid = algoIDinfoTbl[ i ].oid;
 			break;
+			}
 		}
 	ENSURES_N( i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) );
-	while( algoIDinfoTbl[ i ].algorithm == cryptAlgo && \
-		   i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
+	if( param1 != 0 )
 		{
-		if( algoIDinfoTbl[ i ].parameter == parameter )
-			return( algoIDinfoTbl[ i ].oid );
-		i++;
+		oid = NULL;
+		while( algoIDinfoTbl[ i ].algorithm == cryptAlgo && \
+			   i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
+			{
+			if( algoIDinfoTbl[ i ].param1 == param1 )
+				{
+				oid = algoIDinfoTbl[ i ].oid;
+				break;
+				}
+			i++;
+			}
+		ENSURES_N( i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) );
 		}
-	ENSURES_N( i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) );
-
+	if( param2 != 0 )
+		{
+		oid = NULL;
+		while( algoIDinfoTbl[ i ].algorithm == cryptAlgo && \
+			   algoIDinfoTbl[ i ].param1 == param1 && \
+			   i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
+			{
+			if( algoIDinfoTbl[ i ].param2 == param2 )
+				{
+				oid = algoIDinfoTbl[ i ].oid;
+				break;
+				}
+			i++;
+			}
+		ENSURES_N( i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) );
+		}
+	if( oid != NULL )
+		return( oid );
+	if( !checkValid )
+		return( NULL );
 	retIntError_Null();
-	}
-
-CHECK_RETVAL_PTR \
-static const BYTE *algorithmToOIDcheck( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
-										IN_RANGE( 0, 999 ) const int parameter )
-	{
-	int i;
-
-	REQUIRES_N( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
-	REQUIRES_N( parameter >= 0 && parameter <= 999 );
-
-	for( i = 0; algoIDinfoTbl[ i ].algorithm != CRYPT_ALGO_NONE && \
-				i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ); i++ )
-		{
-		if( algoIDinfoTbl[ i ].algorithm == cryptAlgo )
-			break;
-		}
-	ENSURES_N( i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) );
-	while( algoIDinfoTbl[ i ].algorithm == cryptAlgo && \
-		   i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
-		{
-		if( algoIDinfoTbl[ i ].parameter == parameter )
-			return( algoIDinfoTbl[ i ].oid );
-		i++;
-		}
-	ENSURES_N( i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) );
-
-	return( NULL );
 	}
 
 /* Read the start of an AlgorithmIdentifier record, used by a number of
@@ -166,7 +165,8 @@ static const BYTE *algorithmToOIDcheck( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readAlgoIDheader( INOUT STREAM *stream, 
 							 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
-							 OUT_OPT_RANGE( 0, 999 ) int *parameter, 
+							 OUT_OPT_RANGE( 0, 999 ) int *param1, 
+							 OUT_OPT_RANGE( 0, 999 ) int *param2, 
 							 OUT_OPT_LENGTH_SHORT_Z int *extraLength, 
 							 IN_TAG const int tag,
 							 IN_ENUM( ALGOID_CLASS ) \
@@ -174,22 +174,24 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 	{
 	CRYPT_ALGO_TYPE localCryptAlgo;
 	BYTE oidBuffer[ MAX_OID_SIZE + 8 ];
-	int oidLength, algoParam, length, status;
+	int oidLength, algoParam1, algoParam2, length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
-	assert( parameter == NULL || \
-			isWritePtr( parameter, sizeof( int ) ) );
+	assert( param1 == NULL || isWritePtr( param1, sizeof( int ) ) );
+	assert( param2 == NULL || isWritePtr( param2, sizeof( int ) ) );
 	assert( extraLength == NULL || \
 			isWritePtr( extraLength, sizeof( int ) ) );
 
+	REQUIRES_S( ( param1 == NULL && param2 == NULL ) || \
+				( param1 != NULL && param2 != NULL ) );
 	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 	REQUIRES_S( type > ALGOID_CLASS_NONE && type < ALGOID_CLASS_LAST );
 	
 	/* Clear the return values */
 	*cryptAlgo = CRYPT_ALGO_NONE;
-	if( parameter != NULL )
-		*parameter = 0;
+	if( param1 != NULL )
+		*param1 = *param2 = 0;
 	if( extraLength != NULL )
 		*extraLength = 0;
 
@@ -211,12 +213,15 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 		}
 	status = oidToAlgorithm( oidBuffer, oidLength, type, &localCryptAlgo, 
-							 &algoParam );
+							 &algoParam1, &algoParam2 );
 	if( cryptStatusError( status ) )
 		return( status );
 	*cryptAlgo = localCryptAlgo;
-	if( parameter != NULL )
-		*parameter = algoParam;
+	if( param1 != NULL )
+		{
+		*param1 = algoParam1;
+		*param2 = algoParam2;
+		}
 
 	/* If the caller has specified that there should be no parameters 
 	   present, make sure that there's either no data or an ASN.1 NULL
@@ -252,12 +257,6 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 			noOfBits	INTEGER (128)
 			}
 
-	cast5cbc: RFC 2144
-		SEQUENCE {
-			iv			OCTET STRING DEFAULT 0,
-			keyLen		INTEGER (128)
-			}
-
 	blowfishCBC, desCBC, desEDE3-CBC: Blowfish RFC/OIW
 		iv				OCTET STRING SIZE (8)
 
@@ -265,25 +264,6 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 		SEQUENCE {
 			iv			OCTET STRING SIZE (8),
 			noBits		INTEGER (64)
-			}
-
-	ideaCBC: Ascom Tech
-		SEQUENCE {
-			iv			OCTET STRING OPTIONAL
-			}
-
-	ideaCFB: Ascom Tech
-		SEQUENCE {
-			r	  [ 0 ]	INTEGER DEFAULT 64,
-			k	  [ 1 ]	INTEGER DEFAULT 64,
-			j	  [ 2 ]	INTEGER DEFAULT 64,
-			iv	  [ 3 ]	OCTET STRING OPTIONAL
-			}
-
-	ideaOFB: Ascom Tech
-		SEQUENCE {
-			j			INTEGER DEFAULT 64,
-			iv			OCTET STRING OPTIONAL
 			}
 
 	rc2CBC: RFC 2311
@@ -303,25 +283,17 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 			iv			OCTET STRING OPTIONAL
 			}
 
-	skipjackCBC: SDN.701
-		SEQUENCE {
-			iv			OCTET STRING
-			}
-
    Because of the somewhat haphazard nature of encryption
    AlgorithmIdentifier definitions we can only handle the following
    algorithm/mode combinations:
 
 	AES ECB, CBC, CFB, OFB
 	Blowfish ECB, CBC, CFB, OFB
-	CAST128 CBC
 	DES ECB, CBC, CFB, OFB
 	3DES ECB, CBC, CFB, OFB
-	IDEA ECB, CBC, CFB, OFB
 	RC2 ECB, CBC
 	RC4
 	RC5 CBC
-	Skipjack CBC 
 
    In addition to the standard AlgorithmIdentifiers there's also a generic-
    secret pseudo-algorithm used for key-diversification purposes:
@@ -380,7 +352,7 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 						   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	const int offset = stell( stream );
-	int mode, length, status;	/* 'mode' must be type integer */
+	int mode, param, length, status;	/* 'mode' must be type integer */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
@@ -389,11 +361,26 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 	REQUIRES_S( type > ALGOID_CLASS_NONE && type < ALGOID_CLASS_LAST );
 
 	/* Read the AlgorithmIdentifier header and OID */
-	status = readAlgoIDheader( stream, &queryInfo->cryptAlgo, &mode,
+	status = readAlgoIDheader( stream, &queryInfo->cryptAlgo, &mode, &param,
 							   &length, tag, type );
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->cryptMode = mode;	/* CRYPT_MODE_TYPE vs. integer */
+	if( param != 0 )
+		{
+		/* Remember any additional algorithm parameters.  For variable-
+		   keysize block ciphers this is the key size, for variable-
+		   blocksize hash algorithms this is the hash output size */
+		if( isConvAlgo( queryInfo->cryptAlgo ) )
+			queryInfo->keySize = param;
+		else
+			{
+			if( isHashAlgo( queryInfo->cryptMode ) )
+				queryInfo->hashParam = param;
+			else
+				retIntError();
+			}
+		}
 
 	/* Some broken implementations use sign + hash algoIDs in places where
 	   a hash algoID is called for, if we find one of these we modify the
@@ -456,77 +443,6 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 							 8, CRYPT_MAX_IVSIZE );
 			return( readShortInteger( stream, NULL ) );
 
-#ifdef USE_CAST
-		case CRYPT_ALGO_CAST:
-			readSequence( stream, NULL );
-			readOctetString( stream, queryInfo->iv, &queryInfo->ivLength,
-							 8, CRYPT_MAX_IVSIZE );
-			return( readShortInteger( stream, NULL ) );
-#endif /* USE_CAST */
-
-#ifdef USE_IDEA
-		case CRYPT_ALGO_IDEA:
-			{
-			int paramTag;
-
-			if( queryInfo->cryptMode == CRYPT_MODE_ECB )
-				{
-				/* The NULL parameter has already been read in
-				   readAlgoIDheader() */
-				return( CRYPT_OK );
-				}
-			status = readSequence( stream, NULL );
-			if( cryptStatusError( status ) )
-				return( status );
-			paramTag = peekTag( stream );
-			if( cryptStatusError( paramTag ) )
-				return( paramTag );
-			if( queryInfo->cryptMode == CRYPT_MODE_CFB )
-				{
-				int itemsProcessed;
-				
-				/* Skip the CFB r, k, and j parameters */
-				for( itemsProcessed = 0;
-					 ( paramTag == MAKE_CTAG_PRIMITIVE( 0 ) || \
-					   paramTag == MAKE_CTAG_PRIMITIVE( 1 ) || \
-					    paramTag == MAKE_CTAG_PRIMITIVE( 2 ) ) && \
-					 itemsProcessed < 4; itemsProcessed++ )
-					{
-					long value;
-
-					status = readShortIntegerTag( stream, &value, paramTag );
-					if( cryptStatusError( status ) )
-						return( status );
-					if( value != 64 )
-						return( CRYPT_ERROR_NOTAVAIL );
-					paramTag = peekTag( stream );
-					if( cryptStatusError( paramTag ) )
-						return( paramTag );
-					}
-				if( itemsProcessed >= 4 )
-					return( CRYPT_ERROR_BADDATA );
-				return( readOctetStringTag( stream, queryInfo->iv,
-											&queryInfo->ivLength,
-											8, CRYPT_MAX_IVSIZE, 3 ) );
-				}
-			if( queryInfo->cryptMode == CRYPT_MODE_OFB && \
-				paramTag == BER_INTEGER )
-				{
-				long value;
-
-				/* Skip the OFB j parameter */
-				status = readShortInteger( stream, &value );
-				if( cryptStatusError( status ) )
-					return( status );
-				if( value != 64 )
-					return( CRYPT_ERROR_NOTAVAIL );
-				}
-			return( readOctetString( stream, queryInfo->iv,
-									 &queryInfo->ivLength,
-									 8, CRYPT_MAX_IVSIZE ) );
-			}
-#endif /* USE_CAST */
-
 #ifdef USE_RC2
 		case CRYPT_ALGO_RC2:
 			/* In theory we should check that the parameter value ==
@@ -574,14 +490,6 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 									 8, CRYPT_MAX_IVSIZE ) );
 			}
 #endif /* USE_RC5 */
-
-#ifdef USE_SKIPJACK
-		case CRYPT_ALGO_SKIPJACK:
-			readSequence( stream, NULL );
-			return( readOctetString( stream, queryInfo->iv,
-									 &queryInfo->ivLength,
-									 8, CRYPT_MAX_IVSIZE ) );
-#endif /* USE_SKIPJACK */
 
 		case CRYPT_IALGO_GENERIC_SECRET:
 			{
@@ -640,7 +548,7 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 
 /* Get the size of an EncryptionAlgorithmIdentifier record */
 
-CHECK_RETVAL \
+CHECK_RETVAL_LENGTH \
 int sizeofCryptContextAlgoID( IN_HANDLE const CRYPT_CONTEXT iCryptContext )
 	{
 	STREAM nullStream;
@@ -665,11 +573,10 @@ RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeCryptContextAlgoID( INOUT STREAM *stream,
 							 IN_HANDLE const CRYPT_CONTEXT iCryptContext )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
-	CRYPT_MODE_TYPE cryptMode = CRYPT_MODE_NONE;
 	const BYTE *oid;
 	BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];
-	int oidSize, ivSize = 0, sizeofIV = 0, paramSize, status;
+	int algorithm, mode = CRYPT_MODE_NONE;	/* enum vs.int */
+	int algoParam = 0, oidSize, ivSize = 0, sizeofIV = 0, paramSize, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
@@ -678,12 +585,12 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 	/* Extract the information that we need to write the
 	   AlgorithmIdentifier */
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
-	if( cryptStatusOK( status ) && cryptAlgo != CRYPT_IALGO_GENERIC_SECRET )
+							  &algorithm, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) && algorithm != CRYPT_IALGO_GENERIC_SECRET )
 		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-								  &cryptMode, CRYPT_CTXINFO_MODE );
-	if( cryptStatusOK( status ) && !isStreamCipher( cryptAlgo ) && \
-		needsIV( cryptMode ) )
+								  &mode, CRYPT_CTXINFO_MODE );
+	if( cryptStatusOK( status ) && !isStreamCipher( algorithm ) && \
+		needsIV( mode ) )
 		{
 		MESSAGE_DATA msgData;
 
@@ -696,6 +603,13 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 			sizeofIV = ( int ) sizeofObject( ivSize );
 			}
 		}
+	if( cryptStatusOK( status ) && isParameterisedConvAlgo( algorithm ) )
+		{
+		/* Some algorithms are parameterised, so we have to extract 
+		   additional information to deal with them */
+		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
+								  &algoParam, CRYPT_CTXINFO_KEYSIZE );
+		}
 	if( cryptStatusError( status ) )
 		{
 		DEBUG_DIAG(( "Couldn't extract information needed to write "
@@ -704,11 +618,12 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 		return( status );
 		}
 
-	ENSURES_S( isConvAlgo( cryptAlgo ) || \
-			   cryptAlgo == CRYPT_IALGO_GENERIC_SECRET );
+	ENSURES_S( isConvAlgo( algorithm ) || \
+			   algorithm == CRYPT_IALGO_GENERIC_SECRET );
 
 	/* Get the OID for this algorithm */
-	if( ( oid = algorithmToOIDcheck( cryptAlgo, cryptMode ) ) == NULL )
+	if( ( oid = algorithmToOID( algorithm, mode, algoParam, \
+								ALGOTOOID_CHECK_VALID ) ) == NULL )
 		{
 		/* Some algorithm+mode combinations can't be encoded using the
 		   available PKCS #7 OIDs, the best that we can do in this case is
@@ -721,90 +636,43 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 	ENSURES_S( oidSize >= MIN_OID_SIZE && oidSize <= MAX_OID_SIZE );
 
 	/* Write the algorithm-specific parameters */
-	switch( cryptAlgo )
+	switch( algorithm )
 		{
 		case CRYPT_ALGO_3DES:
 		case CRYPT_ALGO_AES:
 		case CRYPT_ALGO_BLOWFISH:
 		case CRYPT_ALGO_DES:
 			{
-			const int noBits = ( cryptAlgo == CRYPT_ALGO_AES ) ? 128 : 64;
+			const int noBits = ( algorithm == CRYPT_ALGO_AES ) ? 128 : 64;
 
 			paramSize = \
-				( cryptMode == CRYPT_MODE_ECB ) ? \
+				( mode == CRYPT_MODE_ECB ) ? \
 					sizeofNull() : \
-				( ( cryptMode == CRYPT_MODE_CBC ) || \
-				  ( cryptAlgo == CRYPT_ALGO_AES && cryptMode == CRYPT_MODE_OFB ) ) ? \
+				( ( mode == CRYPT_MODE_CBC ) || \
+				  ( algorithm == CRYPT_ALGO_AES && mode == CRYPT_MODE_OFB ) ) ? \
 				  sizeofIV : \
 				  ( int ) sizeofObject( sizeofIV + sizeofShortInteger( noBits ) );
 			writeSequence( stream, oidSize + paramSize );
-			if( cryptAlgo == CRYPT_ALGO_AES )
-				{
-				int keySize;
-
-				/* AES uses a somewhat odd encoding in which the last byte
-				   of the OID jumps in steps of 20 depending on the key
-				   size, so we adjust the OID that we actually write based
-				   on the key size.  It's somewhat unlikely that any
-				   implementation actually cares about this since the size
-				   information is always communicated anderswhere, but we do
-				   it just in case */
-				status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-										  &keySize, CRYPT_CTXINFO_KEYSIZE );
-				if( cryptStatusError( status ) )
-					return( status );
-				swrite( stream, oid, oidSize - 1 );
-				sputc( stream, oid[ oidSize - 1 ] + \
-							   ( ( keySize == 16 ) ? 0 : \
-								 ( keySize == 24 ) ? 20 : 40 ) );
-				}
-			else
-				swrite( stream, oid, oidSize );
-			if( cryptMode == CRYPT_MODE_ECB )
+			swrite( stream, oid, oidSize );
+			if( mode == CRYPT_MODE_ECB )
 				return( writeNull( stream, DEFAULT_TAG ) );
-			if( ( cryptMode == CRYPT_MODE_CBC ) || \
-				( cryptAlgo == CRYPT_ALGO_AES && cryptMode == CRYPT_MODE_OFB ) )
+			if( ( mode == CRYPT_MODE_CBC ) || \
+				( algorithm == CRYPT_ALGO_AES && mode == CRYPT_MODE_OFB ) )
 				return( writeOctetString( stream, iv, ivSize, DEFAULT_TAG ) );
 			writeSequence( stream, sizeofIV + sizeofShortInteger( noBits ) );
 			writeOctetString( stream, iv, ivSize, DEFAULT_TAG );
 			return( writeShortInteger( stream, noBits, DEFAULT_TAG ) );
 			}
 
-#ifdef USE_CAST
-		case CRYPT_ALGO_CAST:
-			paramSize = sizeofIV + sizeofShortInteger( 128 );
-			writeSequence( stream, oidSize + \
-								   ( int ) sizeofObject( paramSize ) );
-			swrite( stream, oid, oidSize );
-			writeSequence( stream, paramSize );
-			writeOctetString( stream, iv, ivSize, DEFAULT_TAG );
-			return( writeShortInteger( stream, 128, DEFAULT_TAG ) );
-#endif /* USE_CAST */
-
-#ifdef USE_IDEA
-		case CRYPT_ALGO_IDEA:
-			paramSize = ( cryptMode == CRYPT_MODE_ECB ) ? \
-						sizeofNull() : \
-						( int ) sizeofObject( sizeofIV );
-			writeSequence( stream, oidSize + paramSize );
-			swrite( stream, oid, oidSize );
-			if( cryptMode == CRYPT_MODE_ECB )
-				return( writeNull( stream, DEFAULT_TAG ) );
-			writeSequence( stream, sizeofIV );
-			return( writeOctetString( stream, iv, ivSize, \
-									  ( cryptMode == CRYPT_MODE_CFB ) ? \
-										3 : DEFAULT_TAG ) );
-#endif /* USE_IDEA */
-
 #ifdef USE_RC2
 		case CRYPT_ALGO_RC2:
-			paramSize = ( ( cryptMode == CRYPT_MODE_ECB ) ? 0 : sizeofIV ) + \
+			paramSize = ( ( mode == CRYPT_MODE_ECB ) ? 0 : sizeofIV ) + \
 						sizeofShortInteger( RC2_KEYSIZE_MAGIC );
 			writeSequence( stream, oidSize + \
 								   ( int ) sizeofObject( paramSize ) );
 			swrite( stream, oid, oidSize );
 			writeSequence( stream, paramSize );
-			if( cryptMode != CRYPT_MODE_CBC )
+			if( mode != CRYPT_MODE_CBC )
 				{
 				return( writeShortInteger( stream, RC2_KEYSIZE_MAGIC,
 										   DEFAULT_TAG ) );
@@ -835,15 +703,6 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 			writeShortInteger( stream, 64, DEFAULT_TAG );	/* Block size */
 			return( writeOctetString( stream, iv, ivSize, DEFAULT_TAG ) );
 #endif /* USE_RC5 */
-
-#ifdef USE_SKIPJACK
-		case CRYPT_ALGO_SKIPJACK:
-			writeSequence( stream, oidSize + \
-								   ( int ) sizeofObject( sizeofIV ) );
-			swrite( stream, oid, oidSize );
-			writeSequence( stream, sizeofIV );
-			return( writeOctetString( stream, iv, ivSize, DEFAULT_TAG ) );
-#endif /* USE_SKIPJACK */
 
 		case CRYPT_IALGO_GENERIC_SECRET:
 			{
@@ -899,18 +758,22 @@ BOOLEAN checkAlgoID( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 	REQUIRES_B( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
 	REQUIRES_B( cryptMode >= CRYPT_MODE_NONE && cryptMode < CRYPT_MODE_LAST );
 
-	return( ( algorithmToOIDcheck( cryptAlgo, cryptMode ) != NULL ) ? \
+	return( ( algorithmToOID( cryptAlgo, cryptMode, 0, \
+							  ALGOTOOID_CHECK_VALID ) != NULL ) ? \
 			TRUE : FALSE );
 	}
 
-/* Determine the size of an AlgorithmIdentifier record */
+/* Determine the size of an AlgorithmIdentifier record.  For algorithms with
+   sub-parameters (AES, SHA-2) the OIDs are the same size so there's no need
+   to explicitly deal with them */
 
-CHECK_RETVAL \
+CHECK_RETVAL_LENGTH \
 int sizeofAlgoIDex( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 					IN_RANGE( 0, 999 ) const int parameter, 
 					IN_LENGTH_SHORT_Z const int extraLength )
 	{
-	const BYTE *oid = algorithmToOID( cryptAlgo, parameter );
+	const BYTE *oid = algorithmToOID( cryptAlgo, parameter, 0, \
+									  ALGOTOOID_REQUIRE_VALID );
 
 	REQUIRES( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
 	REQUIRES( parameter >= 0 && parameter <= 999 );
@@ -922,7 +785,7 @@ int sizeofAlgoIDex( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 														  sizeofNull() ) ) );
 	}
 
-CHECK_RETVAL \
+CHECK_RETVAL_LENGTH \
 int sizeofAlgoID( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
 	{
 	REQUIRES( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
@@ -930,21 +793,26 @@ int sizeofAlgoID( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
 	return( sizeofAlgoIDex( cryptAlgo, CRYPT_ALGO_NONE, 0 ) );
 	}
 
-/* Write an AlgorithmIdentifier record */
+/* Write an AlgorithmIdentifier record.  The associatedAlgo parameter is 
+   used for aWithB algorithms like rsaWithSHA1, with the context containing 
+   the 'A' algorithm and the parameter indicating the 'B' algorithm */
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int writeAlgoIDex( INOUT STREAM *stream, 
-				   IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
-				   IN_RANGE( 0, 999 ) const int parameter, 
-				   IN_LENGTH_SHORT_Z const int extraLength )
+static int writeAlgoIDex( INOUT STREAM *stream, 
+						  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+						  IN_ALGO_OPT const int associatedAlgo,
+						  IN_LENGTH_SHORT_Z const int extraLength )
 	{
-	const BYTE *oid = algorithmToOID( cryptAlgo, parameter );
+	const BYTE *oid = algorithmToOID( cryptAlgo, associatedAlgo, 0, \
+									  ALGOTOOID_REQUIRE_VALID );
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	REQUIRES_S( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
-	REQUIRES_S( parameter >= 0 && parameter <= 999 );
+	REQUIRES_S( associatedAlgo == CRYPT_ALGO_NONE || \
+				( associatedAlgo >= CRYPT_ALGO_FIRST_HASH && \
+				  associatedAlgo <= CRYPT_ALGO_LAST_HASH ) );
 	REQUIRES_S( extraLength >= 0 && extraLength < MAX_INTLENGTH_SHORT );
 	REQUIRES_S( oid != NULL );
 
@@ -973,6 +841,19 @@ int writeAlgoID( INOUT STREAM *stream,
 	return( writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, 0 ) );
 	}
 
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeAlgoIDparam( INOUT STREAM *stream, 
+					  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+					  IN_LENGTH_SHORT_Z const int paramLength )
+	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES_S( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
+	REQUIRES_S( paramLength >= 0 && paramLength < MAX_INTLENGTH_SHORT );
+
+	return( writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, paramLength) );
+	}
+
 /* Read an AlgorithmIdentifier record.  There are three versions of 
    this:
 
@@ -998,76 +879,83 @@ int readAlgoID( INOUT STREAM *stream,
 	REQUIRES_S( type == ALGOID_CLASS_HASH || type == ALGOID_CLASS_PKC || \
 				type == ALGOID_CLASS_PKCSIG );
 
-	return( readAlgoIDheader( stream, cryptAlgo, NULL, NULL, 
+	return( readAlgoIDheader( stream, cryptAlgo, NULL, NULL, NULL, 
 							  DEFAULT_TAG, type ) );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int readAlgoIDext( INOUT STREAM *stream, 
-				   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
-				   OUT_ALGO_Z CRYPT_ALGO_TYPE *altCryptAlgo,
-				   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
+int readAlgoIDex( INOUT STREAM *stream, 
+				  OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
+				  OUT_ALGO_Z CRYPT_ALGO_TYPE *altCryptAlgo,
+				  OUT_INT_Z int *parameter,
+				  IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	int altAlgo, status;	/* 'altAlgo' must be type integer */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 	assert( isWritePtr( altCryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
+	assert( isWritePtr( parameter, sizeof( int ) ) );
 
 	REQUIRES_S( type == ALGOID_CLASS_PKCSIG );
 
 	/* Clear return value (the others are cleared by readAlgoIDheader()) */
 	*altCryptAlgo = CRYPT_ALGO_NONE;
+	*parameter = 0;
 
-	status = readAlgoIDheader( stream, cryptAlgo, &altAlgo, NULL, 
-							   DEFAULT_TAG, type );
+	status = readAlgoIDheader( stream, cryptAlgo, &altAlgo, parameter, 
+							   NULL, DEFAULT_TAG, type );
 	if( cryptStatusOK( status ) )
 		*altCryptAlgo = altAlgo;	/* CRYPT_MODE_TYPE vs. integer */
 	return( status );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int readAlgoIDparams( INOUT STREAM *stream, 
-					  OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
-					  OUT_LENGTH_SHORT_Z int *extraLength,
-					  IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
+int readAlgoIDparam( INOUT STREAM *stream, 
+					 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
+					 OUT_LENGTH_SHORT_Z int *paramLength,
+					 IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
-	assert( isWritePtr( extraLength, sizeof( int ) ) );
+	assert( isWritePtr( paramLength, sizeof( int ) ) );
 
 	REQUIRES_S( type == ALGOID_CLASS_PKC );
 
-	return( readAlgoIDheader( stream, cryptAlgo, NULL, extraLength, 
+	return( readAlgoIDheader( stream, cryptAlgo, NULL, NULL, paramLength, 
 							  DEFAULT_TAG, type ) );
 	}
 
-/* Determine the size of an AlgorithmIdentifier record from a context */
+/* Determine the size of an AlgorithmIdentifier record from a context.  See
+   the comment for sizeofAlgoIDex() for why we don't have to deal with
+   parameterised algorithms */
 
-CHECK_RETVAL \
+CHECK_RETVAL_LENGTH \
 int sizeofContextAlgoID( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 						 IN_RANGE( 0, 999 ) const int parameter )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
-	int status;
+	int algorithm, status;
 
 	REQUIRES( isHandleRangeValid( iCryptContext ) );
 	REQUIRES( parameter >= 0 && parameter <= 999 );
 
 	/* Write the algoID only */
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &algorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	return( sizeofAlgoIDex( cryptAlgo, parameter, 0 ) );
+	return( sizeofAlgoIDex( algorithm, parameter, 0 ) );
 	}
 
-/* Write an AlgorithmIdentifier record from a context */
+/* Write an AlgorithmIdentifier record from a context.  The associatedAlgo 
+   parameter is used for aWithB algorithms like rsaWithSHA1, with the 
+   context containing the 'A' algorithm and the parameter indicating the 'B' 
+   algorithm */
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeContextAlgoID( INOUT STREAM *stream, 
 						IN_HANDLE const CRYPT_CONTEXT iCryptContext,
-						IN_RANGE( 0, 999 ) const int parameter )
+						IN_ALGO_OPT const int associatedAlgo )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
 	int status;
@@ -1075,13 +963,14 @@ int writeContextAlgoID( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	REQUIRES_S( isHandleRangeValid( iCryptContext ) );
-	REQUIRES_S( parameter >= 0 && parameter <= 999 );
+	REQUIRES_S( associatedAlgo == CRYPT_ALGO_NONE || \
+				isHashAlgo( associatedAlgo ) );
 
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
 							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	return( writeAlgoIDex( stream, cryptAlgo, parameter, 0 ) );
+	return( writeAlgoIDex( stream, cryptAlgo, associatedAlgo, 0 ) );
 	}
 
 /* Turn an AlgorithmIdentifier into a context */
@@ -1095,7 +984,7 @@ int readContextAlgoID( INOUT STREAM *stream,
 	{
 	QUERY_INFO localQueryInfo, *queryInfoPtr = queryInfo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	int status;
+	int mode, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( iCryptContext == NULL || \
@@ -1138,13 +1027,15 @@ int readContextAlgoID( INOUT STREAM *stream,
 		return( CRYPT_OK );
 		}
 	ENSURES_S( isConvAlgo( queryInfoPtr->cryptAlgo ) );
+	mode = queryInfoPtr->cryptMode;	/* int vs.enum */
 	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
-							  &queryInfoPtr->cryptMode, CRYPT_CTXINFO_MODE );
+							  &mode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) && \
 		!isStreamCipher( queryInfoPtr->cryptAlgo ) )
 		{
 		int ivLength;
 
+		/* It's a block cipher, get the IV information as well */
 		status = krnlSendMessage( createInfo.cryptHandle,
 								  IMESSAGE_GETATTRIBUTE, &ivLength,
 								  CRYPT_CTXINFO_IVSIZE );

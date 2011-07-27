@@ -140,8 +140,8 @@ static int readDlpSubjectPublicKey( INOUT STREAM *stream,
 	readGenericHole( stream, NULL, 
 					 8 + MIN_PKCSIZE_THRESHOLD + DLPPARAM_MIN_G + \
 						DLPPARAM_MIN_Q, DEFAULT_TAG );
-	status = readAlgoIDparams( stream, &cryptAlgo, &extraLength, 
-							   ALGOID_CLASS_PKC );
+	status = readAlgoIDparam( stream, &cryptAlgo, &extraLength, 
+							  ALGOID_CLASS_PKC );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( extraLength <= 0 )
@@ -261,8 +261,8 @@ static int readEccSubjectPublicKey( INOUT STREAM *stream,
 	readGenericHole( stream, NULL, 
 					 8 + MIN_OID_SIZE + MIN_PKCSIZE_ECCPOINT_THRESHOLD, 
 					 DEFAULT_TAG );
-	status = readAlgoIDparams( stream, &cryptAlgo, &length, 
-							   ALGOID_CLASS_PKC );
+	status = readAlgoIDparam( stream, &cryptAlgo, &length, 
+							  ALGOID_CLASS_PKC );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( length < MIN_OID_SIZE || \
@@ -313,7 +313,7 @@ static int readEccSubjectPublicKey( INOUT STREAM *stream,
 	status = importECCPoint( &eccKey->eccParam_qx, &eccKey->eccParam_qy,
 							 buffer, length, MIN_PKCSIZE_ECC_THRESHOLD, 
 							 CRYPT_MAX_PKCSIZE_ECC, fieldSize, NULL, 
-							 SHORTKEY_CHECK_ECC );
+							 KEYSIZE_CHECK_ECC );
 	zeroise( buffer, length );
 	return( status );
 	}
@@ -618,7 +618,7 @@ static int readSshEccPublicKey( INOUT STREAM *stream,
 	status = importECCPoint( &eccKey->eccParam_qx, &eccKey->eccParam_qy,
 							 buffer, length, MIN_PKCSIZE_ECC_THRESHOLD, 
 							 CRYPT_MAX_PKCSIZE_ECC, fieldSize, NULL, 
-							 SHORTKEY_CHECK_ECC );
+							 KEYSIZE_CHECK_ECC );
 	zeroise( buffer, length );
 	return( status );
 	}
@@ -1620,11 +1620,11 @@ static int decodeDLValuesFunction( IN_BUFFER( bufSize ) const BYTE *buffer,
 #ifdef USE_SSH
 		case CRYPT_IFORMAT_SSH:
 			status = importBignum( value1, buffer, 20, DLPPARAM_MIN_SIG_R, 
-								   20, maxRange, SHORTKEY_CHECK_NONE );
+								   20, maxRange, KEYSIZE_CHECK_NONE );
 			if( cryptStatusError( status ) )
 				break;
 			status = importBignum( value2, buffer + 20, 20, DLPPARAM_MIN_SIG_S, 
-								   20, maxRange, SHORTKEY_CHECK_NONE );
+								   20, maxRange, KEYSIZE_CHECK_NONE );
 			break;
 #endif /* USE_SSH */
 

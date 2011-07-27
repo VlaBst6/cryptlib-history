@@ -485,7 +485,7 @@ static const ATTRIBUTE_INFO *findIdentifiedItem( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( NULL );
 	sequenceLength -= oidLength;
-	assert( sequenceLength >= 0 );
+	ENSURES_N( sequenceLength >= 0 && sequenceLength < MAX_INTLENGTH );
 
 	/* Walk down the list of entries trying to match it to an allowed value.
 	   Unfortunately we can't use the attributeInfoSize bounds check limit 

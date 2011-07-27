@@ -27,13 +27,15 @@ AS=$1
 OBJPATH=$2
 
 # Build the asm files for a particular target type (ELF, a.out, Slowaris).
+# Since some of the asm source files may not exist in some configurations
+# we check for their presence before we try and build them.
 
 build_asm_file()
 	{
 	INFILE=$1
 	OUTFILE=$2
 
-	if [ ! -f ${OBJPATH}${OUTFILE}.o ] ; then
+	if [ -f ${INFILE}.s -a ! -f ${OBJPATH}${OUTFILE}.o ] ; then
 		$AS ${INFILE}.s -o ${OBJPATH}${OUTFILE}.o ;
 	fi
 	}
@@ -53,9 +55,9 @@ build_asm_files()
 	build_asm_file crypt/s1-$TARGET sha1asm
 	}
 
-# The only difference between the "sol" and the "elf" x86 formats is that 
-# ELF uses '#' as the comment delimiter while Slowaris uses '/'.  In the 
-# case where the file has no comments (bn-elf.s), it also functions as 
+# The only difference between the "sol" and the "elf" x86 formats is that
+# ELF uses '#' as the comment delimiter while Slowaris uses '/'.  In the
+# case where the file has no comments (bn-elf.s), it also functions as
 # bn-sol.s.
 #
 # Only the bignum code is done in asm for non-x86 systems.  For gas on

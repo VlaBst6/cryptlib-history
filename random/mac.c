@@ -57,8 +57,8 @@ void fastPoll( void )
 	{
 	RANDOM_STATE randomState;
 	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
-/*	BatteryTimeRec batteryTimeInfo;
-*/	SMStatus soundStatus;
+/*	BatteryTimeRec batteryTimeInfo; */
+	SMStatus soundStatus;
 	ThreadID threadID;
 	ThreadState threadState;
 	EventRecord eventRecord;
@@ -67,9 +67,9 @@ void fastPoll( void )
 	PScrapStuff scrapInfo;
 	UnsignedWide usSinceStartup;
 	BYTE dataBuffer[ 2 + 8 ];
-	short driverRefNum;
+/*	short driverRefNum; */
 	UInt32 dateTime;
-	int count, dummy, bufIndex = 0;
+/*	int count, dummy; */
 	NumVersion version;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
@@ -212,7 +212,6 @@ void slowPoll( void )
 	QElemPtr queuePtr;
 	QHdrPtr queueHdr;
 	static BOOLEAN addedFixedItems = FALSE;
-	int bufIndex = 0;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 

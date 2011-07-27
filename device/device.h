@@ -65,9 +65,8 @@ typedef struct {
 
 /* The internal fields in a deviec that hold data for the various keyset
    types.   These are implemented as a union to conserve memory with some of 
-   the more data-intensive types such as Fortezza cards.  In addition the 
-   structures provide a convenient way to group the device type-specific 
-   parameters */
+   the more data-intensive types.  In addition the structures provide a 
+   convenient way to group the device type-specific parameters */
 
 typedef struct {
 	/* Nonce PRNG information */
@@ -130,37 +129,6 @@ typedef struct {
 
 typedef struct {
 	/* General device information */
-	int minPinSize, maxPinSize;		/* Minimum, maximum PIN lengths */
-	BUFFER( CRYPT_MAX_TEXTSIZE, labelLen ) \
-	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
-	int labelLen;
-
-	/* Device type-specific information */
-	int socketIndex;				/* Slot index for multi-slot reader */
-	long largestBlockSize;			/* Largest single data block size */
-	long keyRegisterFlags;			/* Bitfield of key regs.in use */
-	int keyRegisterCount;			/* Number of key registers */
-
-	/* Device personality information */
-	void *personalities;			/* Device personality list */
-	int personalityCount;			/* Number of personalities */
-	void *certHashes;				/* Hashes of certs in card */
-	BOOLEAN certHashesInitialised;	/* Whether hashes are initialised */
-	int currentPersonality;			/* Currently selected personality */
-
-	/* Other information */
-	BUFFER_FIXED( 16 ) \
-	BYTE leafString[ 16 + 8 ];		/* LEAF-suppressed string */
-	BUFFER( CRYPT_MAX_TEXTSIZE, initPinLen ) \
-	char initPin[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Initialisation PIN */
-	int initPinLen;
-
-	/* Last-error information returned from lower-level code */
-	ERROR_INFO errorInfo;
-	} FORTEZZA_INFO;
-
-typedef struct {
-	/* General device information */
 	BUFFER( CRYPT_MAX_TEXTSIZE, labelLen ) \
 	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
 	int labelLen;
@@ -177,7 +145,6 @@ typedef struct {
 #define deviceSystem	deviceInfo.systemInfo
 #define devicePKCS11	deviceInfo.pkcs11Info
 #define deviceCryptoAPI	deviceInfo.cryptoapiInfo
-#define deviceFortezza	deviceInfo.fortezzaInfo
 #define deviceHardware	deviceInfo.hardwareInfo
 
 /* The structure which stores information on a device */
@@ -207,7 +174,6 @@ typedef struct DI {
 		SYSTEMDEV_INFO *systemInfo;
 		PKCS11_INFO *pkcs11Info;
 		CRYPTOAPI_INFO *cryptoapiInfo;
-		FORTEZZA_INFO *fortezzaInfo;
 		HARDWARE_INFO *hardwareInfo;
 		} deviceInfo;
 
@@ -320,17 +286,6 @@ int setDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
 
 /* Prototypes for device mapping functions */
 
-#ifdef USE_FORTEZZA
-  CHECK_RETVAL \
-  int deviceInitFortezza( void );
-  void deviceEndFortezza( void );
-  CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-  int setDeviceFortezza( INOUT DEVICE_INFO *deviceInfo );
-#else
-  #define deviceInitFortezza()			CRYPT_OK
-  #define deviceEndFortezza()
-  #define setDeviceFortezza( x )		CRYPT_ARGERROR_NUM1
-#endif /* USE_FORTEZZA */
 #ifdef USE_PKCS11
   CHECK_RETVAL \
   int deviceInitPKCS11( void );

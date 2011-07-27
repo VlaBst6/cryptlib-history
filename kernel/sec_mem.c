@@ -23,12 +23,8 @@ static KERNEL_DATA *krnlData = NULL;
    A more normal upper bound is 8K, however the SSL session cache constitutes
    a single large chunk of secure memory that goes way over this limit */
 
-#define MIN_ALLOC_SIZE		8
-#ifdef __MSDOS__
-  #define MAX_ALLOC_SIZE	8192
-#else
-  #define MAX_ALLOC_SIZE	32768L
-#endif /* 16 vs. 32-bit systems */
+#define MIN_ALLOC_SIZE			8
+#define MAX_ALLOC_SIZE			8192
 
 /* To support page locking we need to store some additional information with
    the memory block.  We do this by reserving an extra memory block at the
@@ -40,37 +36,44 @@ static KERNEL_DATA *krnlData = NULL;
    the list of allocated blocks (this is used by the thread that walks the
    block list touching each one) */
 
+#define CANARY_SIZE		4		/* Size of canary used to spot overwrites */
+
+typedef struct {
+	BOOLEAN isLocked;			/* Whether this block is locked */
+	int size;					/* Size of the block (including the size
+								   of the MEMLOCK_INFO) */
+	void *next, *prev;			/* Next, previous memory block */
+#if defined( __BEOS__ )
+	area_id areaID;				/* Needed for page locking under BeOS */
+#endif /* BeOS and BeOS areas */
+	BYTE canary[ CANARY_SIZE ];	/* Canary for spotting overwrites */
+	} MEMLOCK_INFO;
+
 #if INT_MAX <= 32767
-  #define MEMLOCK_HEADERSIZE	16
+  #define MEMLOCK_HEADERSIZE	roundUp( sizeof( MEMLOCK_INFO ), 4 )
 #elif INT_MAX <= 0xFFFFFFFFUL
-  #define MEMLOCK_HEADERSIZE	32
+  #define MEMLOCK_HEADERSIZE	roundUp( sizeof( MEMLOCK_INFO ), 8 )
 #else
-  #define MEMLOCK_HEADERSIZE	64
+  #define MEMLOCK_HEADERSIZE	roundUp( sizeof( MEMLOCK_INFO ), 16 )
 #endif /* 16/32/64-bit systems */
 
-/* If it's a debug build we also insert a canary at the start and end of each
-   block to detect memory overwrites, the block size is adjusted accordingly
-   to handle this extra data */
+/* We also insert a canary at the start and end of each block to detect 
+   memory overwrites, the block size is adjusted accordingly to handle this 
+   extra data */
 
 #define CANARY_STARTVALUE	"\xC0\xED\xBA\xBE"	/* More fun than dead beef */
 #define CANARY_ENDVALUE		"\x36\xDD\x24\x36"
 
-#ifndef NDEBUG
-  #define adjustMemCanary( size ) \
-		  size += CANARY_SIZE
-  #define insertMemCanary( memBlockPtr, memPtr ) \
-		  memcpy( memBlockPtr->canary, CANARY_STARTVALUE, CANARY_SIZE ); \
-		  memcpy( memPtr + memBlockPtr->size - CANARY_SIZE, CANARY_ENDVALUE, \
-				  CANARY_SIZE )
-  #define checkMemCanary( memBlockPtr, memPtr ) \
-		  assert( !memcmp( memBlockPtr->canary, CANARY_STARTVALUE, CANARY_SIZE ) ); \
-		  assert( !memcmp( memPtr + memBlockPtr->size - CANARY_SIZE, \
+#define adjustMemCanary( size ) \
+		size += CANARY_SIZE	/* Other canary is in MEMLOCK_INFO header */
+#define insertMemCanary( memBlockPtr, memPtr ) \
+		memcpy( memBlockPtr->canary, CANARY_STARTVALUE, CANARY_SIZE ); \
+		memcpy( memPtr + memBlockPtr->size - CANARY_SIZE, CANARY_ENDVALUE, \
+				CANARY_SIZE )
+#define checkMemCanary( memBlockPtr, memPtr ) \
+		REQUIRES( !memcmp( memBlockPtr->canary, CANARY_STARTVALUE, CANARY_SIZE ) ); \
+		REQUIRES( !memcmp( memPtr + memBlockPtr->size - CANARY_SIZE, \
 						   CANARY_ENDVALUE, CANARY_SIZE ) );
-#else
-  #define adjustMemCanary( size )
-  #define insertMemCanary( memBlockPtr, memPtr )
-  #define checkMemCanary( memBlockPtr, memPtr )
-#endif /* NDEBUG */
 
 /****************************************************************************
 *																			*
@@ -85,6 +88,9 @@ static int checkInitAlloc( OUT void **allocPtrPtr,
 						   IN_RANGE( MIN_ALLOC_SIZE, MAX_ALLOC_SIZE ) \
 							const int size )
 	{
+	static_assert( MEMLOCK_HEADERSIZE >= sizeof( MEMLOCK_INFO ), \
+				   "Memlock header size" );
+
 	/* Make sure that the parameters are in order */
 	if( !isWritePtrConst( allocPtrPtr, sizeof( void * ) ) )
 		retIntError();
@@ -192,7 +198,7 @@ static void unlinkMemBlock( INOUT MEMLOCK_INFO **allocatedListHeadPtr,
 		*allocatedListHeadPtr = nextBlockPtr;
 	else
 		{
-		assert( prevBlockPtr != NULL );
+		REQUIRES_V( prevBlockPtr != NULL );
 
 		/* Delete from the middle or end of the list */
 		prevBlockPtr->next = nextBlockPtr;
@@ -396,8 +402,9 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	insertMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 #ifdef USE_HEAP_CHECKING
 	/* Sanity check to detect memory chain corruption */
 	assert( _CrtIsValidHeapPointer( memBlockPtr ) );
@@ -416,8 +423,8 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( INOUT_PTR void **pointer )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -426,7 +433,7 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	/* Check the function preconditions */
 	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
 	if( cryptStatusError( status ) )
-		return;
+		return( status );
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
@@ -439,8 +446,9 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	assert( memBlockPtr->prev == NULL || \
 			_CrtIsValidHeapPointer( memBlockPtr->prev ) );
 #endif /* USE_HEAP_CHECKING */
-	unlinkMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	unlinkMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 #if !defined( NT_DRIVER )
 	/* Because VirtualLock() works on a per-page basis, we can't unlock a
 	   memory block if there's another locked block on the same page.  The
@@ -513,6 +521,8 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	zeroise( memPtr, memBlockPtr->size );
 	clFree( "krnlMemFree", memPtr );
 	*pointer = NULL;
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -630,8 +640,9 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	insertMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	return( CRYPT_OK );
@@ -643,8 +654,8 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( INOUT_PTR void **pointer )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -657,13 +668,14 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	status = checkInitFree( ( const void ** ) pointer, &memPtr, 
 							&memBlockPtr );
 	if( cryptStatusError( status ) )
-		return;
+		return( status );
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
 	checkMemCanary( memBlockPtr, memPtr );
-	unlinkMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	unlinkMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	/* If the memory was locked, unlock it now */
@@ -683,6 +695,8 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	clFree( "krnlMemFree", memPtr );
 #endif /* !__BEOS__ */
 	*pointer = NULL;
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -732,8 +746,9 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	insertMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	return( CRYPT_OK );
@@ -745,8 +760,8 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( INOUT_PTR void **pointer )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -756,13 +771,14 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	/* Check the function preconditions */
 	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
 	if( cryptStatusError( status ) )
-		return;
+		return( status );
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
 	checkMemCanary( memBlockPtr, memPtr );
-	unlinkMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	unlinkMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	/* Zeroise the memory (including the memlock info), free it, and zero
@@ -772,6 +788,8 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	zeroise( memPtr, memBlockPtr->size );
 	rgnFree( K_MYACTOR, &rgnDesc );
 	*pointer = NULL;
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -826,8 +844,9 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	insertMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	return( CRYPT_OK );
@@ -839,8 +858,8 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( INOUT_PTR void **pointer )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -849,13 +868,14 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	/* Check the function preconditions */
 	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
 	if( cryptStatusError( status ) )
-		return;
+		return( status );
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
 	checkMemCanary( memBlockPtr, memPtr );
-	unlinkMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	unlinkMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	/* If the memory is locked, unlock it now */
@@ -869,6 +889,8 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	zeroise( memPtr, memBlockPtr->size );
 	clFree( "krnlMemFree", memPtr );
 	*pointer = NULL;
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -922,8 +944,9 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	insertMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	return( CRYPT_OK );
@@ -935,8 +958,8 @@ int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer,
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( INOUT_PTR void **pointer )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -945,13 +968,14 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	/* Check the function preconditions */
 	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
 	if( cryptStatusError( status ) )
-		return;
+		return( status );
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
 	checkMemCanary( memBlockPtr, memPtr );
-	unlinkMemBlock( &krnlData->allocatedListHead, 
-					&krnlData->allocatedListTail, memBlockPtr );
+	unlinkMemBlock( ( MEMLOCK_INFO ** ) &krnlData->allocatedListHead, 
+					( MEMLOCK_INFO ** ) &krnlData->allocatedListTail, 
+					memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	/* If the memory is locked, unlock it now */
@@ -968,6 +992,7 @@ void krnlMemfree( INOUT_PTR void **pointer )
 	zeroise( memPtr, memBlockPtr->size );
 	clFree( "krnlMemFree", memPtr );
 	*pointer = NULL;
-	}
 
+	return( CRYPT_OK );
+	}
 #endif /* OS-specific secure memory handling */

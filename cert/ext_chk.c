@@ -166,8 +166,10 @@ static int updateStackedInfo( INOUT_ARRAY_C( ATTRIBUTE_STACKSIZE ) \
 	assert( isWritePtr( stack, sizeof( ATTRIBUTE_STACK ) * \
 							   ATTRIBUTE_STACKSIZE ) );
 	assert( isWritePtr( newStackPosPtr, sizeof( int ) ) );
-	assert( ENCODING_FIFO_SIZE >= ATTRIBUTE_STACKSIZE );
-	
+
+	static_assert( ENCODING_FIFO_SIZE >= ATTRIBUTE_STACKSIZE, \
+				   "Stack size" );
+
 	REQUIRES( stackPos >= 0 && stackPos < ATTRIBUTE_STACKSIZE );
 	REQUIRES( count >= 0 && count <= stackPos );
 

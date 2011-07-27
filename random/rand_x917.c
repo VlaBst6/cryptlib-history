@@ -103,10 +103,9 @@ int setKeyX917( INOUT RANDOM_INFO *randomInfo,
 	int desStatus;
 
 	assert( isWritePtr( randomInfo, sizeof( RANDOM_INFO ) ) );
-	assert( isReadPtr( key, sizeof( X917_KEYSIZE ) ) );
-	assert( isReadPtr( state, sizeof( X917_KEYSIZE ) ) );
-	assert( dateTime == NULL || \
-			isReadPtr( dateTime, sizeof( X917_KEYSIZE ) ) );
+	assert( isReadPtr( key, X917_KEYSIZE ) );
+	assert( isReadPtr( state, X917_KEYSIZE ) );
+	assert( dateTime == NULL || isReadPtr( dateTime, X917_KEYSIZE ) );
 
 	/* Precondition: the key and seed aren't being taken from the same 
 	   location */
@@ -250,7 +249,6 @@ int generateX917( INOUT RANDOM_INFO *randomInfo,
 				randomInfo->x917DT[ i ]++;
 				if( randomInfo->x917DT[ i ] != 0 )
 					break;
-				i = i;
 				}
 
 			/* Postcondition: The value has been incremented by one */
@@ -632,16 +630,15 @@ int selfTestX917( INOUT RANDOM_INFO *testRandomInfo,
 CHECK_RETVAL \
 int fipsTestX917( INOUT RANDOM_INFO *testRandomInfo )
 	{
+	/* The following tests can take quite some time on slower CPUs because
+	   they're iterated tests so we only run them if we can assume that 
+	   there's a reasonably fast CPU present */
+#if !defined( CONFIG_SLOW_CPU )
 	BYTE keyBuffer[ X917_KEYSIZE + 8 ];
 	BYTE buffer[ X917_BLOCKSIZE + 8 ];
 	int i, isX931, status;
 
 	assert( isWritePtr( testRandomInfo, sizeof( RANDOM_INFO ) ) );
-
-	/* The following tests can take quite some time on slower CPUs because
-	   they're iterated tests so we only run them if we can assume that 
-	   there's a reasonably fast CPU present */
-#if !defined( CONFIG_SLOW_CPU )
 
 	/* Check the ANSI X9.17 PRNG again, this time using X9.31 test vectors.
 	   These aren't test vectors from X9.31 but vectors used to certify an 

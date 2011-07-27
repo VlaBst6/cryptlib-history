@@ -30,46 +30,46 @@ static KERNEL_DATA *krnlData = NULL;
 static const DEPENDENCY_ACL FAR_BSS dependencyACLTbl[] = {
 	/* Envelopes and sessions can have conventional encryption and MAC
 	   contexts attached */
-	MK_DEPACL( OBJECT_TYPE_ENVELOPE, ST_NONE, ST_ENV_ANY, \
-			   OBJECT_TYPE_CONTEXT, ST_CTX_CONV | ST_CTX_MAC, ST_NONE ),
-	MK_DEPACL( OBJECT_TYPE_SESSION, ST_NONE, ST_SESS_ANY, \
-			   OBJECT_TYPE_CONTEXT, ST_CTX_CONV | ST_CTX_MAC, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_ENVELOPE, ST_NONE, ST_ENV_ANY, ST_NONE, \
+			   OBJECT_TYPE_CONTEXT, ST_CTX_CONV | ST_CTX_MAC, ST_NONE, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_SESSION, ST_NONE, ST_NONE, ST_SESS_ANY, \
+			   OBJECT_TYPE_CONTEXT, ST_CTX_CONV | ST_CTX_MAC, ST_NONE, ST_NONE ),
 
 	/* PKC contexts can have certs attached and vice versa.  Since the
 	   certificate can change the permissions on the context, we set the
 	   DEP_FLAG_UPDATEDEP flag to ensure that the cert permissions get
 	   reflected onto the context */
-	MK_DEPACL_EX( OBJECT_TYPE_CONTEXT, ST_CTX_PKC, ST_NONE, \
-				  OBJECT_TYPE_CERTIFICATE, ST_CERT_ANY, ST_NONE,
+	MK_DEPACL_EX( OBJECT_TYPE_CONTEXT, ST_CTX_PKC, ST_NONE, ST_NONE, \
+				  OBJECT_TYPE_CERTIFICATE, ST_CERT_ANY, ST_NONE, ST_NONE, 
 				  DEP_FLAG_UPDATEDEP ),
-	MK_DEPACL_EX( OBJECT_TYPE_CERTIFICATE, ST_CERT_ANY, ST_NONE, \
-				  OBJECT_TYPE_CONTEXT, ST_CTX_PKC, ST_NONE,
+	MK_DEPACL_EX( OBJECT_TYPE_CERTIFICATE, ST_CERT_ANY, ST_NONE, ST_NONE, \
+				  OBJECT_TYPE_CONTEXT, ST_CTX_PKC, ST_NONE, ST_NONE, 
 				  DEP_FLAG_UPDATEDEP ),
 
 	/* Contexts can have crypto devices attached */
-	MK_DEPACL( OBJECT_TYPE_CONTEXT, ST_CTX_ANY, ST_NONE, \
-			   OBJECT_TYPE_DEVICE, ST_DEV_ANY_STD, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_CONTEXT, ST_CTX_ANY, ST_NONE, ST_NONE, \
+			   OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_ANY_STD, ST_NONE ),
 
 	/* Hardware crypto devices can have PKCS #15 storage objects attached */
-	MK_DEPACL( OBJECT_TYPE_DEVICE, ST_DEV_HW, ST_NONE, \
-			   OBJECT_TYPE_KEYSET, ST_KEYSET_FILE, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_HW, ST_NONE, \
+			   OBJECT_TYPE_KEYSET, ST_NONE, ST_KEYSET_FILE, ST_NONE ),
 
 	/* Anything can have the system device attached, since all objects not
 	   created via crypto devices are created via the system device */
-	MK_DEPACL( OBJECT_TYPE_CONTEXT, ST_CTX_ANY, ST_NONE, \
-			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
-	MK_DEPACL( OBJECT_TYPE_CERTIFICATE, ST_CERT_ANY, ST_NONE, \
-			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
-	MK_DEPACL( OBJECT_TYPE_KEYSET, ST_KEYSET_ANY, ST_NONE, \
-			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
-	MK_DEPACL( OBJECT_TYPE_ENVELOPE, ST_NONE, ST_ENV_ANY, \
-			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
-	MK_DEPACL( OBJECT_TYPE_SESSION, ST_NONE, ST_SESS_ANY, \
-			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
-	MK_DEPACL( OBJECT_TYPE_DEVICE, ST_DEV_ANY_STD, ST_NONE, \
-			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
-	MK_DEPACL( OBJECT_TYPE_USER, ST_NONE, ST_USER_ANY, \
-			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_CONTEXT, ST_CTX_ANY, ST_NONE, ST_NONE, \
+			   OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_SYSTEM, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_CERTIFICATE, ST_CERT_ANY, ST_NONE, ST_NONE, \
+			   OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_SYSTEM, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_KEYSET, ST_NONE, ST_KEYSET_ANY, ST_NONE, \
+			   OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_SYSTEM, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_ENVELOPE, ST_NONE, ST_ENV_ANY, ST_NONE, \
+			   OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_SYSTEM, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_SESSION, ST_NONE, ST_NONE, ST_SESS_ANY, \
+			   OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_SYSTEM, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_ANY_STD, ST_NONE, \
+			   OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_SYSTEM, ST_NONE ),
+	MK_DEPACL( OBJECT_TYPE_USER, ST_NONE, ST_NONE, ST_USER_ANY, \
+			   OBJECT_TYPE_DEVICE, ST_NONE, ST_DEV_SYSTEM, ST_NONE ),
 
 	/* End-of-ACL marker */
 	MK_DEPACL_END(), MK_DEPACL_END()
@@ -270,10 +270,18 @@ int initInternalMsgs( INOUT KERNEL_DATA *krnlDataPtr )
 				 dependencyACL->type < OBJECT_TYPE_LAST && \
 				 dependencyACL->dType > OBJECT_TYPE_NONE && \
 				 dependencyACL->dType < OBJECT_TYPE_LAST );
-		ENSURES( !( dependencyACL->subTypeA & SUBTYPE_CLASS_B ) && \
-				 !( dependencyACL->subTypeB & SUBTYPE_CLASS_A ) && \
-				 !( dependencyACL->dSubTypeA & SUBTYPE_CLASS_B ) && \
-				 !( dependencyACL->dSubTypeB & SUBTYPE_CLASS_A ) );
+		ENSURES( !( dependencyACL->subTypeA & ( SUBTYPE_CLASS_B | \
+												SUBTYPE_CLASS_C ) ) && \
+				 !( dependencyACL->subTypeB & ( SUBTYPE_CLASS_A | \
+												SUBTYPE_CLASS_C ) ) && \
+				 !( dependencyACL->subTypeC & ( SUBTYPE_CLASS_A | \
+												SUBTYPE_CLASS_B ) ) );
+		ENSURES( !( dependencyACL->dSubTypeA & ( SUBTYPE_CLASS_B | \
+												 SUBTYPE_CLASS_C ) ) && \
+				 !( dependencyACL->dSubTypeB & ( SUBTYPE_CLASS_A | \
+												 SUBTYPE_CLASS_C ) ) && \
+				 !( dependencyACL->dSubTypeC & ( SUBTYPE_CLASS_A | \
+												 SUBTYPE_CLASS_B ) ) );
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ) );
 
@@ -333,12 +341,12 @@ int getPropertyAttribute( IN_HANDLE const int objectHandle,
 			if( !( objectInfoPtr->flags & OBJECT_FLAG_OWNED ) )
 				return( CRYPT_ERROR_NOTINITED );
 #ifdef USE_THREADS
-			/* A very small number of pthreads implementations use non-
-			   scalar thread IDs, which we can't easily handle when all that 
-			   we have is an integer handle.  However, the need to bind 
-			   threads to objects only exists because of Win32 security 
-			   holes arising from the ability to perform thread injection, 
-			   so this isn't a big issue */
+			/* A small number of implementations use non-scalar thread IDs, 
+			   which we can't easily handle when all that we have is an 
+			   integer handle.  However, the need to bind threads to objects 
+			   only exists because of Win32 security holes arising from the 
+			   ability to perform thread injection, so this isn't a big 
+			   issue */
   #ifdef NONSCALAR_THREADS
 			if( sizeof( objectInfoPtr->objectOwner ) > sizeof( int ) )
 				return( CRYPT_ERROR_NOTAVAIL );
@@ -368,11 +376,11 @@ int getPropertyAttribute( IN_HANDLE const int objectHandle,
 			break;
 
 		/* Internal properties */
-		case CRYPT_IATTRIBUTE_TYPE :
+		case CRYPT_IATTRIBUTE_TYPE:
 			*valuePtr = objectInfoPtr->type;
 			break;
 
-		case CRYPT_IATTRIBUTE_SUBTYPE :
+		case CRYPT_IATTRIBUTE_SUBTYPE:
 			*valuePtr = objectInfoPtr->subType;
 			break;
 
@@ -794,6 +802,8 @@ int setDependentObject( IN_HANDLE const int objectHandle,
 			( isValidSubtype( dependencyACLTbl[ i ].dSubTypeA, \
 							  dependentObjectInfoPtr->subType ) || \
 			  isValidSubtype( dependencyACLTbl[ i ].dSubTypeB, \
+							  dependentObjectInfoPtr->subType ) || \
+			  isValidSubtype( dependencyACLTbl[ i ].dSubTypeC, \
 							  dependentObjectInfoPtr->subType ) ) )
 			{
 			dependencyACL = &dependencyACLTbl[ i ];
@@ -810,6 +820,8 @@ int setDependentObject( IN_HANDLE const int objectHandle,
 			  ( isValidSubtype( dependencyACL->dSubTypeA, \
 								dependentObjectInfoPtr->subType ) || \
 				isValidSubtype( dependencyACL->dSubTypeB, \
+								dependentObjectInfoPtr->subType ) || \
+				isValidSubtype( dependencyACL->dSubTypeC, \
 								dependentObjectInfoPtr->subType ) ) );
 
 	/* Type-specific checks.  For PKC context -> cert and cert -> PKC context
@@ -823,10 +835,14 @@ int setDependentObject( IN_HANDLE const int objectHandle,
 	ENSURES( isValidSubtype( dependencyACL->subTypeA, \
 							 objectInfoPtr->subType ) || \
 			 isValidSubtype( dependencyACL->subTypeB, \
+							 objectInfoPtr->subType ) || \
+			 isValidSubtype( dependencyACL->subTypeC, \
 							 objectInfoPtr->subType ) );
 	ENSURES( isValidSubtype( dependencyACL->dSubTypeA, \
 							 dependentObjectInfoPtr->subType ) || \
 			 isValidSubtype( dependencyACL->dSubTypeB, \
+							 dependentObjectInfoPtr->subType ) || \
+			 isValidSubtype( dependencyACL->dSubTypeC, \
 							 dependentObjectInfoPtr->subType ) );
 
 	/* Inner precondition */

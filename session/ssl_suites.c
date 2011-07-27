@@ -64,19 +64,19 @@ static const CIPHERSUITE_INFO cipherSuiteDH[] = {
 	{ TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA,
 	  DESCRIPTION( "TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 24, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 24, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_DH },
 /*	{ TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA,
 	  DESCRIPTION( "TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 24, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 24, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_DH }, */
 
 	/* AES with DH */
 	{ TLS_DHE_RSA_WITH_AES_128_CBC_SHA,
 	  DESCRIPTION( "TLS_DHE_RSA_WITH_AES_128_CBC_SHA" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_DH },
 	{ TLS_DHE_RSA_WITH_AES_128_CBC_SHA256,
 	  DESCRIPTION( "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256" )
@@ -86,7 +86,7 @@ static const CIPHERSUITE_INFO cipherSuiteDH[] = {
 /*	{ TLS_DHE_DSS_WITH_AES_128_CBC_SHA,
 	  DESCRIPTION( "TLS_DHE_DSS_WITH_AES_128_CBC_SHA" )
 	  CRYPT_ALGO_RSA, CRYPT_ALGO_DSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, 
 	{ TLS_DHE_DSS_WITH_AES_128_CBC_SHA256, 
 	  DESCRIPTION( "TLS_DHE_DSS_WITH_AES_128_CBC_SHA256" )
 	  CRYPT_ALGO_RSA, CRYPT_ALGO_DSA, CRYPT_ALGO_AES,
@@ -95,7 +95,7 @@ static const CIPHERSUITE_INFO cipherSuiteDH[] = {
 	{ TLS_DHE_RSA_WITH_AES_256_CBC_SHA,
 	  DESCRIPTION( "TLS_DHE_RSA_WITH_AES_256_CBC_SHA" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH },
+	  CRYPT_ALGO_HMAC_SHA1, 0, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH },
 	{ TLS_DHE_RSA_WITH_AES_256_CBC_SHA256,
 	  DESCRIPTION( "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
@@ -104,7 +104,7 @@ static const CIPHERSUITE_INFO cipherSuiteDH[] = {
 /*	{ TLS_DHE_DSS_WITH_AES_256_CBC_SHA,
 	  DESCRIPTION( "TLS_DHE_DSS_WITH_AES_256_CBC_SHA" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, 
 	{ TLS_DHE_DSS_WITH_AES_256_CBC_SHA256,
 	  DESCRIPTION( "TLS_DHE_DSS_WITH_AES_256_CBC_SHA256" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_AES,
@@ -127,7 +127,7 @@ static const CIPHERSUITE_INFO cipherSuiteECC[] = {
 	{ TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 
 	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA" )
 	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 24, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 24, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_ECC },
 	{ TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256, 
 	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256" )
@@ -142,34 +142,34 @@ static const CIPHERSUITE_INFO cipherSuiteECC[] = {
 	{ TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, 
 	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA" )
 	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_ECC },
 	{ TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, 
 	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA" )
 	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 32, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 32, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_ECC },
 	{ TLS_ECDHE_RSA_WITH_RC4_128_SHA, 
 	  DESCRIPTION( "TLS_ECDHE_RSA_WITH_RC4_128_SHA" )
 	  CRYPT_ALGO_ECDH, CRYPT_ALGO_RSA, CRYPT_ALGO_RC4,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_ECC },
 
 	/* ECDH with RSA */
 /*	{ TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 
 	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA" )
 	  CRYPT_ALGO_ECDH, CRYPT_ALGO_RSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 24, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 24, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_ECC },
 	{ TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA, 
 	  DESCRIPTION( "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA" )
 	  CRYPT_ALGO_ECDH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_ECC }, 
 	{ TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 
 	  DESCRIPTION( "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA" )
 	  CRYPT_ALGO_ECDH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 32, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 32, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_ECC }, */
 
 	/* End-of-list marker */
@@ -227,18 +227,11 @@ static const CIPHERSUITE_INFO cipherSuiteGCM[] = {
 	};
 
 static const CIPHERSUITE_INFO cipherSuiteMisc[] = {
-	/* IDEA + RSA */
-	{ SSL_RSA_WITH_IDEA_CBC_SHA,
-	  DESCRIPTION( "SSL_RSA_WITH_IDEA_CBC_SHA" )
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_IDEA,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
-	  CIPHERSUITE_FLAG_NONE },
-
 	/* RC4 + RSA */
 	{ SSL_RSA_WITH_RC4_128_SHA,
 	  DESCRIPTION( "SSL_RSA_WITH_RC4_128_SHA" )
 	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_RC4,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_NONE },
 	{ SSL_RSA_WITH_RC4_128_MD5,
 	  DESCRIPTION( "SSL_RSA_WITH_RC4_128_MD5" )
@@ -250,17 +243,17 @@ static const CIPHERSUITE_INFO cipherSuiteMisc[] = {
 	{ SSL_RSA_WITH_DES_CBC_SHA,
 	  DESCRIPTION( "SSL_RSA_WITH_DES_CBC_SHA" )
 	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 8, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 8, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_NONE },
 	{ TLS_DHE_RSA_WITH_DES_CBC_SHA,
 	  DESCRIPTION( "TLS_DHE_RSA_WITH_DES_CBC_SHA" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 8, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 8, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_NONE },
 /*	{ TLS_DHE_DSS_WITH_DES_CBC_SHA,
 	  DESCRIPTION( "TLS_DHE_DSS_WITH_DES_CBC_SHA" )
 	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 8, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 8, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_NONE }, */
 
 	/* End-of-list marker */
@@ -279,22 +272,22 @@ static const CIPHERSUITE_INFO cipherSuitePSK[] = {
 	{ TLS_PSK_WITH_3DES_EDE_CBC_SHA,
 	  DESCRIPTION( "TLS_PSK_WITH_3DES_EDE_CBC_SHA" )
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 24, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 24, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_PSK },
 	{ TLS_PSK_WITH_AES_128_CBC_SHA,
 	  DESCRIPTION( "TLS_PSK_WITH_AES_128_CBC_SHA" )
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_PSK },
 	{ TLS_PSK_WITH_AES_256_CBC_SHA,
 	  DESCRIPTION( "TLS_PSK_WITH_AES_256_CBC_SHA" )
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 32, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 32, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_PSK },
 	{ TLS_PSK_WITH_RC4_128_SHA,
 	  DESCRIPTION( "TLS_PSK_WITH_RC4_128_SHA" )
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_RC4,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_PSK },
 
 	/* End-of-list marker */
@@ -313,19 +306,19 @@ static const CIPHERSUITE_INFO cipherSuiteRSA[] = {
 	{ SSL_RSA_WITH_3DES_EDE_CBC_SHA,
 	  DESCRIPTION( "SSL_RSA_WITH_3DES_EDE_CBC_SHA" )
 	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 24, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 24, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_NONE },
 
 	/* AES with RSA */
 	{ TLS_RSA_WITH_AES_128_CBC_SHA,
 	  DESCRIPTION( "TLS_RSA_WITH_AES_128_CBC_SHA" )
 	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_NONE },
 	{ TLS_RSA_WITH_AES_256_CBC_SHA,
 	  DESCRIPTION( "TLS_RSA_WITH_AES_256_CBC_SHA" )
 	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 32, SHA1MAC_SIZE, 
+	  CRYPT_ALGO_HMAC_SHA1, 0, 32, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_NONE },
 	{ TLS_RSA_WITH_AES_128_CBC_SHA256,
 	  DESCRIPTION( "TLS_RSA_WITH_AES_128_CBC_SHA256" )
@@ -369,48 +362,16 @@ static const CIPHERSUITE_INFO cipherSuiteCanary[] = {
 	  CRYPT_ALGO_NONE, 0, 0, 0, CIPHERSUITE_FLAG_NONE }
 	};
 
-static const CIPHERSUITE_INFO cipherSuiteSpecialSuiteB[] = {
-	{ TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 
-	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384" )
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA2, bitsToBytes( 384 ), 32, GCMICV_SIZE, 
-	  CIPHERSUITE_FLAG_ECC | CIPHERSUITE_FLAG_GCM | CIPHERSUITE_FLAG_TLS12 },
-	{ TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 
-	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" )
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA2, 0, 16, GCMICV_SIZE, 
-	  CIPHERSUITE_FLAG_ECC | CIPHERSUITE_FLAG_GCM | CIPHERSUITE_FLAG_TLS12 },
-/*	{ TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384, 
-	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384" )
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA2, bitsToBytes( 384 ), 32, bitsToBytes( 384 ), 
-	  CIPHERSUITE_FLAG_ECC | CIPHERSUITE_FLAG_TLS12 }, */
-/*	{ TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, 
-	  DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA" )
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 0, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_ECC }, */
-
-	/* End-of-list marker */
-	{ SSL_NULL_WITH_NULL,
-	  DESCRIPTION( "End-of-list marker" )
-	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 
-	  CRYPT_ALGO_NONE, 0, 0, 0, CIPHERSUITE_FLAG_NONE },
-	{ SSL_NULL_WITH_NULL,
-	  DESCRIPTION( "End-of-list marker" )
-	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 
-	  CRYPT_ALGO_NONE, 0, 0, 0, CIPHERSUITE_FLAG_NONE }
-	};
-
 /* Tables defining the arrangement of the above sets of suites into a 
    single monster list.  The order of adding suites is as follows:
 
-	Special-case suites, for testing or custom configurations.
+	[ Optional special-case suites, for testing or custom configurations ].
 	PSK suites, since they provide proper mutual authentication. 
-	ECC suites, since anyone wanting to make this particular fashion
-			statement probably wants to actually use the suites rather than 
-			having them ignored as the 25th-ranked option.
-			(GCM with ECC is a variant of this, this is even more of a
-			fashion statement and really only makes sense with ECC)
+	ECC suites if PREFER_ECC is defined, since anyone wanting to make this 
+			particular fashion statement probably wants to actually use the 
+			suites rather than having them ignored as the 25th-ranked 
+			option.  (GCM with ECC is a variant of this, this is even more 
+			of a fashion statement and really only makes sense with ECC).
 	DH suites unless PREFER_RSA_TO_DH is defined, since these provide
 			PFS, are secure against factoring attacks, and in many cases
 			are the same as RSA when employed in anon-DH-equivalent mode.
@@ -423,36 +384,14 @@ typedef struct {
 	const int cipherSuiteCount;
 	} CIPHERSUITES_LIST;
 
-#if defined( CONFIG_SUITEB )
-
-#if defined( _MSC_VER )
-  #pragma message( "  Building with custom suite: Suite B" )
-#endif /* VC++ */
-
-static const CIPHERSUITES_LIST cipherSuitesList[] = {
-	{ cipherSuiteSpecialSuiteB, FAILSAFE_ARRAYSIZE( cipherSuiteSpecialSuiteB, CIPHERSUITE_INFO ) },
-	{ NULL, 0 }, { NULL, 0 }
-	};
-#elif 0
-
-#if defined( _MSC_VER )
-  #pragma message( "  Building with custom suite: XXX" )
-#endif /* VC++ */
-
-static const CIPHERSUITES_LIST cipherSuitesList[] = {
-	{ cipherSuiteSpecial, FAILSAFE_ARRAYSIZE( cipherSuiteSpecial, CIPHERSUITE_INFO ) },
-	{ NULL, 0 }, { NULL, 0 }
-	};
-#else
-
 static const CIPHERSUITES_LIST cipherSuitesList[] = {
 	{ cipherSuitePSK, FAILSAFE_ARRAYSIZE( cipherSuitePSK, CIPHERSUITE_INFO ) },
-#if defined( USE_ECDH ) && defined( USE_ECDSA )
+#if defined( PREFER_ECC ) && defined( USE_ECDH ) && defined( USE_ECDSA )
   #ifdef USE_GCM
 	{ cipherSuiteGCM, FAILSAFE_ARRAYSIZE( cipherSuiteGCM, CIPHERSUITE_INFO ) },
   #endif /* USE_GCM */
 	{ cipherSuiteECC, FAILSAFE_ARRAYSIZE( cipherSuiteECC, CIPHERSUITE_INFO ) },
-#endif /* USE_ECDH && USE_ECDSA */
+#endif /* PREFER_ECC && USE_ECDH && USE_ECDSA */
 #ifdef PREFER_RSA_TO_DH
 	{ cipherSuiteRSA, FAILSAFE_ARRAYSIZE( cipherSuiteRSA, CIPHERSUITE_INFO ) },
 	{ cipherSuiteDH, FAILSAFE_ARRAYSIZE( cipherSuiteDH, CIPHERSUITE_INFO ) },
@@ -460,11 +399,112 @@ static const CIPHERSUITES_LIST cipherSuitesList[] = {
 	{ cipherSuiteDH, FAILSAFE_ARRAYSIZE( cipherSuiteDH, CIPHERSUITE_INFO ) },
 	{ cipherSuiteRSA, FAILSAFE_ARRAYSIZE( cipherSuiteRSA, CIPHERSUITE_INFO ) },
 #endif /* PREFER_RSA_TO_DH */
+#if !defined( PREFER_ECC ) && defined( USE_ECDH ) && defined( USE_ECDSA )
+  #ifdef USE_GCM
+	{ cipherSuiteGCM, FAILSAFE_ARRAYSIZE( cipherSuiteGCM, CIPHERSUITE_INFO ) },
+  #endif /* USE_GCM */
+	{ cipherSuiteECC, FAILSAFE_ARRAYSIZE( cipherSuiteECC, CIPHERSUITE_INFO ) },
+#endif /* !PREFER_ECC && USE_ECDH && USE_ECDSA */
 	{ cipherSuiteMisc, FAILSAFE_ARRAYSIZE( cipherSuiteMisc, CIPHERSUITE_INFO ) },
 	{ cipherSuiteCanary, FAILSAFE_ARRAYSIZE( cipherSuiteCanary, CIPHERSUITE_INFO ) },
 	{ NULL, 0 }, { NULL, 0 }
 	};
-#endif /* Custom cipher-suite selection */
+
+/****************************************************************************
+*																			*
+*						Cipher Suite Definitions for Suite B				*
+*																			*
+****************************************************************************/
+
+/* If we're running in a Suite B configuration then we don't bother with any
+   of the standard cipher suites but only provide Suite B suites */
+
+#if defined( CONFIG_SUITEB )
+
+#if defined( _MSC_VER )
+  #pragma message( "  Building with custom suite: Suite B" )
+  #if defined( CONFIG_SUITEB_TESTS )
+	#pragma message( "  Building with custom suite: Suite B test suites" )
+  #endif /* Suite B special test suites */
+#endif /* VC++ */
+
+/* 256-bit Suite B suites */
+
+static const CIPHERSUITE_INFO suiteBP384GCM = { 
+	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 
+	DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384" )
+	CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
+	CRYPT_ALGO_HMAC_SHA2, bitsToBytes( 384 ), 32, GCMICV_SIZE, 
+	CIPHERSUITE_FLAG_ECC | CIPHERSUITE_FLAG_GCM | CIPHERSUITE_FLAG_TLS12 
+	};
+
+/* 128-bit Suite B suites */
+
+static const CIPHERSUITE_INFO suiteBP256GCM = { 
+	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 
+	DESCRIPTION( "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" )
+	CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
+	CRYPT_ALGO_HMAC_SHA2, 0, 16, GCMICV_SIZE, 
+	CIPHERSUITE_FLAG_ECC | CIPHERSUITE_FLAG_GCM | CIPHERSUITE_FLAG_TLS12 
+	};
+
+/* End-of-list marker */
+
+static const CIPHERSUITE_INFO suiteBEOL = { 
+	SSL_NULL_WITH_NULL,
+	DESCRIPTION( "End-of-list marker" )
+	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 
+	CRYPT_ALGO_NONE, 0, 0, 0, CIPHERSUITE_FLAG_NONE 
+	};
+
+/* Since the only suites that we're enabling are the Suite B ones, we 
+   override the default getCipherSuiteInfo() with our own one */
+
+CHECK_RETVAL \
+int getSuiteBCipherSuiteInfo( OUT const CIPHERSUITE_INFO ***cipherSuiteInfoPtrPtrPtr,
+							  OUT_INT_Z int *noSuiteEntries,
+							  const BOOLEAN isServer,
+							  IN_FLAGS_Z( SSL ) const int suiteBinfo )
+	{
+	static const CIPHERSUITE_INFO *cipherSuite192InfoTbl[] = \
+		{ &suiteBP384GCM, &suiteBEOL, &suiteBEOL };
+	static const CIPHERSUITE_INFO *cipherSuite128InfoTbl[] = \
+		{ &suiteBP256GCM, &suiteBP384GCM, &suiteBEOL, &suiteBEOL };
+	BOOLEAN is128bitLevel = ( ( suiteBinfo & SSL_PFLAG_SUITEB ) == \
+									SSL_PFLAG_SUITEB_128 ) ? TRUE : FALSE;
+
+	assert( isReadPtr( cipherSuiteInfoPtrPtrPtr, \
+					   sizeof( CIPHERSUITE_INFO ** ) ) );
+	assert( isWritePtr( noSuiteEntries, sizeof( int ) ) );
+
+	REQUIRES( suiteBinfo >= SSL_PFLAG_NONE && suiteBinfo < SSL_PFLAG_MAX );
+
+	/* Depending on the security level that we're configured for we either 
+	   prefer the 128-bit suites or the 192-bit suites */
+	if( is128bitLevel )
+		{
+		*cipherSuiteInfoPtrPtrPtr = ( const CIPHERSUITE_INFO ** ) \
+									cipherSuite128InfoTbl;	/* For gcc */
+		*noSuiteEntries = FAILSAFE_ARRAYSIZE( cipherSuite128InfoTbl, \
+											  CIPHERSUITE_INFO * );
+		}
+	else
+		{
+		*cipherSuiteInfoPtrPtrPtr = ( const CIPHERSUITE_INFO ** ) \
+									cipherSuite192InfoTbl;	/* For gcc */
+		*noSuiteEntries = FAILSAFE_ARRAYSIZE( cipherSuite192InfoTbl, \
+											  CIPHERSUITE_INFO * );
+		}
+	return( CRYPT_OK );
+	}
+
+/* Remap the usual getCipherSuiteInfo() into an alternative name that
+   doesn't clash with the Suite B replacement */
+
+#undef getCipherSuiteInfo
+#define	getCipherSuiteInfo	getCipherSuiteInfoOriginal
+
+#endif /* CONFIG_SUITEB */
 
 /****************************************************************************
 *																			*
@@ -521,7 +561,8 @@ static int addCipherSuiteInfo( INOUT CIPHERSUITE_INFO **cipherSuiteTbl,
 
 CHECK_RETVAL \
 int getCipherSuiteInfo( OUT const CIPHERSUITE_INFO ***cipherSuiteInfoPtrPtrPtr,
-						OUT_INT_Z int *noSuiteEntries )
+						OUT_INT_Z int *noSuiteEntries,
+						STDC_UNUSED const BOOLEAN isServer )
 	{
 	static CIPHERSUITE_INFO *cipherSuiteInfoTbl[ MAX_CIPHERSUITE_TBLSIZE + 8 ];
 	static BOOLEAN cipherSuitInfoInited = FALSE;

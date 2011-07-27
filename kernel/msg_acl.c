@@ -92,13 +92,13 @@ static const COMPARE_ACL FAR_BSS compareACLTbl[] = {
 								  ST_CERT_CERTCHAIN | ST_CERT_CERTREQ | \
 								  ST_CERT_REQ_CERT )
 #define PUBKEY_KEYSET_OBJECT	( ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | \
-								  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | \
-								  ST_KEYSET_HTTP | ST_KEYSET_LDAP | \
-								  ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
-								  ST_DEV_HW )
+								  ST_KEYSET_FILE_RO | ST_KEYSET_DBMS | \
+								  ST_KEYSET_DBMS_STORE | ST_KEYSET_HTTP | \
+								  ST_KEYSET_LDAP | ST_DEV_P11 | \
+								  ST_DEV_CAPI | ST_DEV_HW )
 #define PRIVKEY_KEYSET_OBJECT	( ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | \
-								  ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
-								  ST_DEV_HW )
+								  ST_KEYSET_FILE_RO | ST_DEV_P11 | \
+								  ST_DEV_CAPI | ST_DEV_HW )
 
 /* The certificate and CA capabilities are spread across certificates (the 
    certificate or certificate with CA flag set) and contexts (the PKC 
@@ -211,15 +211,15 @@ static const CHECK_ACL FAR_BSS checkACLTbl[] = {
 	   operation */
 	{ MESSAGE_CHECK_CRYPT_READY,	/* Ready for init for conv.encr.*/
 	  MK_CHKACL_EX( MESSAGE_CTX_ENCRYPT,
-					ST_CTX_CONV, ACL_FLAG_LOW_STATE ) },
+					ST_CTX_CONV, ST_NONE, ACL_FLAG_LOW_STATE ) },
 
 	{ MESSAGE_CHECK_MAC_READY,		/* Ready for init for MAC */
 	  MK_CHKACL_EX( MESSAGE_CTX_HASH,
-					ST_CTX_MAC, ACL_FLAG_LOW_STATE ) },
+					ST_CTX_MAC, ST_NONE, ACL_FLAG_LOW_STATE ) },
 
 	{ MESSAGE_CHECK_KEYGEN_READY,	/* Ready for init key generation */
 	  MK_CHKACL_EX( MESSAGE_CTX_GENKEY,
-					ST_CTX_CONV | ST_CTX_PKC | ST_CTX_MAC, ACL_FLAG_LOW_STATE ) },
+					ST_CTX_CONV | ST_CTX_PKC | ST_CTX_MAC, ST_NONE, ACL_FLAG_LOW_STATE ) },
 
 	/* Checks on purely passive container objects that constrain action
 	   objects (for example a certificate being attached to a context) for 
@@ -233,31 +233,31 @@ static const CHECK_ACL FAR_BSS checkACLTbl[] = {
 	   action */
 	{ MESSAGE_CHECK_PKC_ENCRYPT_AVAIL,	/* Encryption available */
 	  MK_CHKACL_EX( MESSAGE_CTX_ENCRYPT,
-					PUBKEY_CERT_OBJECT | PUBKEY_KEYSET_OBJECT,
+					PUBKEY_CERT_OBJECT, PUBKEY_KEYSET_OBJECT,
 					ACL_FLAG_ANY_STATE ) },
 
 	{ MESSAGE_CHECK_PKC_DECRYPT_AVAIL,	/* Decryption available */
 	  MK_CHKACL_EX( MESSAGE_CTX_DECRYPT,
-					PUBKEY_CERT_OBJECT | PRIVKEY_KEYSET_OBJECT,
+					PUBKEY_CERT_OBJECT, PRIVKEY_KEYSET_OBJECT,
 					ACL_FLAG_ANY_STATE ) },
 
 	{ MESSAGE_CHECK_PKC_SIGCHECK_AVAIL,	/* Signature check available */
 	  MK_CHKACL_EX( MESSAGE_CTX_SIGCHECK,
-					PUBKEY_CERT_OBJECT | PUBKEY_KEYSET_OBJECT,
+					PUBKEY_CERT_OBJECT, PUBKEY_KEYSET_OBJECT,
 					ACL_FLAG_ANY_STATE ) },
 
 	{ MESSAGE_CHECK_PKC_SIGN_AVAIL,		/* Signature available */
 	  MK_CHKACL_EX( MESSAGE_CTX_SIGN,
-					PUBKEY_CERT_OBJECT | PRIVKEY_KEYSET_OBJECT,
+					PUBKEY_CERT_OBJECT, PRIVKEY_KEYSET_OBJECT,
 					ACL_FLAG_ANY_STATE ) },
 
 	{ MESSAGE_CHECK_PKC_KA_EXPORT_AVAIL,/* Key agreement - export available */
 	  MK_CHKACL_EX( MESSAGE_NONE,
-					PUBKEY_CERT_OBJECT, ACL_FLAG_ANY_STATE ) },
+					PUBKEY_CERT_OBJECT, ST_NONE, ACL_FLAG_ANY_STATE ) },
 
 	{ MESSAGE_CHECK_PKC_KA_IMPORT_AVAIL,/* Key agreement - import available */
 	  MK_CHKACL_EX( MESSAGE_NONE,
-					PUBKEY_CERT_OBJECT, ACL_FLAG_ANY_STATE ) },
+					PUBKEY_CERT_OBJECT, ST_NONE, ACL_FLAG_ANY_STATE ) },
 
 	/* Misc.actions.  The certificate check is used to verify that a 
 	   certificate is generally valid (for example not expired) without 
@@ -307,55 +307,64 @@ static const ATTRIBUTE_ACL_ALT FAR_BSS formatPseudoACL[] = {
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_CERTIFICATE,
 		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL | \
-			ST_CERT_OCSP_RESP, ST_NONE, ACCESS_Rxx_xxx,
+			ST_CERT_OCSP_RESP, ST_NONE, ST_NONE, 
+		ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
 	/* Encoded certificate chain */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_CERTCHAIN,
-		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_Rxx_xxx,
+		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ST_NONE, 
+		ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
 	/* Base64-encoded certificate */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_TEXT_CERTIFICATE,
-		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL, ST_NONE, ACCESS_Rxx_xxx,
+		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL, ST_NONE, ST_NONE, 
+		ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
 	/* Base64-encoded certificate chain */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_TEXT_CERTCHAIN,
-		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_Rxx_xxx,
+		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ST_NONE, 
+		ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
 	/* XML-encoded certificate */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_XML_CERTIFICATE,
-		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL, ST_NONE, ACCESS_Rxx_xxx,
+		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL, ST_NONE, ST_NONE, 
+		ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
 	/* XML-encoded certificate chain */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_XML_CERTCHAIN,
-		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_Rxx_xxx,
+		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ST_NONE, 
+		ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
 	/* SET OF certificate in chain */
 	MKACL_S_ALT(
 		CRYPT_ICERTFORMAT_CERTSET,
-		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_INT_Rxx_xxx,
+		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ST_NONE, 
+		ACCESS_INT_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 16, 8192 ) ),
 
 	/* SEQUENCE OF certificate in chain */
 	MKACL_S_ALT(
 		CRYPT_ICERTFORMAT_CERTSEQUENCE,
-		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_INT_Rxx_xxx,
+		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ST_NONE, 
+		ACCESS_INT_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 16, 8192 ) ),
 
 	/* SSL certificate chain */
 	MKACL_S_ALT(
 		CRYPT_ICERTFORMAT_SSL_CERTCHAIN,
-		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_INT_Rxx_xxx,
+		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ST_NONE, 
+		ACCESS_INT_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 16, 8192 ) ),
 
 	/* Encoded non-signed object data.  We allow this attribute to be read
@@ -367,15 +376,18 @@ static const ATTRIBUTE_ACL_ALT FAR_BSS formatPseudoACL[] = {
 		CRYPT_ICERTFORMAT_DATA,
 		ST_CERT_CMSATTR | ST_CERT_REQ_REV | ST_CERT_RTCS_REQ | \
 			ST_CERT_RTCS_RESP | ST_CERT_OCSP_REQ | ST_CERT_OCSP_RESP | \
-			ST_CERT_PKIUSER, ST_NONE, ACCESS_INT_Rxx_Rxx,
+			ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
+		ACCESS_INT_Rxx_Rxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
 	/* End-of-ACL marker */
 	MKACL_S_ALT(
-		CRYPT_CERTFORMAT_NONE, ST_NONE, ST_NONE, ACCESS_xxx_xxx,
+		CRYPT_CERTFORMAT_NONE, ST_NONE, ST_NONE, ST_NONE, 
+		ACCESS_xxx_xxx,
 		ROUTE( OBJECT_TYPE_NONE ), RANGE( 0, 0 ) ),
 	MKACL_S_ALT(
-		CRYPT_CERTFORMAT_NONE, ST_NONE, ST_NONE, ACCESS_xxx_xxx,
+		CRYPT_CERTFORMAT_NONE, ST_NONE, ST_NONE, ST_NONE, 
+		ACCESS_xxx_xxx,
 		ROUTE( OBJECT_TYPE_NONE ), RANGE( 0, 0 ) )
 	};
 
@@ -545,9 +557,6 @@ static BOOLEAN checkAttributeRangeSpecial( IN_ENUM( RANGEVAL ) \
 		for( i = 0; allowedValuesInfo[ i ] != CRYPT_ERROR && \
 					i < FAILSAFE_ITERATIONS_SMALL; i++ )
 			{
-			/* Invariant: The allow-values list has a sensible size */
-			ENSURES( i < 5 );
-
 			if( value == allowedValuesInfo[ i ] )
 				return( TRUE );
 			}
@@ -565,9 +574,6 @@ static BOOLEAN checkAttributeRangeSpecial( IN_ENUM( RANGEVAL ) \
 		for( i = 0; allowedValuesInfo[ i ].lowRange != CRYPT_ERROR && \
 					i < FAILSAFE_ITERATIONS_SMALL; i++ )
 			{
-			/* Invariant: The subranges list has a sensible size */
-			ENSURES( i < 10 );
-
 			if( checkNumericRange( value, allowedValuesInfo[ i ].lowRange,
 								   allowedValuesInfo[ i ].highRange ) )
 				return( TRUE );
@@ -774,7 +780,8 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 				compareACL->compareType == i + 1 );
 		if( ( compareACL->objectACL.subTypeA & ~( SUBTYPE_CLASS_A | \
 												  ST_CTX_ANY | ST_CERT_ANY ) ) || \
-			compareACL->objectACL.subTypeB != ST_NONE )
+			compareACL->objectACL.subTypeB != ST_NONE || \
+			compareACL->objectACL.subTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Message ACLs inconsistent" ));
 			retIntError();
@@ -793,7 +800,8 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 			ENSURES( paramInfo( compareACL, 0 ).valueType == PARAM_VALUE_OBJECT );
 			if( ( paramInfo( compareACL, 0 ).subTypeA & ~( SUBTYPE_CLASS_A | \
 														   ST_CERT_ANY ) ) || \
-				paramInfo( compareACL, 0 ).subTypeB != ST_NONE )
+				paramInfo( compareACL, 0 ).subTypeB != ST_NONE || \
+				paramInfo( compareACL, 0 ).subTypeC != ST_NONE )
 				{
 				DEBUG_DIAG(( "Message ACLs inconsistent" ));
 				retIntError();
@@ -816,9 +824,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 				 ( checkACL->actionType >= MESSAGE_CTX_ENCRYPT && \
 				   checkACL->actionType <= MESSAGE_CRT_SIGCHECK ) );
 		if( ( checkACL->objectACL.subTypeA & \
-					~( SUBTYPE_CLASS_A | ST_CTX_ANY | ST_CERT_ANY | \
-										 ST_KEYSET_ANY | ST_DEV_ANY ) ) || \
-			checkACL->objectACL.subTypeB != ST_NONE )
+					~( SUBTYPE_CLASS_A | ST_CTX_ANY | ST_CERT_ANY ) ) || \
+			( checkACL->objectACL.subTypeB & \
+					~( SUBTYPE_CLASS_B | ST_KEYSET_ANY | ST_DEV_ANY ) ) || \
+			checkACL->objectACL.subTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Check ACLs inconsistent" ));
 			retIntError();
@@ -839,7 +848,8 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 					 checkAltACL->depObject == OBJECT_TYPE_CERTIFICATE );
 			if( ( checkAltACL->depObjectACL.subTypeA & \
 						~( SUBTYPE_CLASS_A | ST_CTX_ANY | ST_CERT_ANY ) ) || \
-				checkAltACL->depObjectACL.subTypeB != ST_NONE )
+				checkAltACL->depObjectACL.subTypeB != ST_NONE || \
+				checkAltACL->depObjectACL.subTypeC != ST_NONE )
 				{
 				DEBUG_DIAG(( "Check ACLs inconsistent" ));
 				retIntError();
@@ -862,7 +872,8 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 		ENSURES( formatACL->attribute > CRYPT_CERTTYPE_NONE && \
 				 formatACL->attribute < CRYPT_CERTTYPE_LAST );
 		if( ( formatACL->subTypeA & ~( SUBTYPE_CLASS_A | ST_CERT_ANY ) ) || \
-			formatACL->subTypeB != ST_NONE )
+			formatACL->subTypeB != ST_NONE || \
+			formatACL->subTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Certificate export ACLs inconsistent" ));
 			retIntError();
@@ -1082,7 +1093,8 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 
 	/* Make sure that the attribute is valid for this object subtype */
 	if( !isValidSubtype( attributeACL->subTypeA, subType ) && \
-		!isValidSubtype( attributeACL->subTypeB, subType ) )
+		!isValidSubtype( attributeACL->subTypeB, subType ) && \
+		!isValidSubtype( attributeACL->subTypeC, subType ) )
 		return( CRYPT_ARGERROR_VALUE );
 
 	/* Make sure that this type of access is valid for this attribute */
@@ -1103,7 +1115,8 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 	   externally visible or it's an internal message, and this type of 
 	   access is allowed */
 	REQUIRES( isValidSubtype( attributeACL->subTypeA, subType ) || \
-			  isValidSubtype( attributeACL->subTypeB, subType ) );
+			  isValidSubtype( attributeACL->subTypeB, subType ) || \
+			  isValidSubtype( attributeACL->subTypeC, subType ) );
 	REQUIRES( ( attributeACL->access & ACCESS_MASK_EXTERNAL ) || \
 			  isInternalMessage );
 	REQUIRES( attributeACL->access & accessType );
@@ -1112,7 +1125,8 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 	   being communicated, so we can exit now */
 	if( localMessage == MESSAGE_DELETEATTRIBUTE )
 		{
-		assert( messageDataPtr == NULL );
+		ENSURES( messageDataPtr == NULL );
+
 		return( CRYPT_OK );
 		}
 
@@ -1283,7 +1297,8 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 				return( CRYPT_ARGERROR_NUM1 );
 			objectParamSubType = objectTable[ objectParamHandle ].subType;
 			if( !isValidSubtype( objectACL->subTypeA, objectParamSubType ) && \
-				!isValidSubtype( objectACL->subTypeB, objectParamSubType ) )
+				!isValidSubtype( objectACL->subTypeB, objectParamSubType ) && \
+				!isValidSubtype( objectACL->subTypeC, objectParamSubType ) )
 				return( CRYPT_ARGERROR_NUM1 );
 			if( ( objectACL->flags & ACL_FLAG_STATE_MASK ) && \
 				!checkObjectState( objectACL->flags, objectParamHandle ) )
@@ -1296,6 +1311,8 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 			ENSURES( isValidSubtype( objectACL->subTypeA, \
 									 objectParamSubType ) || \
 					 isValidSubtype( objectACL->subTypeB, \
+									 objectParamSubType ) || \
+					 isValidSubtype( objectACL->subTypeC, \
 									 objectParamSubType ) );
 			ENSURES( !( objectACL->flags & ACL_FLAG_STATE_MASK ) || \
 					 checkObjectState( objectACL->flags, \
@@ -1463,7 +1480,8 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 				 attributeACL++ )
 				{
 				if( isValidSubtype( attributeACL->subTypeA, subType ) || \
-					isValidSubtype( attributeACL->subTypeB, subType ) )
+					isValidSubtype( attributeACL->subTypeB, subType ) || \
+					isValidSubtype( attributeACL->subTypeC, subType ) )
 					break;
 				}
 			ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
@@ -1595,6 +1613,8 @@ int preDispatchCheckCheckParam( IN_HANDLE const int objectHandle,
 	   performed by the message dispatcher so all we need to check is the
 	   compare-specific subtype */
 	if( !( isValidSubtype( checkACL->objectACL.subTypeA, \
+						   objectInfoPtr->subType ) || \
+		   isValidSubtype( checkACL->objectACL.subTypeB, \
 						   objectInfoPtr->subType ) ) )
 		return( CRYPT_ARGERROR_OBJECT );
 	if( ( checkACL->objectACL.flags & ACL_FLAG_STATE_MASK ) && \
@@ -1637,6 +1657,8 @@ int preDispatchCheckCheckParam( IN_HANDLE const int objectHandle,
 	/* Postconditions: The object being checked is valid */
 	ENSURES( fullObjectCheck( objectHandle, message ) && \
 			 ( isValidSubtype( checkACL->objectACL.subTypeA, \
+							   objectInfoPtr->subType ) || \
+			   isValidSubtype( checkACL->objectACL.subTypeB, \
 							   objectInfoPtr->subType ) ) );
 
 	return( CRYPT_OK );
@@ -1771,7 +1793,8 @@ int preDispatchCheckParamHandleOpt( IN_HANDLE const int objectHandle,
 	/* Make sure that the object parameter subtype is correct */
 	subType = objectTable[ messageValue ].subType;
 	if( !isValidSubtype( objectACL->subTypeA, subType ) && \
-		!isValidSubtype( objectACL->subTypeB, subType ) )
+		!isValidSubtype( objectACL->subTypeB, subType ) && \
+		!isValidSubtype( objectACL->subTypeC, subType ) )
 		return( CRYPT_ARGERROR_VALUE );
 
 	/* Postcondition: Object parameter is valid, accessible, and of the
@@ -1779,7 +1802,8 @@ int preDispatchCheckParamHandleOpt( IN_HANDLE const int objectHandle,
 	ENSURES( fullObjectCheck( messageValue, message ) && \
 			 isSameOwningObject( objectHandle, messageValue ) );
 	ENSURES( isValidSubtype( objectACL->subTypeA, subType ) || \
-			 isValidSubtype( objectACL->subTypeB, subType ) );
+			 isValidSubtype( objectACL->subTypeB, subType ) || \
+			 isValidSubtype( objectACL->subTypeC, subType ) );
 
 	return( CRYPT_OK );
 	}
@@ -1818,7 +1842,8 @@ int preDispatchCheckStateParamHandle( IN_HANDLE const int objectHandle,
 	/* Make sure that the object parameter subtype is correct */
 	subType = objectTable[ messageValue ].subType;
 	if( !isValidSubtype( objectACL->subTypeA, subType ) && \
-		!isValidSubtype( objectACL->subTypeB, subType ) )
+		!isValidSubtype( objectACL->subTypeB, subType ) && \
+		!isValidSubtype( objectACL->subTypeC, subType ) )
 		return( CRYPT_ARGERROR_VALUE );
 
 	/* Postcondition: Object is in the low state so a state change message
@@ -1828,7 +1853,8 @@ int preDispatchCheckStateParamHandle( IN_HANDLE const int objectHandle,
 	ENSURES( fullObjectCheck( messageValue, message ) && \
 			 isSameOwningObject( objectHandle, messageValue ) );
 	ENSURES( isValidSubtype( objectACL->subTypeA, subType ) || \
-			 isValidSubtype( objectACL->subTypeB, subType ) );
+			 isValidSubtype( objectACL->subTypeB, subType ) || \
+			 isValidSubtype( objectACL->subTypeC, subType ) );
 
 	return( CRYPT_OK );
 	}
@@ -2070,12 +2096,12 @@ int preDispatchCheckTrustMgmtAccess( IN_HANDLE const int objectHandle,
 									 STDC_UNUSED const void *dummy )
 	{
 	static const OBJECT_ACL FAR_BSS objectTrustedCertificate = {
-			ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, 
+			ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ST_NONE, 
 			ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CERT };
 	static const ATTRIBUTE_ACL FAR_BSS trustMgmtPseudoACL[] = {
 		MKACL_O(
 			MESSAGE_TRUSTMGMT_CHECK,	/* Generic placeholder */
-			ST_NONE, ST_USER_ANY, ACCESS_INT_Rxx_xxx,
+			ST_NONE, ST_NONE, ST_USER_ANY, ACCESS_INT_Rxx_xxx,
 			ROUTE( OBJECT_TYPE_USER ), &objectTrustedCertificate )
 		};
 	STDC_UNUSED \

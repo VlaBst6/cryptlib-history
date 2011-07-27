@@ -700,8 +700,8 @@ int iCryptReadSubjectPublicKey( INOUT TYPECAST( STREAM * ) void *streamPtr,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	status = readAlgoIDparams( stream, &cryptAlgo, &length, 
-							   ALGOID_CLASS_PKC );
+	status = readAlgoIDparam( stream, &cryptAlgo, &length, 
+							  ALGOID_CLASS_PKC );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -814,13 +814,13 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 	BOOLEAN seenWhitespace, seenContinuation = FALSE;
 	int totalChars, bufPos = 0;
 
-	assert( readCharFunction != NULL );
 	assert( isWritePtr( streamPtr, sizeof( STREAM ) ) );
 	assert( isWritePtr( lineBuffer, lineBufferMaxLen ) );
 	assert( isWritePtr( lineBufferSize, sizeof( int ) ) );
 	assert( localError == NULL || \
 			isWritePtr( localError, sizeof( BOOLEAN ) ) );
 
+	REQUIRES( readCharFunction != NULL );
 	REQUIRES( lineBufferMaxLen >= 16 && \
 			  lineBufferMaxLen < MAX_INTLENGTH_SHORT );
 

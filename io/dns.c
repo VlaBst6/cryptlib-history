@@ -250,7 +250,9 @@ static int SOCKET_API my_getaddrinfo( IN_STRING const char *nodename,
 
 	assert( isReadPtr( hints, sizeof( struct addrinfo ) ) );
 	assert( isWritePtr( res, sizeof( struct addrinfo * ) ) );
-	assert( sizeof( in_addr_t ) == IP_ADDR_SIZE );
+
+	static_assert( sizeof( in_addr_t ) == IP_ADDR_SIZE, \
+				   "in_addr_t size" );
 
 	REQUIRES( nodename != NULL || ( hints->ai_flags & AI_PASSIVE ) );
 	REQUIRES( servname != NULL );
@@ -525,12 +527,12 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 	hints.ai_family = PF_UNSPEC;
 #else
 	BOOLEAN forceIPv4 = FALSE;
-	int value;
+	int preferIPV4;
 
-	status = krnlSendMessage( certInfoPtr->ownerHandle,
-							  IMESSAGE_GETATTRIBUTE, &value,
-							  CRYPT_OPTION_OPTION_PREFERIPV4 );
-	if( cryptStatusOK( status ) && value )
+	status = krnlSendMessage( certInfoPtr->ownerHandle, 
+							  IMESSAGE_GETATTRIBUTE, &preferIPV4,
+							  CRYPT_OPTION_PREFERIPV4 );
+	if( cryptStatusOK( status ) && preferIPV4 )
 		{
 		/* Override any potential defaulting to IPv6 by the local system 
 		   to force the use of IPv4, which is going to be far more probable 
@@ -567,7 +569,7 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 STDC_NONNULL_ARG( ( 1 ) ) \
 void freeAddressInfo( struct addrinfo *addrInfoPtr )
 	{
-	assert( addrInfoPtr != NULL );
+	assert( isWritePtr( addrInfoPtr, sizeof( struct addrinfo ) ) );
 
 	freeaddrinfo( addrInfoPtr );
 	}

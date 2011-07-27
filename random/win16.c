@@ -29,7 +29,6 @@ void fastPoll( void )
 	MEMMANINFO memManInfo;
 	TIMERINFO timerInfo;
 	POINT point;
-	int bufIndex = 0;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 
@@ -88,7 +87,7 @@ void slowPoll( void )
 	MODULEENTRY moduleEntry;
 	GLOBALENTRY globalEntry;
 	TASKENTRY taskEntry;
-	int count, bufIndex = 0;
+	int count;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 

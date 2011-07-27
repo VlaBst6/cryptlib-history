@@ -24,8 +24,8 @@
 *																			*
 ****************************************************************************/
 
-/* Perform CMS data wrapping.  Returns an error code or the number of output
-   bytes */
+/* Determine how many padding bytes are required for a CMS conventional key 
+   wrap */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 static int getPadSize( IN_HANDLE const CRYPT_CONTEXT iExportContext,
@@ -51,7 +51,8 @@ static int getPadSize( IN_HANDLE const CRYPT_CONTEXT iExportContext,
 
 	/* Determine the padding size, which is the amount of padding required to
 	   bring the total data size up to a multiple of the block size with a
-	   minimum size of two blocks */
+	   minimum size of two blocks.  Unlike PKCS #5 padding, the total may be 
+	   zero */
 	totalSize = roundUp( payloadSize, blockSize );
 	if( totalSize < blockSize * 2 )
 		totalSize = blockSize * 2;
@@ -98,7 +99,7 @@ int exportCMS( STDC_UNUSED void *dummy,
 						 CMS_KEYBLOCK_HEADERSIZE + keySize, &padSize );
 	if( cryptStatusError( status ) )
 		return( status );
-	ENSURES( padSize > 0 && padSize <= CRYPT_MAX_IVSIZE );
+	ENSURES( padSize >= 0 && padSize <= CRYPT_MAX_IVSIZE );
 
 	/* If this is just a length check, we're done */
 	if( mechanismInfo->wrappedData == NULL )
@@ -115,13 +116,18 @@ int exportCMS( STDC_UNUSED void *dummy,
 					keySize + padSize > mechanismInfo->wrappedDataLength )
 		return( CRYPT_ERROR_OVERFLOW );
 
-	/* Pad the payload out with a random nonce */
-	setMessageData( &msgData, 
-					keyBlockPtr + CMS_KEYBLOCK_HEADERSIZE + keySize, padSize );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
-							  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
-	if( cryptStatusError( status ) )
-		return( status );
+	/* Pad the payload out with a random nonce if required */
+	if( padSize > 0 )
+		{
+		setMessageData( &msgData, 
+						keyBlockPtr + CMS_KEYBLOCK_HEADERSIZE + keySize, 
+						padSize );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
+								  CRYPT_IATTRIBUTE_RANDOM_NONCE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Format the key block:
 

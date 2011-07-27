@@ -122,7 +122,8 @@ static int lookupPersonality( const void *keyID, const int keyIDlength,
 
 	assert( isReadPtr( keyID, keyIDlength ) );
 	assert( isWritePtr( keyHandle, sizeof( int ) ) );
-	assert( keyIDlength >= 4 && keyIDlength <= KEYID_SIZE );
+
+	REQUIRES( keyIDlength >= 4 && keyIDlength <= KEYID_SIZE );
 
 	/* Clear return value */
 	*keyHandle = CRYPT_ERROR;
@@ -176,7 +177,7 @@ static void deletePersonality( const int keyHandle )
 	{
 	PERSONALITY_INFO *personalityInfoPtr;
 
-	assert( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
+	REQUIRES_V( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
 
 	if( keyHandle < 0 || keyHandle >= NO_PERSONALITIES )
 		return;
@@ -201,7 +202,8 @@ static void bignumToInternal( LONG *outData, int *outDataLength,
 	assert( isWritePtr( outData, CRYPT_MAX_PKCSIZE ) );
 	assert( isWritePtr( outDataLength, sizeof( int ) ) );
 	assert( isReadPtr( inData, inDataLength ) );
-	assert( inDataLength > 0 && inDataLength <= CRYPT_MAX_PKCSIZE );
+
+	REQUIRES_V( inDataLength > 0 && inDataLength <= CRYPT_MAX_PKCSIZE );
 
 	for( i = 0; i < CRYPT_MAX_PKCSIZE / sizeof( LONG ); i++ )
 		outData[ i ] = 0L;
@@ -220,8 +222,9 @@ static void bignumToExternal( BYTE *outData, int *outDataLength,
 	assert( isWritePtr( outData, CRYPT_MAX_PKCSIZE ) );
 	assert( isWritePtr( outDataLength, sizeof( int ) ) );
 	assert( isReadPtr( inData, inDataLength * sizeof( LONG ) ) );
-	assert( inDataLength > 0 && \
-			inDataLength <= CRYPT_MAX_PKCSIZE / sizeof( LONG ) );
+
+	REQUIRES_V( inDataLength > 0 && \
+				inDataLength <= CRYPT_MAX_PKCSIZE / sizeof( LONG ) );
 
 	memset( outData, 0, CRYPT_MAX_PKCSIZE );
 	for( outIndex = 0; outIndex < inDataLength; outIndex++ )
@@ -245,9 +248,11 @@ static void dummyEncrypt( const PERSONALITY_INFO *personalityInfoPtr,
 
 	assert( isReadPtr( personalityInfoPtr, sizeof( PERSONALITY_INFO ) ) );
 	assert( isWritePtr( data, length ) );
-	assert( cryptAlgo > CRYPT_ALGO_NONE && \
-			cryptAlgo < CRYPT_ALGO_LAST_EXTERNAL );
-	assert( cryptMode >= CRYPT_MODE_NONE && cryptMode < CRYPT_MODE_LAST );
+
+	REQUIRES_V( cryptAlgo > CRYPT_ALGO_NONE && \
+				cryptAlgo < CRYPT_ALGO_LAST_EXTERNAL );
+	REQUIRES_V( cryptMode >= CRYPT_MODE_NONE && \
+				cryptMode < CRYPT_MODE_LAST );
 
 	if( isPkcAlgo( cryptAlgo ) )
 		{
@@ -293,7 +298,8 @@ static void dummyGenRandom( void *buffer, const int length )
 	int hashSize, i;
 
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length < MAX_INTLENGTH );
+
+	REQUIRES_V( length >= 1 && length < MAX_INTLENGTH );
 
 	/* Fill the buffer with random-ish data.  This gets a bit tricky because
 	   we need to fool the entropy tests so we can't just fill it with a 
@@ -340,8 +346,9 @@ static int completeInitKeyAES( CONTEXT_INFO *contextInfoPtr,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( personalityInfoPtr, sizeof( PERSONALITY_INFO ) ) );
-	assert( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
-	assert( keySize >= MIN_KEYSIZE && keySize <= CRYPT_MAX_KEYSIZE );
+
+	REQUIRES( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
+	REQUIRES( keySize >= MIN_KEYSIZE && keySize <= CRYPT_MAX_KEYSIZE );
 
 	/* This personality is now active and in use, initialise the metadata 
 	   and set up the mapping from the crypto hardware personality to the
@@ -371,7 +378,8 @@ static int aesInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isReadPtr( key, keyLength ) );
-	assert( keyLength >= 1 && keyLength <= CRYPT_MAX_KEYSIZE );
+
+	REQUIRES( keyLength >= 1 && keyLength <= CRYPT_MAX_KEYSIZE );
 
 	/* Find a free personality slot to store the key */
 	status = findFreePersonality( &keyHandle );
@@ -395,8 +403,9 @@ static int aesGenerateKey( CONTEXT_INFO *contextInfoPtr,
 	int keyHandle, status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( keySizeBits >= bytesToBits( MIN_KEYSIZE ) && \
-			keySizeBits <= bytesToBits( CRYPT_MAX_KEYSIZE ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_KEYSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_KEYSIZE ) );
 
 	/* Find a free personality slot to store the key */
 	status = findFreePersonality( &keyHandle );
@@ -425,7 +434,8 @@ static int aesEncryptECB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length <= MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES, 
 				  CRYPT_MODE_ECB );
@@ -439,7 +449,8 @@ static int aesDecryptECB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length <= MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES, 
 				  CRYPT_MODE_ECB );
@@ -454,7 +465,8 @@ static int aesEncryptCBC( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length <= MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_CBC );
@@ -468,7 +480,8 @@ static int aesDecryptCBC( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length <= MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_CBC );
@@ -483,7 +496,8 @@ static int aesEncryptCFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length <= MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_CFB );
@@ -497,7 +511,8 @@ static int aesDecryptCFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length <= MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_CFB );
@@ -512,7 +527,8 @@ static int aesEncryptOFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length <= MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_OFB );
@@ -526,7 +542,8 @@ static int aesDecryptOFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length <= MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_OFB );
@@ -559,7 +576,8 @@ static int completeInitKeyRSA( CONTEXT_INFO *contextInfoPtr,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( personalityInfoPtr, sizeof( PERSONALITY_INFO ) ) );
-	assert( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
+
+	REQUIRES( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
 
 	/* This personality is now active and in use, set up the mapping from 
 	   the crypto hardware personality to the context using the helper 
@@ -626,7 +644,8 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isReadPtr( key, keyLength ) );
-	assert( keyLength == sizeof( CRYPT_PKCINFO_RSA ) );
+
+	REQUIRES( keyLength == sizeof( CRYPT_PKCINFO_RSA ) );
 
 	/* Find a free personality slot to store the key */
 	status = findFreePersonality( &keyHandle );
@@ -659,8 +678,9 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr,
 	int keyHandle, status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
-			keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* Find a free personality slot to store the key */
 	status = findFreePersonality( &keyHandle );
@@ -693,7 +713,8 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
+
+	REQUIRES( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_RSA, 
 				  CRYPT_MODE_NONE );
@@ -708,7 +729,8 @@ static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
+
+	REQUIRES( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_RSA, 
 				  CRYPT_MODE_NONE );
@@ -725,7 +747,8 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
+
+	REQUIRES( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_RSA,
 				  CRYPT_MODE_NONE );
@@ -740,7 +763,8 @@ static int rsaSigCheck( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
+
+	REQUIRES( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_RSA,
 				  CRYPT_MODE_NONE );
@@ -872,7 +896,8 @@ int hwGetCapabilities( const CAPABILITY_INFO **capabilityInfo,
 int hwGetRandom( void *buffer, const int length )
 	{
 	assert( isWritePtr( buffer, length ) );
-	assert( length >= 1 && length < MAX_INTLENGTH );
+
+	REQUIRES( length >= 1 && length < MAX_INTLENGTH );
 
 	/* Fill the buffer with random-ish data */
 	dummyGenRandom( buffer, length );
@@ -885,8 +910,9 @@ int hwGetRandom( void *buffer, const int length )
 int hwLookupItem( const void *keyID, const int keyIDlength, int *keyHandle )
 	{
 	assert( isReadPtr( keyID, keyIDlength ) );
-	assert( keyIDlength >= 4 && keyIDlength <= KEYID_SIZE );
 	assert( isWritePtr( keyHandle, sizeof( int ) ) );
+
+	REQUIRES( keyIDlength >= 4 && keyIDlength <= KEYID_SIZE );
 
 	/* Clear return value */
 	*keyHandle = CRYPT_ERROR;
@@ -898,7 +924,7 @@ int hwLookupItem( const void *keyID, const int keyIDlength, int *keyHandle )
 
 int hwDeleteItem( const int keyHandle )
 	{
-	assert( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
+	REQUIRES( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
 
 	deletePersonality( keyHandle );
 	return( CRYPT_OK );

@@ -13,11 +13,13 @@
   #define WINDOWS				/* Old format */
   #define OPENSSL_SYS_WINDOWS	/* New fomat */
 #endif /* OpenSSL Windows not defined */
-#if defined( _WIN32 ) && !defined( WIN32 )		/* Win32 and WinCE */
-  #define WIN32					/* Old format */
-  #define OPENSSL_SYS_WIN32		/* New format */
-  /* Note that the following asm defines are duplicated in misc/os_spec.h,
-	 because the OpenSSL headers are non-orthogonal to the cryptlib ones.
+#if defined( _WIN32 )			/* Win32 and WinCE */
+  #ifndef WIN32
+	#define WIN32				/* Old format OpenSSL Win32 identifier */
+  #endif /* WIN32 */
+  #define OPENSSL_SYS_WIN32		/* New format OpenSSL Win32 identifier */
+  /* Note that the following asm defines are duplicated in misc/os_spec.h, 
+	 because the OpenSSL headers are non-orthogonal to the cryptlib ones. 
 	 Any changes made here need to be reflected in os_spec.h */
   #if !( defined( _WIN32_WCE ) || defined( _M_X64 ) || \
 		 defined( __BORLANDC__ ) || defined( NO_ASM ) )
@@ -572,6 +574,13 @@
 	#define L_ENDIAN
 	#define BN_LLONG
 	#define DES_RISC1
+
+  /* Generic 68K */
+  #elif defined( __m68k__  )
+	/* This one is CISC-y enough that any of the (mostly) RISC-specific
+	   optimisations won't have much effect, so the generic code is as good
+	   as any */
+	#define B_ENDIAN
 
   /* We need the developer's help to sort it out */
   #else

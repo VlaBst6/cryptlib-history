@@ -401,6 +401,38 @@ int retExtErrFn( IN_ERROR const int status,
 	appendErrorString( errorInfoPtr, extErrorString, extErrorStringLength );
 	return( localStatus );
 	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
+int retExtErrAltFn( IN_ERROR const int status, 
+					OUT ERROR_INFO *errorInfoPtr, 
+					FORMAT_STRING const char *format, ... )
+	{
+	va_list argPtr;
+	const int localStatus = convertErrorStatus( status );
+	char extErrorString[ MAX_ERRMSG_SIZE + 8 ];
+	int extErrorStringLength;
+
+	/* This function is typically used when the caller wants to convert 
+	   something like "Low-level error string" into "Low-level error string,
+	   additional comments".  First we format the additional-comments 
+	   string */
+	va_start( argPtr, format );
+	extErrorStringLength = vsprintf_s( extErrorString, MAX_ERRMSG_SIZE, 
+									   format, argPtr ); 
+	va_end( argPtr );
+	if( extErrorStringLength <= 0 || extErrorStringLength > MAX_ERRMSG_SIZE )
+		{
+		DEBUG_DIAG(( "Invalid error string data" ));
+		assert( DEBUG_WARN );
+		setErrorString( errorInfoPtr, 
+						"(Couldn't record error information)", 35 );
+		return( localStatus );
+		}
+
+	/* Append the additional status string */
+	appendErrorString( errorInfoPtr, extErrorString, extErrorStringLength );
+	return( localStatus );
+	}
 #else
 
 /****************************************************************************

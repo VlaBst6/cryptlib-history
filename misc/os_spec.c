@@ -6,6 +6,7 @@
 ****************************************************************************/
 
 #include <ctype.h>
+#include <stddef.h>		/* For ptrdiff_t */
 #include <stdio.h>
 #if defined( INC_ALL )
   #include "crypt.h"
@@ -82,6 +83,10 @@ int stricmp( const char *src, const char *dest )
 
 #elif defined( __UCOS__ )
 
+#undef BOOLEAN					/* See comment in kernel/thread.h */
+#include <ucos_ii.h>
+#define BOOLEAN			int
+
 /* uC/OS-II doesn't have a thread-self function, but allows general task
    info to be queried.  Because of this we provide a wrapper that returns
    the task ID as its return value */
@@ -101,6 +106,8 @@ INT8U threadSelf( void )
 ****************************************************************************/
 
 #elif defined( __ITRON__ )
+
+#include <itron.h>
 
 /* The uITRON thread-self function returns the thread ID via a reference
    parameter since uITRON IDs can be negative and there'd be no way to
@@ -438,6 +445,8 @@ uint32_t cryptlibMain( uint16_t cmd, void *cmdPBP, uint16_t launchFlags )
    as a return value.  We use RTEMS_SEARCH_ALL_NODES because there isn't
    any other way to specify the local node, this option always searches the
    local node first so it has the desired effect */
+
+#include <rtems.h>
 
 rtems_id threadSelf( void )
 	{
@@ -1614,11 +1623,11 @@ static int getHWInfo( void )
 		{
 		/* Check for hardware AES support */
 		if( featureFlags & ( 1 << 25 ) )
-			sysCaps = HWCAP_FLAG_AES;
+			sysCaps |= HWCAP_FLAG_AES;
 
 		/* Check for the return of a hardware RNG */
-		if( featureFlags & ( 1 << 31 ) )
-			sysCaps = HWCAP_FLAG_RDRAND;
+		if( featureFlags & ( 1 << 30 ) )
+			sysCaps |= HWCAP_FLAG_RDRAND;
 		}
 
 	return( sysCaps );
@@ -1708,11 +1717,11 @@ static int getHWInfo( void )
 		{
 		/* Check for hardware AES support */
 		if( featureFlags & ( 1 << 25 ) )
-			sysCaps = HWCAP_FLAG_AES;
+			sysCaps |= HWCAP_FLAG_AES;
 
 		/* Check for the return of a hardware RNG */
-		if( featureFlags & ( 1 << 31 ) )
-			sysCaps = HWCAP_FLAG_RDRAND;
+		if( featureFlags & ( 1 << 30 ) )
+			sysCaps |= HWCAP_FLAG_RDRAND;
 		}
 
 	return( sysCaps );
@@ -1848,11 +1857,11 @@ static int getHWInfo( void )
 		{
 		/* Check for hardware AES support */
 		if( featureFlags & ( 1 << 25 ) )
-			sysCaps = HWCAP_FLAG_AES;
+			sysCaps |= HWCAP_FLAG_AES;
 
 		/* Check for the return of a hardware RNG */
-		if( featureFlags & ( 1 << 31 ) )
-			sysCaps = HWCAP_FLAG_RDRAND;
+		if( featureFlags & ( 1 << 30 ) )
+			sysCaps |= HWCAP_FLAG_RDRAND;
 		}
 
 	return( sysCaps );
@@ -1907,7 +1916,7 @@ int initSysVars( void )
 	OSVERSIONINFO osvi = { sizeof( OSVERSIONINFO ) };
 	SYSTEM_INFO systemInfo;
 
-	assert( SYSVAR_LAST < MAX_SYSVARS );
+	static_assert( SYSVAR_LAST < MAX_SYSVARS, "System variable value" );
 
 	/* Reset the system variable information */
 	memset( sysVars, 0, MAX_SYSVARS );
@@ -1951,7 +1960,7 @@ int initSysVars( void )
 
 int initSysVars( void )
 	{
-	assert( SYSVAR_LAST < MAX_SYSVARS );
+	static_assert( SYSVAR_LAST < MAX_SYSVARS, "System variable value" );
 
 	/* Reset the system variable information */
 	memset( sysVars, 0, MAX_SYSVARS );
@@ -2009,4 +2018,61 @@ int getSysVar( const SYSVAR_TYPE type )
 	REQUIRES( type > SYSVAR_NONE && type < SYSVAR_LAST );
 
 	return( sysVars[ type ] );
+	}
+
+/****************************************************************************
+*																			*
+*				Miscellaneous System-specific Support Functions				*
+*																			*
+****************************************************************************/
+
+/* Align a pointer to a given boundary.  This gets quite complicated because
+   the only pointer arithmetic that's normally allowed is addition and 
+   subtraction, but to align to a boundary we need to be able to perform 
+   bitwise operations.  First we convert the pointer to a char pointer so
+   that we can perform normal maths on it, and then we round in the usual
+   manner used by roundUp().  Because we have to do pointer-casting and
+   version we can't use roundUp() directly but have to build our own version 
+   here */
+
+#if defined( __WIN32__ ) || defined( __WIN64__ ) 
+  #define intptr_t	INT_PTR
+#elif defined( __ECOS__ )
+  #define intptr_t	unsigned int
+#elif defined( __GNUC__ ) && ( __GNUC__ >= 3 )
+  #include <stdint.h>
+#elif defined( SYSTEM_64BIT )
+  #define intptr_t	long long
+#else
+  #define intptr_t	int
+#endif /* OS-specific pointer <-> int-type equivalents */
+
+void *ptr_align( const void *ptr, const int units )
+	{
+	assert( isReadPtr( ptr, 1 ) );
+	assert( units > 0 && units < MAX_INTLENGTH_SHORT );
+
+	return( ( void * ) ( ( char * ) ptr + ( -( ( intptr_t )( ptr ) ) & ( units - 1 ) ) ) );
+	}
+
+/* Determine the difference between two pointers, with some sanity 
+   checking.  This assumes the pointers are fairly close in location,
+   used to determine whether pointers that were potentially relocated 
+   at some point via ptr_align() have moved */
+
+int ptr_diff( const void *ptr1, const void *ptr2 )
+	{
+	ptrdiff_t diff;
+
+	assert( isReadPtr( ptr1, 1 ) );
+	assert( isReadPtr( ptr2, 1 ) );
+	assert( ptr1 >= ptr2 );
+
+	diff = ( const BYTE * ) ptr1 - ( const BYTE * ) ptr2;
+	if( diff < 0 )
+		diff = -diff;
+	if( diff > MAX_INTLENGTH )
+		return( -1 );
+
+	return( ( int ) diff );
 	}

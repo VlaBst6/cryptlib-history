@@ -221,7 +221,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_HMAC_RIPEMD160, bitsToBytes( 160 ), "HMAC-RIPEMD160", 14,
-	bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE,
+	bitsToBytes( 64 ), bitsToBytes( 160 ), CRYPT_MAX_KEYSIZE,
 	selfTest, getInfo, NULL, NULL, initKey, NULL, hash, hash
 	};
 

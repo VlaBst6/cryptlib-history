@@ -70,7 +70,7 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 #ifdef USE_OAEP
 	{ MECHANISM_ENC_OAEP,
 	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
-					 MAX_PKCENCRYPTED_SIZE ),
+					 CRYPT_MAX_PKCSIZE ),
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_CONV | ST_CTX_MAC | ST_CTX_GENERIC,
 				 ACL_FLAG_HIGH_STATE ),		/* Ctx containing key */
@@ -93,20 +93,6 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
-
-	/* KEA key agreement */
-#ifdef USE_KEA
-	{ MECHANISM_ENC_KEA,
-	  { MKACP_S( 140, 140 ),				/* sizeof( TEK( MEK ) + Ra ) */
-		MKACP_S_NONE(),
-		MKACP_O( ST_CTX_CONV,				/* Skipjack session key */
-				 ACL_FLAG_HIGH_STATE ),
-		MKACP_O( ST_CTX_PKC,				/* Recipient KEA pubkey */
-				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_O( ST_CTX_PKC,				/* Sender KEA privkey */
-				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED() } },
-#endif /* USE_KEA */
 
 	/* PKCS #15 private key wrap */
 	{ MECHANISM_PRIVATEKEYWRAP,
@@ -145,7 +131,7 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 	/* PKCS #1 decrypt */
 	{ MECHANISM_ENC_PKCS1,
 	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
-					 CRYPT_MAX_PKCSIZE ),
+					 MAX_PKCENCRYPTED_SIZE ),
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_CONV | ST_CTX_MAC | ST_CTX_GENERIC,
 				 ACL_FLAG_LOW_STATE ),		/* Ctx to contain key */
@@ -158,7 +144,7 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 #ifdef USE_PGP
 	{ MECHANISM_ENC_PKCS1_PGP,
 	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
-					 4 + ( 2 * CRYPT_MAX_PKCSIZE ) ),
+					 MAX_PKCENCRYPTED_SIZE ),
 		MKACP_S_NONE(),
 		MKACP_UNUSED(),						/* Placeholder for ctx to contain key */
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
@@ -206,20 +192,6 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
-
-	/* KEA key agreement */
-#ifdef USE_KEA
-	{ MECHANISM_ENC_KEA,
-	  { MKACP_S( 140, 140 ),				/* sizeof( TEK( MEK ) + Ra ) */
-		MKACP_S_NONE(),
-		MKACP_O( ST_CTX_CONV,				/* Skipjack session key */
-				 ACL_FLAG_LOW_STATE ),
-		MKACP_O( ST_CTX_PKC,				/* Recipient KEA privkey */
-				 ACL_FLAG_HIGH_STATE ),
-		MKACP_O( ST_CTX_PKC,				/* Sender KEA pubkey */
-				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED() } }, 
-#endif /* USE_KEA */
 
 	/* PKCS #15 private key unwrap */
 	{ MECHANISM_PRIVATEKEYWRAP,
@@ -363,7 +335,7 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 	{ MECHANISM_DERIVE_PKCS5,
 	  { MKACP_S( 1, CRYPT_MAX_KEYSIZE ),	/* Key data */
 		MKACP_S( MIN_NAME_LENGTH, MAX_ATTRIBUTE_SIZE ),/* Keying material */
-		MKACP_N( CRYPT_ALGO_HMAC_SHA, CRYPT_ALGO_HMAC_SHAng ),/* Hash algo */
+		MKACP_N( CRYPT_ALGO_HMAC_SHA1, CRYPT_ALGO_HMAC_SHAng ),/* Hash algo */
 		MKACP_N( 0, CRYPT_MAX_HASHSIZE ),	/* Hash parameters */
 		MKACP_S( 4, 512 ),					/* Salt */
 		MKACP_N( 1, MAX_KEYSETUP_ITERATIONS ) } },	/* Iterations */
@@ -422,7 +394,7 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 	{ MECHANISM_DERIVE_PGP,
 	  { MKACP_S( 16, CRYPT_MAX_KEYSIZE ),	/* Key data */
 		MKACP_S( MIN_NAME_LENGTH, MAX_ATTRIBUTE_SIZE ),/* Keying material */
-		MKACP_N( CRYPT_ALGO_MD5, CRYPT_ALGO_RIPEMD160 ),/* Hash algo */
+		MKACP_N( CRYPT_ALGO_MD5, CRYPT_ALGO_SHA256 ),/* Hash algo */
 		MKACP_N( 0, 0 ),					/* Hash parameters */
 		MKACP_S( 8, 8 ),					/* Salt */
 		MKACP_N( 0, INT_MAX >> 6 ) } },		/* Iterations (0 = don't iterate) */
@@ -453,7 +425,7 @@ static const MECHANISM_ACL FAR_BSS mechanismKDFACL[] = {
 				 ACL_FLAG_LOW_STATE ),		/* Key data */
 		MKACP_O( ST_CTX_GENERIC,
 				 ACL_FLAG_HIGH_STATE ),		/* Keying material */
-		MKACP_N( CRYPT_ALGO_HMAC_SHA, CRYPT_ALGO_HMAC_SHAng ),/* Hash algo */
+		MKACP_N( CRYPT_ALGO_HMAC_SHA1, CRYPT_ALGO_HMAC_SHAng ),/* Hash algo */
 		MKACP_N( 0, CRYPT_MAX_HASHSIZE ),	/* Hash parameters */
 		MKACP_S( 8, CRYPT_MAX_TEXTSIZE ) } },	/* Salt */
 
@@ -529,7 +501,6 @@ int preDispatchCheckMechanismWrapAccess( IN_HANDLE const int objectHandle,
 			  messageValue == MECHANISM_ENC_PKCS1_RAW || \
 			  messageValue == MECHANISM_ENC_OAEP || \
 			  messageValue == MECHANISM_ENC_CMS || \
-			  messageValue == MECHANISM_ENC_KEA || \
 			  messageValue == MECHANISM_PRIVATEKEYWRAP || \
 			  messageValue == MECHANISM_PRIVATEKEYWRAP_PKCS8 || \
 			  messageValue == MECHANISM_PRIVATEKEYWRAP_PGP2 || \

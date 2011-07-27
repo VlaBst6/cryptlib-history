@@ -250,7 +250,7 @@ static int readProtectionAlgo( INOUT STREAM *stream,
 							   INOUT CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo, hashAlgo;
-	int streamPos, status;
+	int hashParam, streamPos, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
@@ -263,8 +263,8 @@ static int readProtectionAlgo( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	streamPos = stell( stream );
-	status = readAlgoIDext( stream, &cryptAlgo, &hashAlgo, 
-							ALGOID_CLASS_PKCSIG );
+	status = readAlgoIDex( stream, &cryptAlgo, &hashAlgo, &hashParam,
+						   ALGOID_CLASS_PKCSIG );
 	if( cryptStatusOK( status ) )
 		{
 		/* Make sure that it's a recognised signature algorithm to avoid
@@ -277,6 +277,7 @@ static int readProtectionAlgo( INOUT STREAM *stream,
 		   verify it rather than the MAC */
 		protocolInfo->useMACreceive = FALSE;
 		protocolInfo->hashAlgo = hashAlgo;
+		protocolInfo->hashParam = hashParam;
 
 		return( CRYPT_OK );
 		}

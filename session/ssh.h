@@ -465,6 +465,9 @@ int streamBookmarkComplete( INOUT STREAM *stream,
 
 /* Prototypes for functions in ssh2.c */
 
+CHECK_RETVAL \
+int getAlgoStringInfo( OUT const ALGO_STRING_INFO **algoStringInfoPtrPtr,
+					   OUT_INT_Z int *noInfoEntries );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 6 ) ) \
 int readAlgoString( INOUT STREAM *stream, 
 					IN_ARRAY( noAlgoStringEntries ) \

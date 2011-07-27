@@ -124,8 +124,10 @@ int setSerialNumber( INOUT CERT_INFO *certInfoPtr,
 		   the first byte of the value that we use is nonzero (to guarantee 
 		   a DER encoding), and clear the high bit to provide a constant-
 		   length ASN.1 encoded value */
-		assert( DEFAULT_SERIALNO_SIZE <= SERIALNO_BUFSIZE );
-		assert( DEFAULT_SERIALNO_SIZE + 1 <= 4 + MAX_SERIALNO_SIZE );
+		static_assert( DEFAULT_SERIALNO_SIZE <= SERIALNO_BUFSIZE, \
+					   "Buffer size" );
+		static_assert( DEFAULT_SERIALNO_SIZE + 1 <= 4 + MAX_SERIALNO_SIZE, \
+					   "Buffer size" );
 		setMessageData( &msgData, buffer, DEFAULT_SERIALNO_SIZE + 1 );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
@@ -480,11 +482,25 @@ int addCertComponent( INOUT CERT_INFO *certInfoPtr,
 			return( CRYPT_OK );
 
 		case CRYPT_CERTINFO_TRUSTED_IMPLICIT:
+			{
+			int value;
+
+			/* This option is only valid for CA certificates */
+			status = getAttributeFieldValue( certInfoPtr->attributes, 
+											 CRYPT_CERTINFO_KEYUSAGE,
+											 CRYPT_ATTRIBUTE_NONE, &value );
+			if( cryptStatusError( status ) || !( value & KEYUSAGE_CA ) )
+				{
+				setErrorInfo( certInfoPtr, CRYPT_CERTINFO_CA,
+							  CRYPT_ERRTYPE_ATTR_ABSENT );
+				return( CRYPT_ARGERROR_NUM1 );
+				}
 			return( krnlSendMessage( certInfoPtr->ownerHandle,
 									 IMESSAGE_USER_TRUSTMGMT,
 									 &certInfoPtr->objectHandle,
 									 certInfo ? MESSAGE_TRUSTMGMT_ADD : \
 												MESSAGE_TRUSTMGMT_DELETE ) );
+			}
 
 #ifdef USE_CERTREV
 		case CRYPT_CERTINFO_SIGNATURELEVEL:

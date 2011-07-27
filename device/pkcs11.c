@@ -224,7 +224,7 @@ static int checkDriverBugs( const PKCS11_INFO *pkcs11Info )
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_NOTINITED );
 		}
-	assert( hObject != CK_OBJECT_NONE );
+	ENSURES( hObject != CK_OBJECT_NONE );
 
 	/* Try and use the object to encrypt data (or at least call the pre-
 	   encrypt call, which should be enough to shake out most bugs) */
@@ -470,7 +470,7 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 								NULL_PTR, NULL_PTR, &hSession );
 		if( status != CKR_OK )
 			return( pkcs11MapError( status, CRYPT_ERROR_OPEN ) );
-		assert( hSession != CK_OBJECT_NONE );
+		ENSURES( hSession != CK_OBJECT_NONE );
 		pkcs11Info->hSession = hSession;
 
 		/* If it's a straight zeroise, we're done */
@@ -716,8 +716,7 @@ static int initKey( INOUT CONTEXT_INFO *contextInfoPtr,
 	BYTE *contextKeyPtr;
 	int *contextKeyLenPtr;
 	int keySize = \
-		( cryptAlgo == CRYPT_ALGO_DES || cryptAlgo == CRYPT_ALGO_3DES || \
-		  cryptAlgo == CRYPT_ALGO_IDEA || cryptAlgo == CRYPT_ALGO_SKIPJACK ) ? \
+		( cryptAlgo == CRYPT_ALGO_DES || cryptAlgo == CRYPT_ALGO_3DES ) ? \
 		contextInfoPtr->capabilityInfo->keySize : keyLength;
 	int cryptStatus;
 
@@ -788,7 +787,7 @@ static int initKey( INOUT CONTEXT_INFO *contextInfoPtr,
 	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusOK( cryptStatus ) )
 		{
-		assert( hObject != CK_OBJECT_NONE );
+		ENSURES( hObject != CK_OBJECT_NONE );
 
 		contextInfoPtr->deviceObject = hObject;
 		}
@@ -929,7 +928,7 @@ static int generateKey( INOUT CONTEXT_INFO *contextInfoPtr,
 	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusOK( cryptStatus ) )
 		{
-		assert( hObject != CK_OBJECT_NONE );
+		ENSURES( hObject != CK_OBJECT_NONE );
 
 		contextInfoPtr->deviceObject = hObject;
 		}
@@ -1248,23 +1247,7 @@ static int cipherEncryptCBC( INOUT CONTEXT_INFO *contextInfoPtr,
 	return( cipherEncrypt( contextInfoPtr, buffer, length, 
 						   contextInfoPtr->capabilityInfo->paramDefaultMech ) );
 	}
-#ifdef USE_SKIPJACK
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int cipherEncryptCFB( INOUT CONTEXT_INFO *contextInfoPtr, 
-							 INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
-							 IN_LENGTH int length )
-	{
-	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( isWritePtr( buffer, length ) );
-
-	REQUIRES( length > 0 && length < MAX_INTLENGTH );
-
-	return( cipherEncrypt( contextInfoPtr, buffer, length, 
-				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
-							  CRYPT_MODE_CFB ) ) );
-	}
-#endif /* USE_SKIPJACK */
-#if defined( USE_RC4 ) || defined( USE_SKIPJACK )
+#if defined( USE_RC4 ) 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int cipherEncryptOFB( INOUT CONTEXT_INFO *contextInfoPtr, 
 							 INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
@@ -1281,7 +1264,7 @@ static int cipherEncryptOFB( INOUT CONTEXT_INFO *contextInfoPtr,
 				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
 							  CRYPT_MODE_OFB ) ) );
 	}
-#endif /* USE_RC4 || USE_SKIPJACK */
+#endif /* USE_RC4 */
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int cipherDecryptECB( INOUT CONTEXT_INFO *contextInfoPtr, 
 							 INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
@@ -1313,23 +1296,7 @@ static int cipherDecryptCBC( INOUT CONTEXT_INFO *contextInfoPtr,
 	return( cipherDecrypt( contextInfoPtr, buffer, length, 
 						   contextInfoPtr->capabilityInfo->paramDefaultMech ) );
 	}
-#ifdef USE_SKIPJACK
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int cipherDecryptCFB( INOUT CONTEXT_INFO *contextInfoPtr, 
-							 INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
-							 IN_LENGTH int length )
-	{
-	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( isWritePtr( buffer, length ) );
-
-	REQUIRES( length > 0 && length < MAX_INTLENGTH );
-
-	return( cipherDecrypt( contextInfoPtr, buffer, length, 
-				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
-							  CRYPT_MODE_CFB ) ) );
-	}
-#endif /* USE_SKIPJACK */
-#if defined( USE_RC4 ) || defined( USE_SKIPJACK )
+#if defined( USE_RC4 ) 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int cipherDecryptOFB( INOUT CONTEXT_INFO *contextInfoPtr, 
 							 INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
@@ -1346,7 +1313,7 @@ static int cipherDecryptOFB( INOUT CONTEXT_INFO *contextInfoPtr,
 				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
 							  CRYPT_MODE_OFB ) ) );
 	}
-#endif /* USE_RC4 || USE_SKIPJACK */
+#endif /* USE_RC4 */
 
 /****************************************************************************
 *																			*
@@ -1445,22 +1412,6 @@ static const PKCS11_MECHANISM_INFO mechanismInfoConv[] = {
 	{ CKM_DES3_CBC, CKM_DES3_KEY_GEN, CKM_DES3_CBC, CRYPT_ALGO_3DES, CRYPT_MODE_CBC, CKK_DES3,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
-#ifdef USE_IDEA
-	{ CKM_IDEA_ECB, CKM_IDEA_KEY_GEN, CKM_IDEA_CBC, CRYPT_ALGO_IDEA, CRYPT_MODE_ECB, CKK_IDEA,
-	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
-	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
-	{ CKM_IDEA_CBC, CKM_IDEA_KEY_GEN, CKM_IDEA_CBC, CRYPT_ALGO_IDEA, CRYPT_MODE_CBC, CKK_IDEA,
-	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
-	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
-#endif /* USE_IDEA */
-#ifdef USE_CAST
-	{ CKM_CAST5_ECB, CKM_CAST5_KEY_GEN, CKM_CAST5_CBC, CRYPT_ALGO_CAST, CRYPT_MODE_ECB, CKK_CAST5,
-	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
-	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
-	{ CKM_CAST5_CBC, CKM_CAST5_KEY_GEN, CKM_CAST5_CBC, CRYPT_ALGO_CAST, CRYPT_MODE_CBC, CKK_CAST5,
-	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
-	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
-#endif /* USE_CAST */
 #ifdef USE_RC2
 	{ CKM_RC2_ECB, CKM_RC2_KEY_GEN, CKM_RC2_CBC, CRYPT_ALGO_RC2, CRYPT_MODE_ECB, CKK_RC2,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
@@ -1493,20 +1444,6 @@ static const PKCS11_MECHANISM_INFO mechanismInfoConv[] = {
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
 #endif /* USE_BLOWFISH */
-#ifdef USE_SKIPJACK
-	{ CKM_SKIPJACK_ECB64, CKM_SKIPJACK_KEY_GEN, CKM_SKIPJACK_CBC64, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_ECB, CKK_SKIPJACK,
-	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
-	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
-	{ CKM_SKIPJACK_CBC64, CKM_SKIPJACK_KEY_GEN, CKM_SKIPJACK_CBC64, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_CBC, CKK_SKIPJACK,
-	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
-	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
-	{ CKM_SKIPJACK_CFB64, CKM_SKIPJACK_KEY_GEN, CKM_SKIPJACK_CBC64, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_CFB, CKK_SKIPJACK,
-	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
-	  cipherEncryptCFB, cipherDecryptCFB, NULL, NULL },
-	{ CKM_SKIPJACK_OFB64, CKM_SKIPJACK_KEY_GEN, CKM_SKIPJACK_CBC64, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_OFB, CKK_SKIPJACK,
-	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
-	  cipherEncryptOFB, cipherDecryptOFB, NULL, NULL },
-#endif /* USE_SKIPJACK */
 
 	/* MAC mechanisms.  The positioning of the encrypt/decrypt functions is 
 	   a bit odd because cryptlib treats hashing as an encrypt/decrypt
@@ -1592,7 +1529,7 @@ static CK_MECHANISM_TYPE getMechanism( const GETMECH_TYPE mechType,
 
 	/* It's a conventional-encryption mechanism, we have to match the 
 	   encryption mode as well */
-	assert( mechType == MECH_CONV );
+	ENSURES_EXT( mechType == MECH_CONV, CKM_NONE );
 	while( mechanismInfoConv[ i ].cryptMode != cryptMode && \
 		   mechanismInfoConv[ i ].cryptAlgo != CRYPT_ERROR && \
 		   i < FAILSAFE_ARRAYSIZE( mechanismInfoConv, PKCS11_MECHANISM_INFO ) )

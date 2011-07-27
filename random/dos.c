@@ -46,7 +46,7 @@ void slowPoll( void )
 	   temporary buffers as we usually are.  We also have to use unbuffered
 	   I/O, since the high-level functions will read BUFSIZ bytes at once
 	   from the input, comletely draining the driver of any randomness */
-	if( ( fd = open( "/dev/random$", O_RDONLY | O_BINARY) ) == -1 &&
+	if( ( fd = open( "/dev/random$", O_RDONLY | O_BINARY) ) == -1 && \
 		( fd = open( "/dev/random", O_RDONLY | O_BINARY) ) == -1 )
 		return;
 	for( total = 0; total < sizeof( buffer ); )

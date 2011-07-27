@@ -98,21 +98,25 @@ typedef enum {
 
 /* Public-key algorithms */
 
-#define PGP_ALGO_RSA		1		/* RSA algorithm */
+#define PGP_ALGO_RSA		1		/* RSA */
 #define PGP_ALGO_RSA_ENCRYPT 2		/* RSA encrypt-only */
 #define PGP_ALGO_RSA_SIGN	3		/* RSA sign-only */
-#define PGP_ALGO_ELGAMAL	16		/* ElGamal algorithm */
-#define PGP_ALGO_DSA		17		/* DSA signature algorithm */
+#define PGP_ALGO_ELGAMAL	16		/* ElGamal */
+#define PGP_ALGO_DSA		17		/* DSA */
+#define PGP_ALGO_ECC_RES	18		/* Reserved for "ECC" */
+#define PGP_ALGO_ECDSA_RES	19		/* Reserved for ECDSA */
+#define PGP_ALGO_PKC_RES1	20		/* Reserved, formerly Elgamal sign */
+#define PGP_ALGO_PKC_RES2	21		/* Reserved for "X9.42" */
 
 /* Conventional encryption algorithms */
 
 #define PGP_ALGO_NONE		0		/* No CKE algorithm */
-#define PGP_ALGO_IDEA		1		/* IDEA cipher */
+#define PGP_ALGO_IDEA		1		/* IDEA */
 #define PGP_ALGO_3DES		2		/* Triple DES */
 #define PGP_ALGO_CAST5		3		/* CAST-128 */
 #define PGP_ALGO_BLOWFISH	4		/* Blowfish */
-#define PGP_ALGO_SAFERSK	5		/* Safer-SK */
-#define PGP_ALGO_RESERVED1	6		/* Reserved/never used */
+#define PGP_ALGO_ENC_RES1	5		/* Reserved, formerly Safer-SK */
+#define PGP_ALGO_ENC_RES2	6		/* Reserved */
 #define PGP_ALGO_AES_128	7		/* AES with 128-bit key */
 #define PGP_ALGO_AES_192	8		/* AES with 192-bit key */
 #define PGP_ALGO_AES_256	9		/* AES with 256-bit key */
@@ -123,18 +127,20 @@ typedef enum {
 #define PGP_ALGO_MD5		1		/* MD5 */
 #define PGP_ALGO_SHA		2		/* SHA-1 */
 #define PGP_ALGO_RIPEMD160	3		/* RIPEMD-160 */
-#define PGP_ALGO_RESERVED2	4		/* Reserved/never used */
-#define PGP_ALGO_MD2		5		/* MD2 */
-#define PGP_ALGO_RESERVED3	6		/* Reserved/never used (Tiger/192) */
-#define PGP_ALGO_RESERVED4	7		/* Reserved/never used (Haval) */
+#define PGP_ALGO_HASH_RES1	4		/* Reserved */
+#define PGP_ALGO_HASH_RES2	5		/* Reserved, formerly MD2 */
+#define PGP_ALGO_HASH_RES3	6		/* Reserved, formerly Tiger/192 */
+#define PGP_ALGO_HASH_RES4	7		/* Reserved, formerly Haval */
 #define PGP_ALGO_SHA2_256	8		/* SHA-2 256bit */
 #define PGP_ALGO_SHA2_384	9		/* SHA-2 384bit */
 #define PGP_ALGO_SHA2_512	10		/* SHA-2 512bit */
+#define PGP_ALGO_SHA2_224	11		/* SHA-2 224bit */
 
 /* Compression algorithms */
 
 #define PGP_ALGO_ZIP		1		/* ZIP compression */
 #define PGP_ALGO_ZLIB		2		/* zlib compression */
+#define PGP_ALGO_BZIP2		3		/* Bzip2 compression */
 
 /* Highest possible algorithm value, for range checking */
 

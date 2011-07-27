@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Thread/Mutex Handling  					*
-*						Copyright Peter Gutmann 1992-2008					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -179,7 +179,8 @@
    To enable the use of thread wrappers, see the xxx_THREAD_WRAPPERS define
    for each embedded OS type */
 
-/* Define the following to debug mutex lock/unlock operations */
+/* Define the following to debug mutex lock/unlock operations (only enabled
+   under Windows at the moment) */
 
 /* #define MUTEX_DEBUG */
 
@@ -484,7 +485,7 @@ int threadPriority( void );
 				function, threadStack, K_USERTHREAD, arg }; \
 			\
 			semInit( &syncHandle, 1 ); \
-			if( threadCreate( K_MYACTOR, &threadHandle, K_ACTIVE, NULL,
+			if( threadCreate( K_MYACTOR, &threadHandle, K_ACTIVE, NULL, \
 							  &startInfo ) != K_OK ) \
 				{ \
 				free( threadStack ); \
@@ -551,6 +552,7 @@ int threadPriority( void );
 /* Since eCOS has non-scalar handles we need to define a custom version of
    the value DUMMY_INIT_MUTEX (see the end of this file) */
 
+#define NONSCALAR_THREADS
 #define DUMMY_INIT_MUTEX		{ 0 }
 
 /* Mutex management functions */
@@ -675,14 +677,137 @@ int threadPriority( void );
 
 /****************************************************************************
 *																			*
+*									EmbOS									*
+*																			*
+****************************************************************************/
+
+#elif defined( __EmbOS__ )
+
+/* To use resource-management wrappers for the EmbOS thread functions,
+   undefine the following */
+
+/* #define EMBOS_THREAD_WRAPPERS */
+
+#include <RTOS.h>
+
+/* Object handles */
+
+#define THREAD_HANDLE			OS_TASK *
+#define MUTEX_HANDLE			OS_RSEMA
+
+/* Since EmbOS has non-scalar handles we need to define a custom version of
+   the value DUMMY_INIT_MUTEX (see the end of this file) */
+
+#define NONSCALAR_THREADS
+#define DUMMY_INIT_MUTEX		{ 0 }
+
+/* Mutex management functions.  EmbOS mutexes are reentrant so we don't have 
+   to hand-assemble reentrant mutexes as for many other OSes */
+
+#define MUTEX_DECLARE_STORAGE( name ) \
+		OS_RSEMA name##Mutex; \
+		BOOLEAN name##MutexInitialised
+#define MUTEX_CREATE( name, status ) \
+		status = CRYPT_OK;	/* Apparently never fails */ \
+		if( !krnlData->name##MutexInitialised ) \
+			{ \
+			OS_CREATERSEMA( &krnlData->name##Mutex ); \
+			krnlData->name##MutexInitialised = TRUE; \
+			}
+#define MUTEX_DESTROY( name ) \
+		if( krnlData->name##MutexInitialised ) \
+			{ \
+			OS_Use( &krnlData->name##Mutex ); \
+			OS_Unuse( &krnlData->name##Mutex ); \
+			OS_DeleteRSema( &krnlData->name##Mutex ); \
+			krnlData->name##MutexInitialised = FALSE; \
+			}
+#define MUTEX_LOCK( name ) \
+		OS_Use( &krnlData->name##Mutex )
+#define MUTEX_UNLOCK( name ) \
+		OS_Unuse( &krnlData->name##Mutex )
+
+/* Thread management functions.  EmbOS threads require that the user allocate
+   the stack space for them, unlike virtually every other embedded OS, which
+   make this at most a rarely-used option.  To handle this, we use our own
+   wrappers, which hide this mess and provide access via a single scalar
+   variable.
+
+   We create the thread with the same priority as the calling thread.  There 
+   doesn't seem to be any way to tell whether a thread has been successfully 
+   created/started or not (!!).  The stack size of 4096 provides enough space 
+   for about half a dozen levels of function nesting (if no large on-stack 
+   arrays are used), this should be enough for background init but probably 
+   won't be sufficient for the infinitely-recursive OpenSSL bignum code, so 
+   the value may need to be adjusted if background keygen is being used.
+   
+   The implementation of THREAD_SAME() is somewhat ugly in that since thread
+   data storage is handled by the caller rather than being allocated by the
+   OS we end up with a mixture of 'struct' (if we're referring to a block of
+   storage for the thread data) and 'struct *' (if we're referring to a thread
+   handle returned from a function like OS_GetTaskID()).  THREAD_SAME() takes
+   advantage of the fact that when it's used, the first argument is always a
+   'struct' and the second is always a 'struct *', which is rather ugly but the
+   only other way to do it would be to wrap the thread functions with our own
+   code that dynamically allocates thread data so that all handles are 
+   'struct *'s */
+
+#define THREADFUNC_DEFINE( name, arg )	void name( void *arg )
+#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+			{ \
+			BYTE *threadData = malloc( 4096 ); \
+			\
+			if( threadData == NULL ) \
+				status = CRYPT_ERROR_MEMORY; \
+			else \
+				{ \
+				OS_CREATERSEMA( &syncHandle ); \
+				OS_CREATETASK_EX( threadHandle, NULL, function, \
+								  OS_GetPriority( NULL ), threadData, arg ); \
+				status = CRYPT_OK; \
+				} \
+			}
+#define THREAD_EXIT( sync )		OS_Unuse( ( OS_RSEMA * ) &sync ); \
+								OS_Terminate( OS_GetTaskID() )
+#define THREAD_INITIALISER		{ 0 }
+#define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
+#define THREAD_SELF()			OS_GetTaskID()
+#define THREAD_SLEEP( ms )		OS_Delay( ms )
+#define THREAD_YIELD()			OS_Yield()
+#define THREAD_WAIT( sync, status ) \
+								OS_Use( &sync ); \
+								OS_DeleteRSema( &sync ); \
+								status = CRYPT_OK
+#define THREAD_CLOSE( sync )
+
+/* Because of the problems with resource management of EmbOS threads and
+   related metadata, we no-op them out unless we're using wrappers by
+   ensuring that any attempt to spawn a thread inside cryptlib fails,
+   falling back to the non-threaded alternative.  Note that cryptlib itself
+   is still thread-safe, it just can't do its init or keygen in an internal
+   background thread */
+
+#ifndef EMBOS_THREAD_WRAPPERS
+  #undef THREAD_CREATE
+  #undef THREAD_EXIT
+  #undef THREAD_CLOSE
+  #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+								status = CRYPT_ERROR
+  #define THREAD_EXIT( sync )
+  #define THREAD_CLOSE( sync )
+#endif /* !EMBOS_THREAD_WRAPPERS */
+
+/****************************************************************************
+*																			*
 *								FreeRTOS/OpenRTOS							*
 *																			*
 ****************************************************************************/
 
 #elif defined( __FreeRTOS__ )
 
-#include <semphr.h>
+#include <FreeRTOS.h>
 #include <task.h>
+#include <semphr.h>
 
 /* Object handles */
 
@@ -703,6 +828,7 @@ int threadPriority( void );
 		xSemaphoreHandle name##Mutex; \
 		BOOLEAN name##MutexInitialised
 #define MUTEX_CREATE( name, status ) \
+		status = CRYPT_OK; \
 		if( !krnlData->name##MutexInitialised ) \
 			{ \
 			vSemaphoreCreateBinary( krnlData->name##Mutex ); \
@@ -760,173 +886,6 @@ int threadPriority( void );
 								if( xSemaphoreTake( sync, MUTEX_WAIT_TIME ) != pdTRUE ) \
 									status = CRYPT_ERROR
 #define THREAD_CLOSE( sync )	vTaskDelete( &sync )
-
-/****************************************************************************
-*																			*
-*									uC/OS-II								*
-*																			*
-****************************************************************************/
-
-#elif defined( __UCOS__ )
-
-/* uC/OS-II has a pure priority-based scheduler (no round-robin scheduling)
-   and makes a task's priority do double duty as the task ID, which means
-   that it's unlikely it'll ever get round-robin scheduling without a
-   major overhaul of the API.  Because of this, a background task started
-   inside cryptlib for initialisation or keygen will either never run or
-   always run depending on the priority it's started with, thus making it
-   equivalent to performing the operation synchronously.  This means that
-   there's no point in using cryptlib-internal tasks, so they're disabled
-   unless the following is commented out.  Note that cryptlib is still
-   thread-(task)-safe, it just won't use internal tasks for asynchronous
-   ops, because uC/OS-II's scheduling will make the synchronous */
-
-/* #define UCOS_USE_TASKS */
-
-/* Most systems handle priority-inversion-avoidance automatically, however
-   for some reason in uC/OS-II this has to be managed manually by the user.
-   This is done by specifying the priority-inherit priority level that a
-   low-priority task is raised to when a high-priority task attempts to
-   acquire a mutex that the low-priority task is currently holding.  This
-   has to be higher than the priority of any of the tasks that will try
-   to acquire the mutex, as well as being different from the task ID/
-   priority of any task (another problem caused by the task ID == priority
-   issue).  The following is a sample value that'll need to be adjusted
-   based on usage by the calling application */
-
-#define UCOS_PIP		10
-
-/* Because of the strict priority scheduling, we have to specify the task
-   priority (which then also becomes the task ID) when we create the task.
-   The following is a sample task ID, which must be less than UCOS_PIP */
-
-#define UCOS_TASKID		20
-
-#include <includes.h>
-
-/* Object handles */
-
-#define THREAD_HANDLE			INT8U
-#define MUTEX_HANDLE			OS_EVENT *
-
-/* Mutex management functions.  uC/OS-II mutexes aren't re-entrant (although
-   this is never mentioned explicitly in any documentation the description 
-   of how mutexes work in App.Note 1002 makes it clear that they're not), we
-   use the standard trylock()-style mechanism to work around this */
-
-#define MUTEX_DECLARE_STORAGE( name ) \
-		OS_EVENT *name##Mutex; \
-		BOOLEAN name##MutexInitialised; \
-		INT8U name##MutexOwner; \
-		int name##MutexLockcount
-#define MUTEX_CREATE( name, status ) \
-		status = CRYPT_OK; \
-		if( !krnlData->name##MutexInitialised ) \
-			{ \
-			INT8U err; \
-			\
-			krnlData->name##Mutex = OSMutexCreate( UCOS_PIP, &err ); \
-			if( err == OS_NO_ERR ) \
-				krnlData->name##MutexInitialised = TRUE; \
-			else \
-				status = CRYPT_ERROR; \
-			}
-#define MUTEX_DESTROY( name ) \
-		if( krnlData->name##MutexInitialised ) \
-			{ \
-			INT8U err; \
-			\
-			OSMutexPend( krnlData->name##Mutex, 0, &err ); \
-			OSMutexPost( krnlData->name##Mutex ); \
-			OSMutexDel( krnlData->name##Mutex, OS_DEL_ALWAYS, &err ); \
-			krnlData->name##MutexInitialised = FALSE; \
-			}
-#define MUTEX_LOCK( name ) \
-		{ \
-		INT8U err; \
-		\
-		if( OSMutexAcept( krnlData->name##Mutex, &err ) == 0 ) \
-			{ \
-			if( !THREAD_SAME( krnlData->name##MutexOwner, THREAD_SELF() ) ) \
-				OSMutexPend( krnlData->name##Mutex, 0, &err ); \
-			else \
-				krnlData->name##MutexLockcount++; \
-			} \
-		krnlData->name##MutexOwner = THREAD_SELF();
-#define MUTEX_UNLOCK( name ) \
-		if( krnlData->name##MutexLockcount > 0 ) \
-			krnlData->name##MutexLockcount--; \
-		else \
-			{ \
-			krnlData->name##MutexOwner = THREAD_INITIALISER; \
-			OSMutexPost( krnlData->name##Mutex ); \
-			}
-
-/* Thread management functions.  Because of the strict priority-based
-   scheduling there's no way to perform a yield, the best that we can do
-   is sleep for 1ms, which is better than performing a busy wait.
-
-   Thread sleep times are measured in implementation-specific ticks rather
-   than ms, so we have to scale the time based on the OS_TICKS_PER_SEC
-   value */
-
-#define THREADFUNC_DEFINE( name, arg )	void name( void *arg )
-#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
-			{ \
-			OS_STK *threadData = malloc( 4096 ); \
-			\
-			syncHandle = OSSemCreate( 0 ); \
-			if( OSTaskCreate( function, arg, ( BYTE * ) threadData + 4095, \
-							  UCOS_TASKID ) != OS_NO_ERR ) \
-				{ \
-				free( threadData ); \
-				status = CRYPT_ERROR; \
-				} \
-			else \
-				status = CRYPT_OK; \
-			}
-#define THREAD_EXIT( sync )		OSSemPost( sync ); \
-								OSTaskDel( OS_PRIO_SELF )
-#define THREAD_INITIALISER		0
-#define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
-#define THREAD_SELF()			threadSelf()
-#if OS_TICKS_PER_SEC >= 1000
-  #define THREAD_SLEEP( ms )	OSTimeDelay( ( OS_TICKS_PER_SEC / 1000 ) * ms )
-#else
-  #define THREAD_SLEEP( ms )	OSTimeDelay( max( ( ms * OS_TICKS_PER_SEC ) / 1000, 1 ) )
-#endif /* OS_TICKS_PER_SEC time scaling */
-#define THREAD_YIELD()			THREAD_SLEEP( 1 )
-#define THREAD_WAIT( sync, status ) \
-								{ \
-								INT8U err; \
-								\
-								OSSemPend( sync, 0, &err ); \
-								if( err != OS_NO_ERR ) \
-									status = CRYPT_ERROR; \
-								OSSemDel( sync ); \
-								}
-#define THREAD_CLOSE( sync )
-
-/* uC/OS-II doesn't have a thread-self function, but allows general task
-   info to be queried.  Because of this we provide a wrapper that returns
-   the task ID as its return value */
-
-INT8U threadSelf( void );
-
-/* Because of the inability to do round-robin scheduling, we no-op out the
-   use of internal threads/tasks.  Note that cryptlib itself is still thread-
-   safe, it just can't do its init or keygen in an internal background
-   thread */
-
-#ifndef UCOS_USE_TASKS
-  #undef THREAD_CREATE
-  #undef THREAD_EXIT
-  #undef THREAD_CLOSE
-  #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
-								status = CRYPT_ERROR
-  #define THREAD_EXIT( sync )
-  #define THREAD_CLOSE( sync )
-#endif /* !UCOS_USE_TASKS */
 
 /****************************************************************************
 *																			*
@@ -1008,7 +967,7 @@ INT8U threadSelf( void );
 		status = CRYPT_OK; \
 		if( !krnlData->name##MutexInitialised ) \
 			{ \
-			static const T_CMTX pk_cmtx = { 0, 0 }; \
+			static const T_CMTX pk_cmtx = { TA_TFIFO, 0, 0 }; \
 			\
 			if( ( krnlData->name##Mutex = \
 						acre_mtx( ( T_CMTX  * ) &pk_cmtx ) ) < E_OK ) \
@@ -1111,6 +1070,99 @@ INT8U threadSelf( void );
    to provide a wrapper that returns it as a return value */
 
 ID threadSelf( void );
+
+/****************************************************************************
+*																			*
+*									MQX										*
+*																			*
+****************************************************************************/
+
+#elif defined( __MQX__ )
+
+#include <mqx.h>
+
+/* Object handles */
+
+#define THREAD_HANDLE			_task_id
+#define MUTEX_HANDLE			MUTEX_STRUCT
+
+/* Mutex management functions.  It's unclear whether MQX mutexes are 
+   reentrant or not, if they aren't then the following macros would need
+   to be changed to hand-assemble reentrant mutexes as is done for many 
+   other OSes */
+
+#define MUTEX_DECLARE_STORAGE( name ) \
+		MUTEX_HANDLE name##Mutex; \
+		BOOLEAN name##MutexInitialised
+#define MUTEX_CREATE( name, status ) \
+		status = CRYPT_OK; \
+		if( !krnlData->name##MutexInitialised ) \
+			{ \
+			if( _mutex_init( &krnlData->name##Mutex, NULL ) == MQX_OK ) \
+				krnlData->name##MutexInitialised = TRUE; \
+			else \
+				status = CRYPT_ERROR; \
+			}
+#define MUTEX_DESTROY( name ) \
+		if( krnlData->name##MutexInitialised ) \
+			{ \
+			_mutex_lock( &krnlData->name##Mutex ); \
+			_mutex_unlock( &krnlData->name##Mutex ); \
+			_mutex_destroy( &krnlData->name##Mutex ); \
+			krnlData->name##MutexInitialised = FALSE; \
+			}
+#define MUTEX_LOCK( name ) \
+		_mutex_lock( &krnlData->name##Mutex )
+#define MUTEX_UNLOCK( name ) \
+		_mutex_unlock( &krnlData->name##Mutex )
+
+/* Thread management functions.  MQX's task creation is weird in that it 
+   doesn't take task parameters like any other OS but requres an integer 
+   that identifies an entry in a list of task templates that was specified at 
+   compile time.  This is weird in that we can't simply start an arbitrary 
+   task by specifying its function name but have to refer to it indirectly.
+   Fortunately the only time this capability is used is when we're performing
+   an async init, if it were used in other locations then it'd be necessary
+   to have THREAD_CREATE compare the 'function' value passed to it with a
+   built-in list and map that to an integer ID for _task_create(), which then 
+   maps it back to a function name.
+
+   To deal with this strangeness you need to define an entry in your app's
+   TASK_TEMPLATE_STRUCT list something like the following:
+
+	{ 0x100, threadedBind, 16384, 15, NULL, 0, 0, 0 }
+
+   which creates a non-auto-start task with FIFO scheduling and a default 
+   timeslice.  Unfortunately because of this bizarre way of specifying things
+   we can't set the priority in any sane way, normally we'd use  
+   _task_get_priority() with MQX_NULL_TASK_ID to get the current task's 
+   priority but this doesn't work because the value has to be allocated at 
+   compile time.  We give the task a mid-range priority value of 15 (from a 
+   range of 0 = highest ... 31 = lowest), this is somewhat ugly but there
+   doesn't seem to be much else that we can do */
+
+#define THREADFUNC_DEFINE( name, arg )	void name( uint32 /* = void* */ arg )
+#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+			{ \
+			_lwsem_create( &syncHandle, 1 ); \
+			threadHandle = _task_create( 0, 0x100, ( uint32 ) arg ); \
+			if( threadHandle == MQX_NULL_TASK_ID ) \
+				status = CRYPT_ERROR; \
+			else \
+				status = CRYPT_OK; \
+			}
+#define THREAD_EXIT( sync )		_lwsem_post( &sync ); \
+								_task_destroy( MQX_NULL_TASK_ID )
+#define THREAD_INITIALISER		0
+#define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
+#define THREAD_SELF()			_task_get_id()
+#define THREAD_SLEEP( ms )		_time_delay( ms )
+#define THREAD_YIELD()			_sched_yield()
+#define THREAD_WAIT( sync, status ) \
+								if( _lwsem_wait( &sync ) != MQX_OK ) \
+									status = CRYPT_ERROR; \
+								_lwsem_destroy( &sync )
+#define THREAD_CLOSE( sync )
 
 /****************************************************************************
 *																			*
@@ -1286,6 +1338,14 @@ ULONG DosGetThreadID( void );
 #define THREAD_HANDLE			rtems_id
 #define MUTEX_HANDLE			rtems_id
 
+/* RTEMS objects have names, which aren't really names but 32-bit integer
+   tags (the term 'name' comes from the fact that they can be initialised
+   to four ASCII chars like original Mac resource IDs).  Since we don't
+   really care about names, we pass in a dummy name value for all of our
+   calls */
+
+#define NO_NAME					0
+
 /* Mutex management functions.  RTEMS semaphores (or at least standard
    counting semaphores, which is what we're using here) are re-entrant so
    we don't have to jump through the hoops that are necessary with most
@@ -1301,7 +1361,7 @@ ULONG DosGetThreadID( void );
 		status = CRYPT_OK; \
 		if( !krnlData->name##MutexInitialised ) \
 			{ \
-			if( rtems_semaphore_create( NULL, 1, RTEMS_DEFAULT_ATTRIBUTES, 0, \
+			if( rtems_semaphore_create( NO_NAME, 1, RTEMS_DEFAULT_ATTRIBUTES, 0, \
 										&krnlData->name##Mutex ) == RTEMS_SUCCESSFUL ) \
 				krnlData->name##MutexInitialised = TRUE; \
 			else \
@@ -1324,7 +1384,7 @@ ULONG DosGetThreadID( void );
    state, so after we create the task we have to resume it to start it
    running.  The attributes for task creation are:
 
-	NULL					-- Task name.
+	NO_NAME					-- Task name.
 	RTEMS_CURRENT_PRIORITY	-- Task priority.  The documentation is unclear
 							   as to whether we can specify this directly as
 							   the priority or have to obtain it via a call,
@@ -1362,15 +1422,15 @@ ULONG DosGetThreadID( void );
 			\
 			rtems_task_set_priority( RTEMS_SELF, RTEMS_CURRENT_PRIORITY, \
 									 &rtemsPriority ); \
-			rtems_semaphore_create( NULL, rtemsPriority, \
-									RTEMS_DEFAULT_ATTRIBUTES, 0, \
+			rtems_semaphore_create( NO_NAME, 1, RTEMS_DEFAULT_ATTRIBUTES, 0, \
 									&syncHandle ); \
-			rtemsStatus = rtems_task_create( NULL, 16, RTEMS_STACK_SIZE, \
-											 TASK_MODE, \
+			rtemsStatus = rtems_task_create( NO_NAME, rtemsPriority, \
+											 RTEMS_STACK_SIZE, TASK_MODE, \
 											 RTEMS_DEFAULT_ATTRIBUTES, \
 											 &threadHandle ); \
 			if( rtemsStatus == RTEMS_SUCCESSFUL ) \
-				rtemsStatus = rtems_task_start( threadHandle, function, arg ); \
+				rtemsStatus = rtems_task_start( threadHandle, function, \
+												( rtems_task_argument ) arg ); \
 			if( rtemsStatus == RTEMS_SUCCESSFUL ) \
 				status = CRYPT_OK; \
 			else \
@@ -1413,12 +1473,20 @@ rtems_id threadSelf( void );
 
 /* #define THREADX_THREAD_WRAPPERS */
 
-#include <tx_api.h>
+//#include <tx_api.h>
+#pragma message( "ThreadX header path faked" )
+#include <threadx_tx_api.h>
 
 /* Object handles */
 
-#define THREAD_HANDLE			TX_THREAD
+#define THREAD_HANDLE			TX_THREAD *
 #define MUTEX_HANDLE			TX_MUTEX
+
+/* Since ThreadX has non-scalar handles we need to define a custom version 
+   of the value DUMMY_INIT_MUTEX (see the end of this file) */
+
+#define NONSCALAR_THREADS
+#define DUMMY_INIT_MUTEX		{ 0 }
 
 /* Mutex management functions.  ThreadX mutexes are reentrant so we don't 
    have to hand-assemble reentrant mutexes as for many other OSes.  All 
@@ -1459,6 +1527,10 @@ rtems_id threadSelf( void );
    OS, which make this at most a rarely-used option.  To handle this, we use 
    our own wrappers.
 
+   The thread function's argument is a ULONG, since we use this as a pointer
+   to parameter data we declare it as a 'void *' since that's how it's
+   treated in practice.
+
    We give the thread a mid-range priority value and preemption threshold of
    15 (from a range of 0 = highest ... 31 = lowest) and a 50-tick timeslice.
    The timeslice value is HAL-dependent so it's not really possible to tell 
@@ -1467,12 +1539,12 @@ rtems_id threadSelf( void );
    same goes for the sleep time, the code assumes that 1 tick = 10ms so we
    divide by 10 to convert ms to ticks */
 
-#define THREADFUNC_DEFINE( name, arg )	VOID name( ULONG arg )
+#define THREADFUNC_DEFINE( name, arg )	VOID name( void * /*ULONG*/ arg )
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
 			BYTE *threadData = malloc( 16384 ); \
 			\
-			tx_semaphore_create( &syncHandle, "name", 1 ); \
+			tx_mutex_create( &syncHandle, "name", TX_NO_INHERIT ); \
 			if( tx_thread_create( &threadHandle, "name", function, \
 								  ( ULONG ) arg, threadData, 16384, \
 								  15, 50, 15, TX_AUTO_START ) != TX_SUCCESS ) \
@@ -1483,7 +1555,7 @@ rtems_id threadSelf( void );
 			else \
 				status = CRYPT_OK; \
 			}
-#define THREAD_EXIT( sync )		tx_semaphore_put( &sync ); \
+#define THREAD_EXIT( sync )		tx_mutex_put( &sync ); \
 								tx_thread_terminate( tx_thread_identify() )
 #define THREAD_INITIALISER		0
 #define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
@@ -1491,9 +1563,9 @@ rtems_id threadSelf( void );
 #define THREAD_SLEEP( ms )		tx_thread_sleep( ( ms ) / 10 )
 #define THREAD_YIELD()			tx_thread_relinquish()
 #define THREAD_WAIT( sync, status ) \
-								if( !tx_semaphore_get( &sync, TX_WAIT_FOREVER ) ) \
+								if( !tx_mutex_get( &sync, TX_WAIT_FOREVER ) ) \
 									status = CRYPT_ERROR; \
-								tx_semaphore_delete( &sync )
+								tx_mutex_delete( &sync )
 #define THREAD_CLOSE( sync )	tx_thread_delete( &sync )
 
 /* Because of the problems with resource management of ThreadX threads and
@@ -1512,6 +1584,313 @@ rtems_id threadSelf( void );
   #define THREAD_EXIT( sync )
   #define THREAD_CLOSE( sync )
 #endif /* !THREADX_THREAD_WRAPPERS */
+
+/****************************************************************************
+*																			*
+*									T-Kernel								*
+*																			*
+****************************************************************************/
+
+#elif defined( __TKernel__ )
+
+#include <tkernel.h>
+
+/* Object handles */
+
+#define THREAD_HANDLE			ID
+#define MUTEX_HANDLE			ID
+
+/* Mutex management functions.  We could use either semaphores or mutexes
+   for this, semaphores are supported under uITRON 3.0 but since we're
+   using automatic assignment of handles (which requires uITRON 4.0) we may
+   as well use mutexes */
+
+#define MUTEX_DECLARE_STORAGE( name ) \
+		ID name##Mutex; \
+		BOOLEAN name##MutexInitialised; \
+		ID name##MutexOwner; \
+		int name##MutexLockcount
+#define MUTEX_CREATE( name, status ) \
+		status = CRYPT_OK; \
+		if( !krnlData->name##MutexInitialised ) \
+			{ \
+			static const T_CMTX pk_cmtx = { NULL, TA_TFIFO, 0 }; \
+			\
+			if( ( krnlData->name##Mutex = \
+						tk_cre_mtx( &pk_cmtx ) ) < E_OK ) \
+				status = CRYPT_ERROR; \
+			else \
+				krnlData->name##MutexInitialised = TRUE; \
+			}
+#define MUTEX_DESTROY( name ) \
+		if( krnlData->name##MutexInitialised ) \
+			{ \
+			tk_loc_mtx( krnlData->name##Mutex, TMO_FEVR ); \
+			tk_unl_mtx( krnlData->name##Mutex ); \
+			tk_del_mtx( krnlData->name##Mutex ); \
+			krnlData->name##MutexInitialised = FALSE; \
+			}
+#define MUTEX_LOCK( name ) \
+		if( tk_loc_mtx( krnlData->name##Mutex, TMO_POL ) == E_TMOUT ) \
+			{ \
+			if( !THREAD_SAME( krnlData->name##MutexOwner, THREAD_SELF() ) ) \
+				tk_loc_mtx( krnlData->name##Mutex, TMO_FEVR ); \
+			else \
+				krnlData->name##MutexLockcount++; \
+			} \
+		krnlData->name##MutexOwner = THREAD_SELF();
+#define MUTEX_UNLOCK( name ) \
+		if( krnlData->name##MutexLockcount > 0 ) \
+			krnlData->name##MutexLockcount--; \
+		else \
+			{ \
+			krnlData->name##MutexOwner = THREAD_INITIALISER; \
+			tk_unl_mtx( krnlData->name##Mutex ); \
+			}
+
+/* Thread management functions.  The attributes for task creation are:
+
+	arg					-- Task argument.
+	TA_HLNG				-- C interface.
+	function			-- Task function.
+	TPRI_SELF			-- Same priority as invoking task.
+	16384				-- User stack size.
+	Other				-- Various parameters left at their default 
+						   settings.
+
+   The handling of initialisers is a bit dodgy since TSK_SELF == 0 and it 
+   isn't even safe to use negative values since in some cases these can be 
+   valid system task handles.  In general however T-Kernel numbers IDs from 
+   1...n, so using 0 as a non-value is safe.
+
+   Dealing with the task's priority is a bit complicated since T-Kernel 
+   provides no way of determining a task's current priority, for now we
+   use TPRI_INI = the priority of the task when it was started, if this 
+   isn't appropriate then it'd be necessary to call td_ref_tsk() and read
+   the tskpri field from the rtsk data, however this may be just as bad 
+   because it returns the priority at read time which may differ from the
+   usual priority.
+
+   T-Kernel status values are 8:8 bit pairs with the actual status in the
+   low 8 bits.  The sub-values can be extracted with the MERCD() and SERCD()
+   (main- and sub-error-code) macros, however simply using the MERCD()
+   result isn't safe because it could be the (negative) low 8 bits of a
+   (positive overall) return value.  When creating a task we therefore
+   consider a status < E_OK as being an error, without trying to pick apart
+   the overall value */
+
+#define THREADFUNC_DEFINE( name, arg )	void name( INT stacd, VP arg )
+#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+			{ \
+			static const T_CSEM pk_csem = { NULL, TA_TFIFO, 1, 64 }; \
+			T_CTSK pk_ctsk = { ( arg ), TA_HLNG, ( function ), \
+							   TPRI_INI, 16384, 0, 0, 0, 0, 0 }; \
+			\
+			syncHandle = tk_cre_sem( &pk_csem ); \
+			threadHandle = tk_cre_tsk( &pk_ctsk ); \
+			if( threadHandle < E_OK ) \
+				{ \
+				tk_del_sem( syncHandle ); \
+				status = CRYPT_ERROR; \
+				} \
+			else \
+				{ \
+				tk_sta_tsk( threadHandle, 0 ); \
+				status = CRYPT_OK; \
+				} \
+			}
+#define THREAD_EXIT( sync )		tk_sig_sem( sync, 1 ); \
+								tk_exd_tsk()
+#define THREAD_INITIALISER		0
+#define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
+#define THREAD_SELF()			tk_get_tid()
+#define THREAD_SLEEP( ms )		tk_slp_tsk( ms )
+#define THREAD_YIELD()			tk_slp_tsk( 0 )
+#define THREAD_WAIT( sync, status ) \
+								if( tk_wai_sem( sync, 1, TMO_FEVR ) != E_OK ) \
+									status = CRYPT_ERROR; \
+								tk_del_sem( sync )
+#define THREAD_CLOSE( sync )
+
+/****************************************************************************
+*																			*
+*									uC/OS-II								*
+*																			*
+****************************************************************************/
+
+#elif defined( __UCOS__ )
+
+/* uC/OS-II has a pure priority-based scheduler (no round-robin scheduling)
+   and makes a task's priority do double duty as the task ID, which means
+   that it's unlikely it'll ever get round-robin scheduling without a
+   major overhaul of the API.  Because of this, a background task started
+   inside cryptlib for initialisation or keygen will either never run or
+   always run depending on the priority it's started with, thus making it
+   equivalent to performing the operation synchronously.  This means that
+   there's no point in using cryptlib-internal tasks, so they're disabled
+   unless the following is commented out.  Note that cryptlib is still
+   thread-(task)-safe, it just won't use internal tasks for asynchronous
+   ops, because uC/OS-II's scheduling will make the synchronous */
+
+/* #define UCOS_USE_TASKS */
+
+/* Most systems handle priority-inversion-avoidance automatically, however
+   for some reason in uC/OS-II this has to be managed manually by the user.
+   This is done by specifying the priority-inherit priority level that a
+   low-priority task is raised to when a high-priority task attempts to
+   acquire a mutex that the low-priority task is currently holding.  This
+   has to be higher than the priority of any of the tasks that will try
+   to acquire the mutex, as well as being different from the task ID/
+   priority of any task (another problem caused by the task ID == priority
+   issue).  The following is a sample value that'll need to be adjusted
+   based on usage by the calling application */
+
+#define UCOS_PIP		10
+
+/* Because of the strict priority scheduling, we have to specify the task
+   priority (which then also becomes the task ID) when we create the task.
+   The following is a sample task ID, which must be less than UCOS_PIP */
+
+#define UCOS_TASKID		20
+
+/* uC/OS-II typedefs 'BOOLEAN', which clashes with our own BOOLEAN, so we
+   undefine it around the include of the uC/OS-II headers */
+
+#undef BOOLEAN
+
+#include <ucos_ucos_ii.h>
+
+#define BOOLEAN			int
+
+/* uC/OS-II defines 'BYTE' for backwards-compatibility with uC/OS-I but
+   never uses it, so we remove it again to make our definition visible */
+
+#undef BYTE
+
+/* Object handles */
+
+#define THREAD_HANDLE			INT8U
+#define MUTEX_HANDLE			OS_EVENT *
+
+/* Mutex management functions.  uC/OS-II mutexes aren't re-entrant (although
+   this is never mentioned explicitly in any documentation the description 
+   of how mutexes work in App.Note 1002 makes it clear that they're not), we
+   use the standard trylock()-style mechanism to work around this */
+
+#define MUTEX_DECLARE_STORAGE( name ) \
+		OS_EVENT *name##Mutex; \
+		BOOLEAN name##MutexInitialised; \
+		INT8U name##MutexOwner; \
+		int name##MutexLockcount
+#define MUTEX_CREATE( name, status ) \
+		status = CRYPT_OK; \
+		if( !krnlData->name##MutexInitialised ) \
+			{ \
+			INT8U err; \
+			\
+			krnlData->name##Mutex = OSMutexCreate( UCOS_PIP, &err ); \
+			if( err == OS_ERR_NONE ) \
+				krnlData->name##MutexInitialised = TRUE; \
+			else \
+				status = CRYPT_ERROR; \
+			}
+#define MUTEX_DESTROY( name ) \
+		if( krnlData->name##MutexInitialised ) \
+			{ \
+			INT8U err; \
+			\
+			OSMutexPend( krnlData->name##Mutex, 0, &err ); \
+			OSMutexPost( krnlData->name##Mutex ); \
+			OSMutexDel( krnlData->name##Mutex, OS_DEL_ALWAYS, &err ); \
+			krnlData->name##MutexInitialised = FALSE; \
+			}
+#define MUTEX_LOCK( name ) \
+		{ \
+		INT8U err; \
+		\
+		if( OSMutexAccept( krnlData->name##Mutex, &err ) == 0 ) \
+			{ \
+			if( !THREAD_SAME( krnlData->name##MutexOwner, THREAD_SELF() ) ) \
+				OSMutexPend( krnlData->name##Mutex, 0, &err ); \
+			else \
+				krnlData->name##MutexLockcount++; \
+			} \
+		krnlData->name##MutexOwner = THREAD_SELF(); \
+		}
+#define MUTEX_UNLOCK( name ) \
+		if( krnlData->name##MutexLockcount > 0 ) \
+			krnlData->name##MutexLockcount--; \
+		else \
+			{ \
+			krnlData->name##MutexOwner = THREAD_INITIALISER; \
+			OSMutexPost( krnlData->name##Mutex ); \
+			}
+
+/* Thread management functions.  Because of the strict priority-based
+   scheduling there's no way to perform a yield, the best that we can do
+   is sleep for 1ms, which is better than performing a busy wait.
+
+   Thread sleep times are measured in implementation-specific ticks rather
+   than ms, so we have to scale the time based on the OS_TICKS_PER_SEC
+   value */
+
+#define THREADFUNC_DEFINE( name, arg )	void name( void *arg )
+#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+			{ \
+			OS_STK *threadData = malloc( 4096 ); \
+			\
+			syncHandle = OSSemCreate( 0 ); \
+			if( OSTaskCreate( function, arg, ( BYTE * ) threadData + 4095, \
+							  UCOS_TASKID ) != OS_ERR_NONE ) \
+				{ \
+				free( threadData ); \
+				status = CRYPT_ERROR; \
+				} \
+			else \
+				status = CRYPT_OK; \
+			}
+#define THREAD_EXIT( sync )		OSSemPost( sync ); \
+								OSTaskDel( OS_PRIO_SELF )
+#define THREAD_INITIALISER		0
+#define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
+#define THREAD_SELF()			threadSelf()
+#if OS_TICKS_PER_SEC >= 1000
+  #define THREAD_SLEEP( ms )	OSTimeDly( ( OS_TICKS_PER_SEC / 1000 ) * ms )
+#else
+  #define THREAD_SLEEP( ms )	OSTimeDly( max( ( ms * OS_TICKS_PER_SEC ) / 1000, 1 ) )
+#endif /* OS_TICKS_PER_SEC time scaling */
+#define THREAD_YIELD()			THREAD_SLEEP( 1 )
+#define THREAD_WAIT( sync, status ) \
+								{ \
+								INT8U err; \
+								\
+								OSSemPend( sync, 0, &err ); \
+								if( err != OS_ERR_NONE ) \
+									status = CRYPT_ERROR; \
+								OSSemDel( sync, OS_DEL_ALWAYS, &err ); \
+								}
+#define THREAD_CLOSE( sync )
+
+/* uC/OS-II doesn't have a thread-self function, but allows general task
+   info to be queried.  Because of this we provide a wrapper that returns
+   the task ID as its return value */
+
+INT8U threadSelf( void );
+
+/* Because of the inability to do round-robin scheduling, we no-op out the
+   use of internal threads/tasks.  Note that cryptlib itself is still thread-
+   safe, it just can't do its init or keygen in an internal background
+   thread */
+
+#ifndef UCOS_USE_TASKS
+  #undef THREAD_CREATE
+  #undef THREAD_EXIT
+  #undef THREAD_CLOSE
+  #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+								status = CRYPT_ERROR
+  #define THREAD_EXIT( sync )
+  #define THREAD_CLOSE( sync )
+#endif /* !UCOS_USE_TASKS */
 
 /****************************************************************************
 *																			*

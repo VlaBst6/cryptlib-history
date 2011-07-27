@@ -42,8 +42,11 @@
    { BN_rshift( hash, 1 ); }').  Finally, we reduce the value modulo n, 
    which is a simple matter of a compare-and-subtract */
 
-static int hashToBignum( BIGNUM *bigNum, const void *hash, 
-						 const int hashLength, const BIGNUM *n )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+static int hashToBignum( INOUT BIGNUM *bigNum, 
+						 IN_BUFFER( hashLength ) const void *hash, 
+						 IN_LENGTH_HASH const int hashLength, 
+						 const BIGNUM *n )
 	{
 	const int hlen = bytesToBits( hashLength );
 	const int nlen = BN_num_bits( n );
@@ -53,12 +56,16 @@ static int hashToBignum( BIGNUM *bigNum, const void *hash,
 	assert( isReadPtr( hash, hashLength ) );
 	assert( isReadPtr( n, sizeof( BIGNUM ) ) );
 
-	/* Convert the hash value into a bignum.  Note that we use as the bounds 
-	   the permitted minimum/maximum hash sizes and not the nominal key 
-	   size */
+	REQUIRES( hashLength >= 20 && hashLength <= CRYPT_MAX_HASHSIZE );
+
+	/* Convert the hash value into a bignum.  We have to be careful when
+	   we specify the bounds because, with increasingly smaller 
+	   probabilities, the leading bytes of the hash value may be zero.
+	   The check used here gives one in 4 billion chance of a false
+	   positive */
 	status = importBignum( bigNum, hash, hashLength, 
-						   20, CRYPT_MAX_HASHSIZE, NULL, 
-						   SHORTKEY_CHECK_NONE );
+						   hashLength - 3, hashLength + 1, NULL, 
+						   KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -102,12 +109,15 @@ static const FAR_BSS BYTE shaM[] = {
 
 /* Perform a pairwise consistency test on a public/private key pair */
 
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	DLP_PARAMS dlpParams;
 	BYTE buffer[ 128 + 8 ];
 	int sigSize, status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* Generate a signature with the private key */
 	setDLPParams( &dlpParams, shaM, 32, buffer, 128 );
@@ -184,6 +194,7 @@ static const FAR_BSS BYTE kVal[] = {
 	0xA5, 0x67, 0x47, 0x58, 0xB1, 0x2F, 0x08, 0xDF
 	};
 
+CHECK_RETVAL \
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -199,15 +210,15 @@ static int selfTest( void )
 	pkcInfo->curveType = CRYPT_ECCCURVE_P256;
 	status = importBignum( &pkcInfo->eccParam_qx, ecdsaTestKey.qx, 
 						   ecdsaTestKey.qxLen, ECCPARAM_MIN_QX, 
-						   ECCPARAM_MAX_QX, NULL, SHORTKEY_CHECK_ECC );
+						   ECCPARAM_MAX_QX, NULL, KEYSIZE_CHECK_ECC );
 	if( cryptStatusOK( status ) ) 
 		status = importBignum( &pkcInfo->eccParam_qy, ecdsaTestKey.qy, 
 							   ecdsaTestKey.qyLen, ECCPARAM_MIN_QY, 
-							   ECCPARAM_MAX_QY, NULL, SHORTKEY_CHECK_NONE );
+							   ECCPARAM_MAX_QY, NULL, KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) ) 
 		status = importBignum( &pkcInfo->eccParam_d, ecdsaTestKey.d, 
 							   ecdsaTestKey.dLen, ECCPARAM_MIN_D, 
-							   ECCPARAM_MAX_D, NULL, SHORTKEY_CHECK_NONE );
+							   ECCPARAM_MAX_D, NULL, KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) ) 
 		{
 		staticDestroyContext( &contextInfo );
@@ -268,7 +279,10 @@ static int selfTest( void )
    to check the sign), performing a signature verify after each signature 
    generation at the crypto mechanism level */
 
-static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int sign( INOUT CONTEXT_INFO *contextInfoPtr, 
+				 INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+				 IN_LENGTH_FIXED( sizeof( DLP_PARAMS ) ) int noBytes )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	DLP_PARAMS *eccParams = ( DLP_PARAMS * ) buffer;
@@ -279,12 +293,16 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	EC_POINT *kg = pkcInfo->tmpPoint;
 	int bnStatus = BN_STATUS, status = CRYPT_OK;
 
-	assert( noBytes == sizeof( DLP_PARAMS ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( eccParams, sizeof( DLP_PARAMS ) ) );
 	assert( isReadPtr( eccParams->inParam1, eccParams->inLen1 ) );
-	assert( eccParams->inParam2 == NULL && \
-			( eccParams->inLen2 == 0 || eccParams->inLen2 == -999 ) );
 	assert( isWritePtr( eccParams->outParam, eccParams->outLen ) );
-	assert( eccParams->outLen >= MIN_CRYPT_OBJECTSIZE );
+
+	REQUIRES( noBytes == sizeof( DLP_PARAMS ) );
+	REQUIRES( eccParams->inParam2 == NULL && \
+			  ( eccParams->inLen2 == 0 || eccParams->inLen2 == -999 ) );
+	REQUIRES( eccParams->outLen >= MIN_CRYPT_OBJECTSIZE && \
+			  eccParams->outLen < MAX_INTLENGTH_SHORT );
 
 	/* Generate the secret random value k.  During the initial self-test the 
 	   random data pool may not exist yet, and may in fact never exist in a 
@@ -303,7 +321,7 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		status = importBignum( k, ( BYTE * ) kVal, ECDSA_TESTVECTOR_SIZE, 
 							   ECDSA_TESTVECTOR_SIZE, 
 							   ECDSA_TESTVECTOR_SIZE, NULL,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 		}
 	else
 		{
@@ -311,9 +329,10 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		   mod n.  Using a random value of the same length as r would 
 		   produce a slight bias in k that leaks a small amount of the 
 		   private key in each signature.  Because of this we start with a 
-		   value which is 32 bits larger than r and then do the reduction, 
-		   eliminating the bias */
-		status = generateBignum( k, BN_num_bits( n ) + 32, 0x80, 0 );
+		   value which is DLP_OVERFLOW_SIZE larger than r and then do the 
+		   reduction, eliminating the bias */
+		status = generateBignum( k, BN_num_bits( n ) + \
+									bytesToBits( DLP_OVERFLOW_SIZE ), 0x80, 0 );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -392,7 +411,10 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Signature check a single block of data */
 
-static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int sigCheck( INOUT CONTEXT_INFO *contextInfoPtr, 
+					 IN_BUFFER( noBytes ) BYTE *buffer, 
+					 IN_LENGTH_FIXED( sizeof( DLP_PARAMS ) ) int noBytes )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	DLP_PARAMS *eccParams = ( DLP_PARAMS * ) buffer;
@@ -404,10 +426,13 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	EC_POINT *u1gu2q = pkcInfo->tmpPoint, *u2q;
 	int bnStatus = BN_STATUS, status;
 
-	assert( noBytes == sizeof( DLP_PARAMS ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( eccParams, sizeof( DLP_PARAMS ) ) );
 	assert( isReadPtr( eccParams->inParam1, eccParams->inLen1 ) );
 	assert( isReadPtr( eccParams->inParam2, eccParams->inLen2 ) );
-	assert( eccParams->outParam == NULL && eccParams->outLen == 0 );
+
+	REQUIRES( noBytes == sizeof( DLP_PARAMS ) );
+	REQUIRES( eccParams->outParam == NULL && eccParams->outLen == 0 );
 
 	/* Decode the values from a DL data block and make sure that r and s are
 	   valid, i.e. r, s = [1...n-1] */
@@ -491,10 +516,18 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Load key components into an encryption context */
 
-static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
-					const int keyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+					IN_BUFFER_OPT( keyLength ) const void *key,
+					IN_LENGTH_SHORT_OPT const int keyLength )
 	{
-	int status;
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( key == NULL && keyLength == 0 ) || \
+			( isReadPtr( key, keyLength ) && \
+			  keyLength == sizeof( CRYPT_PKCINFO_ECC ) ) );
+
+	REQUIRES( ( key == NULL && keyLength == 0 ) || \
+			  ( key != NULL && keyLength == sizeof( CRYPT_PKCINFO_ECC ) ) );
 
 #ifndef USE_FIPS140
 	/* Load the key component from the external representation into the
@@ -503,6 +536,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		{
 		PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 		const CRYPT_PKCINFO_ECC *eccKey = ( CRYPT_PKCINFO_ECC * ) key;
+		int status;
 
 		contextInfoPtr->flags |= ( eccKey->isPublicKey ) ? \
 					CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
@@ -511,32 +545,32 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 			status = importBignum( &pkcInfo->eccParam_p, eccKey->p, 
 								   bitsToBytes( eccKey->pLen ),
 								   ECCPARAM_MIN_P, ECCPARAM_MAX_P,
-								   NULL, SHORTKEY_CHECK_ECC );
+								   NULL, KEYSIZE_CHECK_ECC );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_a, eccKey->a, 
 									   bitsToBytes( eccKey->aLen ),
 									   ECCPARAM_MIN_A, ECCPARAM_MAX_A,
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_b, eccKey->b, 
 									   bitsToBytes( eccKey->bLen ),
 									   ECCPARAM_MIN_B, ECCPARAM_MAX_B,
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_gx, eccKey->gx, 
 									   bitsToBytes( eccKey->gxLen ),
 									   ECCPARAM_MIN_GX, ECCPARAM_MAX_GX,
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_gy, eccKey->gy, 
 									   bitsToBytes( eccKey->gyLen ),
 									   ECCPARAM_MIN_GY, ECCPARAM_MAX_GY,
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->eccParam_n, eccKey->n, 
 									   bitsToBytes( eccKey->nLen ),
 									   ECCPARAM_MIN_N, ECCPARAM_MAX_N,
-									   NULL, SHORTKEY_CHECK_NONE );
+									   NULL, KEYSIZE_CHECK_NONE );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
@@ -550,17 +584,17 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		status = importBignum( &pkcInfo->eccParam_qx, eccKey->qx, 
 							   bitsToBytes( eccKey->qxLen ),
 							   ECCPARAM_MIN_QX, ECCPARAM_MAX_QX,
-							   NULL, SHORTKEY_CHECK_NONE );
+							   NULL, KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->eccParam_qy, eccKey->qy, 
 								   bitsToBytes( eccKey->qyLen ),
 								   ECCPARAM_MIN_QY, ECCPARAM_MAX_QY,
-								   NULL, SHORTKEY_CHECK_NONE );
+								   NULL, KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) && !eccKey->isPublicKey )
 			status = importBignum( &pkcInfo->eccParam_d, eccKey->d, 
 								   bitsToBytes( eccKey->dLen ),
 								   ECCPARAM_MIN_D, ECCPARAM_MAX_D,
-								   NULL, SHORTKEY_CHECK_NONE );
+								   NULL, KEYSIZE_CHECK_NONE );
 		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
 		if( cryptStatusError( status ) )
 			return( status );
@@ -573,9 +607,17 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 /* Generate a key into an encryption context */
 
-static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+						IN_LENGTH_SHORT_MIN( MIN_PKCSIZE_ECC * 8 ) \
+							const int keySizeBits )
 	{
 	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE_ECC ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) );
 
 	status = generateECCkey( contextInfoPtr, keySizeBits );
 	if( cryptStatusOK( status ) &&

@@ -38,6 +38,18 @@ typedef enum { SQL_ERRLVL_NONE, SQL_ERRLVL_STMT, SQL_ERRLVL_DBC,
 
 #define SQL_QUERY_BUFSIZE	( MAX_SQL_QUERY_SIZE + 64 )
 
+/* Some ODBC functions take either pointers or small integer values cast to
+pointers to indicate certain magic values.  This causes problems in 64-bit
+environments because the LLP64 model means that pointers are 64 bits while
+ints and longs are 32 bits.  To deal with this we define the following data-
+conversion macros for 32- and 64-bit environments */
+
+#ifdef __WIN64__
+  #define VALUE_TO_PTR	ULongToPtr
+#else
+  #define VALUE_TO_PTR	( SQLPOINTER )
+#endif /* 32- vs. 64-bit environment */
+
 #ifdef USE_ODBC
 
 /* When processing bound data we need to store the state information used by 
@@ -1252,7 +1264,7 @@ static int openDatabase( INOUT DBMS_STATE_INFO *dbmsInfo,
 		return( CRYPT_ERROR_OPEN );
 		}
 	sqlStatus = SQLSetEnvAttr( dbmsInfo->hEnv, SQL_ATTR_ODBC_VERSION,
-								( SQLPOINTER ) SQL_OV_ODBC3, 
+								VALUE_TO_PTR( SQL_OV_ODBC3 ),
 								SQL_IS_INTEGER );
 	if( sqlStatusOK( sqlStatus ) )
 		sqlStatus = SQLAllocHandle( SQL_HANDLE_DBC, dbmsInfo->hEnv,
@@ -1296,7 +1308,7 @@ static int openDatabase( INOUT DBMS_STATE_INFO *dbmsInfo,
 	if( options == CRYPT_KEYOPT_READONLY )
 		{
 		( void ) SQLSetStmtAttr( dbmsInfo->hDbc, SQL_ATTR_ACCESS_MODE,
-								 ( SQLPOINTER ) SQL_MODE_READ_ONLY, 
+								 VALUE_TO_PTR( SQL_MODE_READ_ONLY ), 
 								 SQL_IS_INTEGER );
 		}
 
@@ -1312,17 +1324,17 @@ static int openDatabase( INOUT DBMS_STATE_INFO *dbmsInfo,
 	for( i = 0; i < NO_CACHED_QUERIES; i++ )
 		{
 		( void ) SQLSetStmtAttr( dbmsInfo->hStmt[ i ], SQL_ATTR_CURSOR_TYPE,
-								 ( SQLPOINTER ) SQL_CURSOR_FORWARD_ONLY,
+								 VALUE_TO_PTR( SQL_CURSOR_FORWARD_ONLY ),
 								 SQL_IS_INTEGER );
 		if( options == CRYPT_KEYOPT_READONLY )
 			{
 			( void ) SQLSetStmtAttr( dbmsInfo->hStmt[ i ], 
 									 SQL_ATTR_CONCURRENCY,
-									 ( SQLPOINTER ) SQL_CONCUR_READ_ONLY,
+									 VALUE_TO_PTR( SQL_CONCUR_READ_ONLY ),
 									 SQL_IS_INTEGER );
 			}
 		( void ) SQLSetStmtAttr( dbmsInfo->hStmt[ i ], SQL_ATTR_NOSCAN,
-								 ( SQLPOINTER ) SQL_NOSCAN_ON, 
+								 VALUE_TO_PTR( SQL_NOSCAN_ON ), 
 								 SQL_IS_INTEGER );
 		}
 
@@ -1566,7 +1578,7 @@ static int performQuery( INOUT DBMS_STATE_INFO *dbmsInfo,
 			   database client doesn't start sucking across huge amounts of
 			   data when it's not necessary */
 			( void ) SQLSetStmtAttr( hStmt, SQL_ATTR_MAX_ROWS, 
-									 ( SQLPOINTER ) 1, SQL_IS_INTEGER );
+									 VALUE_TO_PTR( 1 ), SQL_IS_INTEGER );
 
 			/* Execute the SQL statement and fetch the results */
 			sqlStatus = SQLExecute( hStmt );
@@ -1584,7 +1596,7 @@ static int performQuery( INOUT DBMS_STATE_INFO *dbmsInfo,
 
 			/* Reset the statement handle's multi-row result handling */
 			( void ) SQLSetStmtAttr( hStmt, SQL_ATTR_MAX_ROWS, 
-									 ( SQLPOINTER ) 0, SQL_IS_INTEGER );
+									 VALUE_TO_PTR( 0 ), SQL_IS_INTEGER );
 			return( status );
 		}
 
@@ -1638,7 +1650,7 @@ static int performUpdate( INOUT DBMS_STATE_INFO *dbmsInfo,
 		sqlStatus = SQLEndTran( SQL_HANDLE_DBC, dbmsInfo->hDbc, 
 								SQL_ROLLBACK );
 		( void ) SQLSetConnectAttr( dbmsInfo->hDbc, SQL_ATTR_AUTOCOMMIT,
-									( SQLPOINTER ) SQL_AUTOCOMMIT_ON,
+									VALUE_TO_PTR( SQL_AUTOCOMMIT_ON ),
 									SQL_IS_UINTEGER );
 		if( !sqlStatusOK( sqlStatus ) )
 			return( getErrorInfo( dbmsInfo, SQL_ERRLVL_STMT, hStmt,
@@ -1650,7 +1662,7 @@ static int performUpdate( INOUT DBMS_STATE_INFO *dbmsInfo,
 	if( updateType == DBMS_UPDATE_BEGIN )
 		{
 		( void ) SQLSetConnectAttr( dbmsInfo->hDbc, SQL_ATTR_AUTOCOMMIT,
-									( SQLPOINTER ) SQL_AUTOCOMMIT_OFF,
+									VALUE_TO_PTR( SQL_AUTOCOMMIT_OFF ),
 									SQL_IS_UINTEGER );
 		}
 
@@ -1736,7 +1748,7 @@ static int performUpdate( INOUT DBMS_STATE_INFO *dbmsInfo,
 				dbmsInfo->hStmtPrepared[ i ] = FALSE;
 			}
 		( void ) SQLSetConnectAttr( dbmsInfo->hDbc, SQL_ATTR_AUTOCOMMIT,
-									( SQLPOINTER ) SQL_AUTOCOMMIT_ON,
+									VALUE_TO_PTR( SQL_AUTOCOMMIT_ON ),
 									SQL_IS_UINTEGER );
 		if( cryptStatusOK( status ) && !sqlStatusOK( sqlStatus ) )
 			{

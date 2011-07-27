@@ -26,11 +26,14 @@
 
 /* Perform a pairwise consistency test on a public/private key pair */
 
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = getRSACapability();
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* Encrypt with the public key */
 	memset( buffer, 0, CRYPT_MAX_PKCSIZE );
@@ -168,6 +171,7 @@ static const RSA_KEY FAR_BSS rsaTestKey = {
 	  0x4B, 0xAE, 0xF4, 0xAD, 0x35, 0x63, 0x37, 0x71 }
 	};
 
+CHECK_RETVAL \
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -184,42 +188,42 @@ static int selfTest( void )
 		return( CRYPT_ERROR_FAILED );
 	status = importBignum( &pkcInfo->rsaParam_n, rsaTestKey.n, 
 						   rsaTestKey.nLen, RSAPARAM_MIN_N, 
-						   RSAPARAM_MAX_N, NULL, SHORTKEY_CHECK_PKC );
+						   RSAPARAM_MAX_N, NULL, KEYSIZE_CHECK_PKC );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->rsaParam_e, rsaTestKey.e, 
 							   rsaTestKey.eLen, RSAPARAM_MIN_E, 
 							   RSAPARAM_MAX_E, &pkcInfo->rsaParam_n, 
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->rsaParam_d, rsaTestKey.d, 
 							   rsaTestKey.dLen, RSAPARAM_MIN_D, 
 							   RSAPARAM_MAX_D, &pkcInfo->rsaParam_n,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->rsaParam_p, rsaTestKey.p, 
 							   rsaTestKey.pLen, RSAPARAM_MIN_P, 
 							   RSAPARAM_MAX_P, &pkcInfo->rsaParam_n,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->rsaParam_q, rsaTestKey.q, 
 							   rsaTestKey.qLen, RSAPARAM_MIN_Q, 
 							   RSAPARAM_MAX_Q, &pkcInfo->rsaParam_n,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->rsaParam_u, rsaTestKey.u, 
 							   rsaTestKey.uLen, RSAPARAM_MIN_U, 
 							   RSAPARAM_MAX_U, &pkcInfo->rsaParam_n,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->rsaParam_exponent1, rsaTestKey.e1, 
 							   rsaTestKey.e1Len, RSAPARAM_MIN_EXP1, 
 							   RSAPARAM_MAX_EXP1, &pkcInfo->rsaParam_n,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->rsaParam_exponent2, rsaTestKey.e2, 
 							   rsaTestKey.e2Len, RSAPARAM_MIN_EXP2, 
 							   RSAPARAM_MAX_EXP2, &pkcInfo->rsaParam_n,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		retIntError();
 
@@ -283,7 +287,10 @@ static int selfTest( void )
    distinguisher 'Fn' to the name since some systems already have 'encrypt'
    and 'decrypt' in their standard headers */
 
-static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+					  IN_LENGTH_SHORT int noBytes )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	BIGNUM *n = &pkcInfo->rsaParam_n, *e = &pkcInfo->rsaParam_e;
@@ -291,12 +298,16 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	const int length = bitsToBytes( pkcInfo->keySizeBits );
 	int offset, dummy, bnStatus = BN_STATUS, status;
 
-	assert( noBytes == length );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
+	REQUIRES( noBytes == length );
+	REQUIRES( noBytes > 0 && noBytes < MAX_INTLENGTH_SHORT );
 
 	/* Move the data from the buffer into a bignum */
 	status = importBignum( data, buffer, length, 
 						   MIN_PKCSIZE - 8, CRYPT_MAX_PKCSIZE, n, 
-						   SHORTKEY_CHECK_NONE );
+						   KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -375,7 +386,10 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
    signature verify after each signature generation at the crypto mechanism
    level */
 
-static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int decryptFn( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+					  IN_LENGTH_SHORT int noBytes )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	BIGNUM *p = &pkcInfo->rsaParam_p, *q = &pkcInfo->rsaParam_q;
@@ -385,14 +399,18 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	const int length = bitsToBytes( pkcInfo->keySizeBits );
 	int iterationCount, offset, dummy, bnStatus = BN_STATUS, status;
 
-	assert( noBytes == length );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
+	REQUIRES( noBytes == length );
+	REQUIRES( noBytes > 0 && noBytes < MAX_INTLENGTH_SHORT );
 
 	/* Move the data from the buffer into a bignum.  We need to make an 
 	   unfortunate exception to the valid-length check for SSL's weird 
 	   signatures, which sign a raw concatenated MD5 and SHA-1 hash with a 
 	   total length of 36 bytes */
 	status = importBignum( data, buffer, length, 36, CRYPT_MAX_PKCSIZE, 
-						   &pkcInfo->rsaParam_n, SHORTKEY_CHECK_NONE );
+						   &pkcInfo->rsaParam_n, KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( BN_num_bytes( data ) != 36 && \
@@ -515,10 +533,18 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Load key components into an encryption context */
 
-static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
-					const int keyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+					IN_BUFFER_OPT( keyLength ) const void *key,
+					IN_LENGTH_SHORT_OPT const int keyLength )
 	{
-	int status;
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( key == NULL && keyLength == 0 ) || \
+			( isReadPtr( key, keyLength ) && \
+			  keyLength == sizeof( CRYPT_PKCINFO_RSA ) ) );
+
+	REQUIRES( ( key == NULL && keyLength == 0 ) || \
+			  ( key != NULL && keyLength == sizeof( CRYPT_PKCINFO_RSA ) ) );
 
 #ifndef USE_FIPS140
 	/* Load the key component from the external representation into the
@@ -527,56 +553,57 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		{
 		PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 		const CRYPT_PKCINFO_RSA *rsaKey = ( CRYPT_PKCINFO_RSA * ) key;
+		int status;
 
 		contextInfoPtr->flags |= ( rsaKey->isPublicKey ) ? \
 					CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
 		status = importBignum( &pkcInfo->rsaParam_n, rsaKey->n, 
 							   bitsToBytes( rsaKey->nLen ), 
 							   RSAPARAM_MIN_N, RSAPARAM_MAX_N, NULL, 
-							   SHORTKEY_CHECK_PKC );
+							   KEYSIZE_CHECK_PKC );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->rsaParam_e, rsaKey->e, 
 								   bitsToBytes( rsaKey->eLen ),
 								   RSAPARAM_MIN_E, RSAPARAM_MAX_E,
 								   &pkcInfo->rsaParam_n, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) && !rsaKey->isPublicKey )
 			{
 			status = importBignum( &pkcInfo->rsaParam_d, rsaKey->d, 
 								   bitsToBytes( rsaKey->dLen ),
 								   RSAPARAM_MIN_D, RSAPARAM_MAX_D,
 								   &pkcInfo->rsaParam_n, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->rsaParam_p, rsaKey->p, 
 									   bitsToBytes( rsaKey->pLen ),
 									   RSAPARAM_MIN_P, RSAPARAM_MAX_P,
 									   &pkcInfo->rsaParam_n, 
-									   SHORTKEY_CHECK_NONE );
+									   KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) )
 				status = importBignum( &pkcInfo->rsaParam_q, rsaKey->q, 
 									   bitsToBytes( rsaKey->qLen ),
 									   RSAPARAM_MIN_Q, RSAPARAM_MAX_Q,
 									   &pkcInfo->rsaParam_n, 
-									   SHORTKEY_CHECK_NONE );
+									   KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) && rsaKey->uLen > 0 )
 				status = importBignum( &pkcInfo->rsaParam_u, rsaKey->u, 
 									   bitsToBytes( rsaKey->uLen ),
 									   RSAPARAM_MIN_U, RSAPARAM_MAX_U,
 									   &pkcInfo->rsaParam_n, 
-									   SHORTKEY_CHECK_NONE );
+									   KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) && rsaKey->e1Len > 0 )
 				status = importBignum( &pkcInfo->rsaParam_exponent1, rsaKey->e1, 
 									   bitsToBytes( rsaKey->e1Len ),
 									   RSAPARAM_MIN_EXP1, RSAPARAM_MAX_EXP1,
 									   &pkcInfo->rsaParam_n, 
-									   SHORTKEY_CHECK_NONE );
+									   KEYSIZE_CHECK_NONE );
 			if( cryptStatusOK( status ) && rsaKey->e2Len > 0 )
 				status = importBignum( &pkcInfo->rsaParam_exponent2, rsaKey->e2, 
 									   bitsToBytes( rsaKey->e2Len ),
 									   RSAPARAM_MIN_EXP2, RSAPARAM_MAX_EXP2,
 									   &pkcInfo->rsaParam_n, 
-									   SHORTKEY_CHECK_NONE );
+									   KEYSIZE_CHECK_NONE );
 			}
 		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
 		if( cryptStatusError( status ) )
@@ -590,9 +617,17 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 /* Generate a key into an encryption context */
 
-static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+						IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) \
+							const int keySizeBits )
 	{
 	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	status = generateRSAkey( contextInfoPtr, keySizeBits );
 	if( cryptStatusOK( status ) &&

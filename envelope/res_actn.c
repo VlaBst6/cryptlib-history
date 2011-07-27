@@ -362,8 +362,7 @@ ACTION_RESULT checkAction( IN_OPT const ACTION_LIST *actionListStart,
 	ACTION_LIST *actionListPtr = ( ACTION_LIST * ) actionListStart;
 	MESSAGE_DATA msgData;
 	BYTE keyID[ KEYID_SIZE + 8 ];
-	CRYPT_ALGO_TYPE cryptAlgo = DUMMY_INIT;
-	int iterationCount, status;
+	int algorithm = DUMMY_INIT, iterationCount, status;
 
 	assert( actionListPtr == NULL || \
 			isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
@@ -404,7 +403,7 @@ ACTION_RESULT checkAction( IN_OPT const ACTION_LIST *actionListStart,
 		case ACTION_CRYPT:
 			/* It's a raw action object, get the algorithm */
 			status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE,
-									  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+									  &algorithm, CRYPT_CTXINFO_ALGO );
 			break;
 
 		default:
@@ -474,7 +473,7 @@ ACTION_RESULT checkAction( IN_OPT const ACTION_LIST *actionListStart,
 					krnlSendMessage( actionListPtr->iCryptHandle,
 									 IMESSAGE_GETATTRIBUTE, &actionAlgo,
 									 CRYPT_CTXINFO_ALGO ) ) && \
-					actionAlgo == cryptAlgo )
+					actionAlgo == algorithm )
 					isDuplicate = TRUE;
 				break;
 

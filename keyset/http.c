@@ -96,7 +96,7 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( keyIDtype == CRYPT_KEYID_NAME || keyIDtype == CRYPT_KEYID_URI );
 	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
 			  keyIDlength < MAX_ATTRIBUTE_SIZE );
-	REQUIRES( auxInfo == NULL ); assert( *auxInfoLength == 0 );
+	REQUIRES( auxInfo == NULL && *auxInfoLength == 0 );
 	REQUIRES( flags >= KEYMGMT_FLAG_NONE && flags < KEYMGMT_FLAG_MAX );
 
 	/* Set the keyID as the query portion of the URL if necessary */

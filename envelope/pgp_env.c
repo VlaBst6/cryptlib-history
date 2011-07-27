@@ -106,8 +106,8 @@ static int writeSignatureInfoPacket( INOUT STREAM *stream,
 									 IN_HANDLE const CRYPT_CONTEXT iSignContext,
 									 IN_HANDLE const CRYPT_CONTEXT iHashContext )
 	{
-	CRYPT_ALGO_TYPE hashAlgo, signAlgo = DUMMY_INIT;
 	BYTE keyID[ PGP_KEYID_SIZE + 8 ];
+	int hashAlgo, signAlgo = DUMMY_INIT;	/* int vs.enum */
 	int pgpHashAlgo, pgpCryptAlgo = DUMMY_INIT, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -394,7 +394,7 @@ static int createSessionKey( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	CRYPT_CONTEXT iSessionKeyContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	static const CRYPT_MODE_TYPE mode = CRYPT_MODE_CFB;
+	static const int mode = CRYPT_MODE_CFB;	/* int vs.enum */
 	int status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -822,7 +822,7 @@ static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 STDC_NONNULL_ARG( ( 1 ) ) \
 void initPGPEnveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
-	int dummy, status;
+	int algorithm, dummy, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
@@ -841,21 +841,21 @@ void initPGPEnveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   we have to drop back to fixed values if the caller has selected 
 	   something exotic */
 	status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
-							  IMESSAGE_GETATTRIBUTE, 
-							  &envelopeInfoPtr->defaultHash, 
+							  IMESSAGE_GETATTRIBUTE, &algorithm, 
 							  CRYPT_OPTION_ENCR_HASH );
 	if( cryptStatusError( status ) || \
-		cryptStatusError( \
-			cryptlibToPgpAlgo( envelopeInfoPtr->defaultHash, &dummy ) ) )
+		cryptStatusError( cryptlibToPgpAlgo( algorithm, &dummy ) ) )
 		envelopeInfoPtr->defaultHash = CRYPT_ALGO_SHA1;
+	else
+		envelopeInfoPtr->defaultHash = algorithm;	/* int vs.enum */
 	status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
-							  IMESSAGE_GETATTRIBUTE, 
-							  &envelopeInfoPtr->defaultAlgo, 
+							  IMESSAGE_GETATTRIBUTE, &algorithm, 
 							  CRYPT_OPTION_ENCR_ALGO );
 	if( cryptStatusError( status ) || \
-		cryptStatusError( \
-			cryptlibToPgpAlgo( envelopeInfoPtr->defaultAlgo, &dummy ) ) )
+		cryptStatusError( cryptlibToPgpAlgo( algorithm, &dummy ) ) )
 		envelopeInfoPtr->defaultAlgo = CRYPT_ALGO_3DES;
+	else
+		envelopeInfoPtr->defaultAlgo = algorithm;	/* int vs.enum */
 	envelopeInfoPtr->defaultMAC = CRYPT_ALGO_NONE;
 
 	/* Turn off segmentation of the envelope payload.  PGP has a single 

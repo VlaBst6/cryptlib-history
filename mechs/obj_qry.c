@@ -387,7 +387,7 @@ C_RET cryptQueryObject( C_IN void C_PTR objectData,
 						C_IN int objectDataLength,
 						C_OUT CRYPT_OBJECT_INFO C_PTR cryptObjectInfo )
 	{
-	QUERY_INFO queryInfo;
+	QUERY_INFO queryInfo = DUMMY_INIT_STRUCT;	/* If USE_PGP undef'd */
 	STREAM stream;
 	int value, length = objectDataLength, status;
 

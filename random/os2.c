@@ -182,7 +182,6 @@ void fastPoll( void )
 	ULONG querybuffer[ 26 + 8 ];
 	PTIB ptib = NULL;
 	PPIB ppib = NULL;
-	int bufIndex = 0;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 
@@ -268,7 +267,6 @@ void slowPoll( void )
 	TID tib;
 	char pchBuffer[ 10 + 8 ];
 	RECTL rcl;
-	int bufIndex = 0;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 

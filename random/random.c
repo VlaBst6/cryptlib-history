@@ -459,9 +459,11 @@ static int getRandomOutput( INOUT RANDOM_INFO *randomInfo,
 	assert( isWritePtr( randomInfo, sizeof( RANDOM_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
 
+	static_assert( RANDOM_OUTPUTSIZE == RANDOMPOOL_SIZE / 2, \
+				   "Random pool size" );
+
 	/* Precondition for output quantity: We're being asked for a valid output
 	   length and we're not trying to use more than half the pool contents */
-	assert( RANDOM_OUTPUTSIZE == RANDOMPOOL_SIZE / 2 );
 	REQUIRES( sanityCheck( randomInfo ) );
 	REQUIRES( length > 0 && length <= RANDOM_OUTPUTSIZE && \
 			  length <= RANDOMPOOL_SIZE / 2 );
@@ -891,7 +893,8 @@ void endRandomInfo( INOUT TYPECAST( RANDOM_INFO ** ) void **randomInfoPtrPtr )
 	ENSURES_V( cryptStatusOK( status ) );	/* See comment above */
 	endRandomPool( randomInfoPtr );
 	krnlExitMutex( MUTEX_RANDOM );
-	krnlMemfree( randomInfoPtrPtr );
+	status = krnlMemfree( randomInfoPtrPtr );
+	ENSURES_V( cryptStatusOK( status ) );	/* See comment above */
 	}
 
 /****************************************************************************
@@ -1193,8 +1196,10 @@ int initRandomData( INOUT TYPECAST( RANDOM_STATE_INFO * ) void *statePtr,
 	RANDOM_STATE_INFO *state = ( RANDOM_STATE_INFO * ) statePtr;
 
 	assert( isWritePtr( state, sizeof( RANDOM_STATE_INFO ) ) );
-	assert( sizeof( RANDOM_STATE_INFO ) <= sizeof( RANDOM_STATE ) );
 	assert( isWritePtr( buffer, maxSize ) );
+
+	static_assert( sizeof( RANDOM_STATE_INFO ) <= sizeof( RANDOM_STATE ),
+				   "Random pool state size" );
 
 	REQUIRES( maxSize >= 16 && maxSize < MAX_INTLENGTH_SHORT );
 
@@ -1271,10 +1276,11 @@ int addRandomData( INOUT TYPECAST( RANDOM_STATE_INFO * ) void *statePtr,
 
 	/* There's uncopied data left, copy it in now.  If there's more data 
 	   present than can fit in the accumulator's buffer we discard it 
-	   (although we warn in the debug build), the caller should be sending 
-	   quantities this large directly rather than using the addRandomData() 
-	   interface */
-	assert( totalLength < state->bufSize );
+	   (although we warn in the debug build, which is why the code below
+	   has an assert() rather than a REQUIRES()), the caller should be 
+	   sending quantities this large directly rather than using the 
+	   addRandomData() interface */
+	assert( totalLength < state->bufSize );	/* Debug warning only */
 	bytesToCopy = min( totalLength, state->bufSize );
 	memcpy( state->buffer, valuePtr, bytesToCopy );
 	state->bufPos += bytesToCopy;

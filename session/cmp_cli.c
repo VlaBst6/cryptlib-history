@@ -302,14 +302,12 @@ static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	/* Check that everything we need is present.  If it's a general CMP 
 	   session this will already have been checked in clientStartup(), but
 	   if it's coming from the PnPPKI wrapper it doesn't go through the
-	   startup checks each time so we double-check here.  Since any problem
-	   is just a one-off programming error, we only need a debug assertion
-	   rather than a hardcoded REQUIRES() check */
-	assert( cmpInfo->requestType != CRYPT_REQUESTTYPE_NONE );
-	assert( cmpInfo->requestType == CRYPT_REQUESTTYPE_PKIBOOT || \
-			sessionInfoPtr->iCertRequest != CRYPT_ERROR );
-	assert( cmpInfo->requestType == CRYPT_REQUESTTYPE_PKIBOOT || \
-			sessionInfoPtr->iAuthInContext != CRYPT_ERROR );
+	   startup checks each time so we double-check here */
+	REQUIRES( cmpInfo->requestType != CRYPT_REQUESTTYPE_NONE );
+	REQUIRES( cmpInfo->requestType == CRYPT_REQUESTTYPE_PKIBOOT || \
+			  sessionInfoPtr->iCertRequest != CRYPT_ERROR );
+	REQUIRES( cmpInfo->requestType == CRYPT_REQUESTTYPE_PKIBOOT || \
+			  sessionInfoPtr->iAuthInContext != CRYPT_ERROR );
 
 	/* Initialise the client-side protocol state information */
 	initCMPprotocolInfo( &protocolInfo, 

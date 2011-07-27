@@ -284,23 +284,6 @@ typedef enum {
 	SHUTDOWN_LEVEL_LAST			/* Last possible shutdown level */
 	} SHUTDOWN_LEVEL;
 
-/* The information needed for each block of secure memory */
-
-#define CANARY_SIZE		4		/* Size of canary used to spot overwrites */
-
-typedef struct {
-	BOOLEAN isLocked;			/* Whether this block is locked */
-	int size;					/* Size of the block (including the size
-								   of the MEMLOCK_INFO) */
-	void *next, *prev;			/* Next, previous memory block */
-#if defined( __BEOS__ )
-	area_id areaID;				/* Needed for page locking under BeOS */
-#endif /* BeOS and BeOS areas */
-#ifndef NDEBUG
-	BYTE canary[ CANARY_SIZE ];	/* Canary for spotting overwrites */
-#endif /* NDEBUG */
-	} MEMLOCK_INFO;
-
 /* The kernel data block, containing all variables used by the kernel.  With
    the exception of the special-case values at the start, all values in this
    block should be set to use zero/NULL as their ground state (for example a
@@ -402,7 +385,7 @@ typedef struct {
 #endif /* USE_THREADS */
 
 	/* The kernel secure memory list and a lock to protect it */
-	MEMLOCK_INFO *allocatedListHead, *allocatedListTail;
+	void *allocatedListHead, *allocatedListTail;
 #ifdef USE_THREADS
 	MUTEX_DECLARE_STORAGE( allocation );
 #endif /* USE_THREADS */
@@ -679,7 +662,8 @@ int waitForObject( IN_HANDLE const int objectHandle,
 
 /* Prototypes for functions in objects.c */
 
-void destroyObjectData( IN_HANDLE const int objectHandle );
+CHECK_RETVAL \
+int destroyObjectData( IN_HANDLE const int objectHandle );
 CHECK_RETVAL \
 int destroyObjects( void );
 

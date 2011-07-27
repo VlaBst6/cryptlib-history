@@ -21,21 +21,6 @@
 
 #ifdef USE_PKCS12
 
-/* A PKCS #12 keyset can in theory contain multiple key and certificate 
-   objects, however nothing seems to use this capability.  There are half 
-   a dozen different interpretations as to how it's supposed to work, both 
-   in terms of how to interpret the format and what to do with things like 
-   MACing, which can only use a single MAC key even if there are multiple 
-   different content-encryption keys used for the encrypted key and 
-   certificate data.  In addition the complete absence of any key indexing 
-   information means that there's no easy way to sort out which key is used 
-   for what.  The PKCS #12 keyset code is written to handle multiple 
-   personalities like PKCS #15 and PGP, but because of these problems is 
-   restricted to using only a single personality to keep things 
-   manageable */
-
-#define MAX_PKCS12_OBJECTS		1
-
 /* OID information used to read the header of a PKCS #12 keyset */
 
 static const CMS_CONTENT_INFO FAR_BSS oidInfoEncryptedData = { 0, 2 };
@@ -50,6 +35,119 @@ static const FAR_BSS OID_INFO dataOIDinfo[] = {
 *								Utility Functions							*
 *																			*
 ****************************************************************************/
+
+/* Locate a PKCS #12 object based on an ID */
+
+#define matchID( src, srcLen, dest, destLen ) \
+		( ( srcLen ) > 0 && ( srcLen ) == ( destLen ) && \
+		  !memcmp( ( src ), ( dest ), ( destLen ) ) )
+
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
+PKCS12_INFO *pkcs12FindEntry( IN_ARRAY( noPkcs12objects ) \
+									const PKCS12_INFO *pkcs12info,
+							  IN_LENGTH_SHORT const int noPkcs12objects,
+							  IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+							  IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
+							  IN_LENGTH_KEYID_Z const int keyIDlength )
+	{
+	int i;
+
+	assert( isReadPtr( pkcs12info, \
+					   sizeof( PKCS12_INFO ) * noPkcs12objects ) );
+	assert( ( keyID == NULL && keyIDlength == 0 ) || \
+			isReadPtr( keyID, keyIDlength ) );
+
+	REQUIRES_N( noPkcs12objects >= 1 && \
+				noPkcs12objects < MAX_INTLENGTH_SHORT );
+	REQUIRES_N( keyIDtype == CRYPT_KEYID_NAME || \
+				keyIDtype == CRYPT_KEYID_URI || \
+				keyIDtype == CRYPT_IKEYID_KEYID );
+	REQUIRES_N( ( keyID == NULL && keyIDlength == 0 ) || \
+				( keyID != NULL && \
+				  keyIDlength > 0 && keyIDlength < MAX_ATTRIBUTE_SIZE ) );
+
+	/* Try and locate the appropriate object in the PKCS #12 collection */
+	for( i = 0; i < noPkcs12objects && i < FAILSAFE_ITERATIONS_MED; i++ )
+		{
+		const PKCS12_INFO *pkcs12infoPtr = &pkcs12info[ i ];
+
+		/* If there's no entry at this position, continue */
+		if( pkcs12infoPtr->flags == PKCS12_FLAG_NONE )
+			continue;
+
+		/* An empty keyID is a wildcard that matches the first private-key 
+		   entry.  This is required because PKCS #12 provides almost no 
+		   useful indexing information, and works because most keysets 
+		   contain only a single entry */
+		if( keyID == NULL )
+			{
+			if( pkcs12infoPtr->keyInfo.data == NULL )
+				continue;	/* No private-key data present, continue */
+			return( ( PKCS12_INFO * ) pkcs12infoPtr );
+			}
+
+		/* Check for a match based on the ID type */
+		switch( keyIDtype )
+			{
+			case CRYPT_KEYID_NAME:
+			case CRYPT_KEYID_URI:
+				if( matchID( pkcs12infoPtr->label, pkcs12infoPtr->labelLength,
+							 keyID, keyIDlength ) )
+					return( ( PKCS12_INFO * ) pkcs12infoPtr );
+				break;
+
+			case CRYPT_IKEYID_KEYID:
+				if( matchID( pkcs12infoPtr->id, pkcs12infoPtr->idLength,
+							 keyID, keyIDlength ) )
+					return( ( PKCS12_INFO * ) pkcs12infoPtr );
+				break;
+
+			default:
+				retIntError_Null();
+			}
+		}
+	ENSURES_N( i < FAILSAFE_ITERATIONS_MED );
+
+	return( NULL );
+	}
+
+/* Find a free PKCS #12 entry */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+PKCS12_INFO *pkcs12FindFreeEntry( IN_ARRAY( noPkcs12objects ) \
+									const PKCS12_INFO *pkcs12info,
+								  IN_LENGTH_SHORT const int noPkcs12objects, 
+								  OUT_OPT_LENGTH_SHORT_Z int *index )
+	{
+	int i;
+
+	assert( isReadPtr( pkcs12info, \
+					   sizeof( PKCS12_INFO ) * noPkcs12objects ) );
+	assert( ( index == NULL ) || isWritePtr( index, sizeof( int ) ) );
+
+	REQUIRES_N( noPkcs12objects >= 1 && \
+				noPkcs12objects < MAX_INTLENGTH_SHORT );
+
+	/* Clear return value */
+	if( index != NULL )
+		*index = CRYPT_ERROR;
+
+	for( i = 0; i < noPkcs12objects && i < FAILSAFE_ITERATIONS_MED; i++ )
+		{
+		if( pkcs12info[ i ].flags == PKCS12_FLAG_NONE )
+			break;
+		}
+	ENSURES_N( i < FAILSAFE_ITERATIONS_MED );
+	if( i >= noPkcs12objects )
+		return( NULL );
+
+	/* Remember the index value (used for enumerating PKCS #12 entries) for 
+	   this entry if required */
+	if( index != NULL )
+		*index = i;
+
+	return( ( PKCS12_INFO * ) &pkcs12info[ i ] );
+	}
 
 /* Free object entries */
 
@@ -208,7 +306,8 @@ static int initDeriveParams( IN_HANDLE const CRYPT_USER cryptOwner,
 	assert( isWritePtr( saltLength, sizeof( int ) ) );
 	assert( isWritePtr( iterations, sizeof( int ) ) );
 
-	REQUIRES( isHandleRangeValid( cryptOwner ) );
+	REQUIRES( cryptOwner == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( cryptOwner ) );
 	REQUIRES( saltMaxLength >= KEYWRAP_SALTSIZE && \
 			  saltMaxLength < MAX_INTLENGTH_SHORT );
 
@@ -388,10 +487,13 @@ int createPkcs12KeyWrapContext( INOUT PKCS12_OBJECT_INFO *pkcs12objectInfo,
 	/* Clear return value */
 	*iCryptContext = CRYPT_ERROR;
 
-	/* Set up the parameters used to derive the encryption key and IV if 
-	   required */
+	/* Set up the parameters for the encryption key and IV if required.
+	   The only (useful) encryption algorithm that's available is 3DES, so
+	   we hardcode that in */
 	if( initParams )
 		{
+		pkcs12objectInfo->cryptAlgo = CRYPT_ALGO_3DES;
+		pkcs12objectInfo->keySize = bitsToBytes( 192 );
 		status = initDeriveParams( cryptOwner, pkcs12objectInfo->salt, 
 								   CRYPT_MAX_HASHSIZE, 
 								   &pkcs12objectInfo->saltSize,
@@ -476,16 +578,6 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( name == NULL && nameLength == 0 );
 	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
-	/* Since PKCS #12 writes aren't implemented (see the comments in 
-	   keymgmt/pkcs12_wr.c) we disallow any access that implies 
-	   writeability */
-	if( options != CRYPT_KEYOPT_READONLY )
-		{
-		retExt( CRYPT_ERROR_PERMISSION, 
-				( CRYPT_ERROR_PERMISSION, KEYSET_ERRINFO, 
-				  "PKCS #12 keysets only support read-only access" ) );
-		}
-
 	/* If we're opening an existing keyset skip the outer header.  We do 
 	   this before we perform any setup operations to weed out potential 
 	   problem keysets */
@@ -511,7 +603,7 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 		return( CRYPT_OK );
 
 	/* Read all of the keys in the keyset */
-	status = readPkcs12Keyset( &keysetInfoPtr->keysetFile->stream, 
+	status = pkcs12ReadKeyset( &keysetInfoPtr->keysetFile->stream, 
 							   pkcs12info, MAX_PKCS12_OBJECTS, endPos, 
 							   KEYSET_ERRINFO );
 	if( cryptStatusError( status ) )

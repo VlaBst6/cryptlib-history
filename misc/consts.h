@@ -88,9 +88,14 @@
 #define MAX_PKCSIZE_ECCPOINT	( 1 + ( CRYPT_MAX_PKCSIZE_ECC * 2 ) )
 
 /* The size of the largest public-key wrapped value, corresponding to an
-   ASN.1-encoded Elgamal-encrypted key */
+   ASN.1-encoded Elgamal-encrypted key.  If we're not using Elgamal it's
+   the same as CRYPT_MAX_PKCSIZE */
 
-#define MAX_PKCENCRYPTED_SIZE	( 16 + ( CRYPT_MAX_PKCSIZE * 2 ) )
+#ifdef USE_ELGAMAL
+  #define MAX_PKCENCRYPTED_SIZE	( 16 + ( CRYPT_MAX_PKCSIZE * 2 ) )
+#else
+  #define MAX_PKCENCRYPTED_SIZE	CRYPT_MAX_PKCSIZE
+#endif /* USE_ELGAMAL */
 
 /* The maximum public-key object size.  This is used to allocate temporary
    buffers when working with signatures and PKC-encrypted keys.  The size

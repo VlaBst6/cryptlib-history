@@ -513,10 +513,8 @@ static const MAP_TABLE algoMapTbl[] = {
 	{ CRYPT_ALGO_3DES, CALG_3DES },
 	{ CRYPT_ALGO_RC2, CALG_RC2 },
 	{ CRYPT_ALGO_RC4, CALG_RC4 },
-	{ CRYPT_ALGO_SKIPJACK, CALG_SKIPJACK },
 
 	/* Hash algorithms */
-	{ CRYPT_ALGO_MD2, CALG_MD2 },
 	{ CRYPT_ALGO_MD5, CALG_MD5 },
 	{ CRYPT_ALGO_SHA1, CALG_SHA },
 
@@ -3115,10 +3113,6 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 		bitsToBytes( 40 ), bitsToBytes( 64 ), bitsToBytes( 64 ) },
 	{ CRYPT_ALGO_3DES, bitsToBytes( 64 ), "3DES", 4,
 		bitsToBytes( 64 + 8 ), bitsToBytes( 128 ), bitsToBytes( 192 ) },
-	{ CRYPT_ALGO_IDEA, bitsToBytes( 64 ), "IDEA", 4,
-		bitsToBytes( 40 ), bitsToBytes( 128 ), bitsToBytes( 128 ) },
-	{ CRYPT_ALGO_CAST, bitsToBytes( 64 ), "CAST-128", 8,
-		bitsToBytes( 40 ), bitsToBytes( 128 ), bitsToBytes( 128 ) },
 	{ CRYPT_ALGO_RC2, bitsToBytes( 64 ), "RC2", 3,
 		bitsToBytes( 40 ), bitsToBytes( 128 ), bitsToBytes( 1024 ) },
 	{ CRYPT_ALGO_RC4, bitsToBytes( 8 ), "RC4", 3,
@@ -3127,14 +3121,8 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 		bitsToBytes( 40 ), bitsToBytes( 128 ), bitsToBytes( 832 ) },
 	{ CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES", 3,
 		bitsToBytes( 128 ), bitsToBytes( 128 ), bitsToBytes( 256 ) },
-	{ CRYPT_ALGO_SKIPJACK, bitsToBytes( 64 ), "Skipjack", 8,
-		bitsToBytes( 80 ), bitsToBytes( 80 ), bitsToBytes( 80 ) },
 
 	/* Hash capabilities */
-	{ CRYPT_ALGO_MD2, bitsToBytes( 128 ), "MD2", 3,
-		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
-	{ CRYPT_ALGO_MD4, bitsToBytes( 128 ), "MD4", 3,
-		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
 	{ CRYPT_ALGO_MD5, bitsToBytes( 128 ), "MD5", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
 	{ CRYPT_ALGO_SHA1, bitsToBytes( 160 ), "SHA1", 3,
@@ -3205,20 +3193,8 @@ static const MECHANISM_INFO mechanismInfo[] = {
 	{ CALG_RC4, CALG_NONE, CRYPT_ALGO_RC4, CRYPT_MODE_OFB, 
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_SKIPJACK, CALG_NONE, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_ECB,
-	  genericEndFunction, cipherInitKey, NULL, 
-	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_SKIPJACK, CALG_NONE, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_CBC,
-	  genericEndFunction, cipherInitKey, NULL, 
-	  cipherEncrypt, cipherDecrypt, NULL, NULL },
 #if 0	/* Although CAPI supports the hash mechanisms, as with PKCS #11
 		   we always use cryptlib native contexts for this */
-	{ CALG_MD2, CALG_NONE, CRYPT_ALGO_MD2, CRYPT_MODE_NONE,
-	  genericEndFunction, NULL, NULL, 
-	  hashFunction, hashFunction, NULL, NULL },
-	{ CALG_MD4, CALG_NONE, CRYPT_ALGO_MD4, CRYPT_MODE_NONE,
-	  genericEndFunction, NULL, NULL, 
-	  hashFunction, hashFunction, NULL, NULL },
 	{ CALG_MD5, CALG_NONE, CRYPT_ALGO_MD5, CRYPT_MODE_NONE,
 	  genericEndFunction, NULL, NULL, 
 	  hashFunction, hashFunction, NULL, NULL },
@@ -3240,7 +3216,7 @@ static CAPABILITY_INFO *addCapability( const DEVICE_INFO *deviceInfo,
 	{
 	VARIABLE_CAPABILITY_INFO *capabilityInfo = \
 					( VARIABLE_CAPABILITY_INFO * ) existingCapabilityInfo;
-	int minKeySize, maxKeySize, i;
+	int i;
 
 	/* If it's a new capability, copy across the template for this 
 	   capability */
@@ -3272,16 +3248,21 @@ static CAPABILITY_INFO *addCapability( const DEVICE_INFO *deviceInfo,
 	   reported size to match the conventionally-used value */
 	if( capabilityInfo->keySize > 0 )
 		{
-		minKeySize = bitsToBytes( capiAlgoInfo->dwMinLen );
-		maxKeySize = bitsToBytes( capiAlgoInfo->dwMaxLen );
+		int minKeySize = bitsToBytes( capiAlgoInfo->dwMinLen );
+		int maxKeySize = bitsToBytes( capiAlgoInfo->dwMaxLen );
+
 		if( mechanismInfoPtr->cryptAlgo == CRYPT_ALGO_DES && \
 			minKeySize == 7 )
+			{
 			/* Adjust 56 bits -> 8 bytes */
 			minKeySize = maxKeySize = 8;
+			}
 		if( mechanismInfoPtr->cryptAlgo == CRYPT_ALGO_3DES && \
 			minKeySize == 21 )
+			{
 			/* Adjust 168 bits -> 24 bytes */
 			minKeySize = maxKeySize = 24;
+			}
 		if( minKeySize > capabilityInfo->minKeySize )
 			capabilityInfo->minKeySize = minKeySize;
 		if( capabilityInfo->keySize < capabilityInfo->minKeySize )

@@ -923,7 +923,7 @@ static int copyCertToOCSPRequest( INOUT CERT_INFO *ocspRequestInfoPtr,
 		}
 	sMemOpen( &stream, idBufPtr, idLength );
 	status = writeOCSPID( &stream, certInfoPtr, 
-							ocspRequestInfoPtr->certHash, KEYID_SIZE );
+						  ocspRequestInfoPtr->certHash, KEYID_SIZE );
 	sMemDisconnect( &stream );
 	if( cryptStatusOK( status ) )
 		{

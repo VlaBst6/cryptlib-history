@@ -104,6 +104,31 @@ int debugPrintf( const char *format, ... )
 /* Dump a PDU to disk */
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static void buildFilePath( IN_STRING const char *fileName,
+						   OUT_BUFFER_FIXED( 1024 ) char *filenameBuffer )
+	{
+	int i;
+
+	/* Check whether the filename appears to be an absolute path */
+	for( i = 0; fileName[ i ] != '\0'; i++ )
+		{
+		if( fileName[ i ] == ':' || fileName[ i ] == '/' )
+			break;
+		}
+	if( fileName[ i ] == '\0' )
+		{
+		/* It's a relative path, put the file in the temp directory */
+#if defined( __WIN32__ )
+		GetTempPath( 512, filenameBuffer );
+#else
+		strlcpy_s( filenameBuffer, 1024, "/tmp/" );
+#endif /* __WIN32__ */
+		}
+	strlcat_s( filenameBuffer, 1024, fileName );
+	strlcat_s( filenameBuffer, 1024, ".der" );
+	}
+
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
 void debugDumpFile( IN_STRING const char *fileName, 
 					IN_BUFFER( dataLength ) const void *data, 
 					IN_LENGTH_SHORT const int dataLength )
@@ -115,14 +140,7 @@ void debugDumpFile( IN_STRING const char *fileName,
 	assert( isReadPtr( fileName, 2 ) );
 	assert( isReadPtr( data, dataLength ) );
 
-#if defined( __WIN32__ )
-	GetTempPath( 512, filenameBuffer );
-#else
-	strlcpy_s( filenameBuffer, 1024, "/tmp/" );
-#endif /* __WIN32__ */
-	strlcat_s( filenameBuffer, 1024, fileName );
-	strlcat_s( filenameBuffer, 1024, ".der" );
-
+	buildFilePath( fileName, filenameBuffer );
 #ifdef __STDC_LIB_EXT1__
 	if( fopen_s( &filePtr, filenameBuffer, "wb" ) != 0 )
 		filePtr = NULL;
@@ -155,14 +173,7 @@ void debugDumpFileCert( IN_STRING const char *fileName,
 	assert( isReadPtr( fileName, 2 ) );
 	assert( isHandleRangeValid( iCryptCert ) );
 
-#if defined( __WIN32__ )
-	GetTempPath( 512, filenameBuffer );
-#else
-	strlcpy_s( filenameBuffer, 1024, "/tmp/" );
-#endif /* __WIN32__ */
-	strlcat_s( filenameBuffer, 1024, fileName );
-	strlcat_s( filenameBuffer, 1024, ".der" );
-
+	buildFilePath( fileName, filenameBuffer );
 #ifdef __STDC_LIB_EXT1__
 	if( fopen_s( &filePtr, filenameBuffer, "wb" ) != 0 )
 		filePtr = NULL;

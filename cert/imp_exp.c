@@ -175,7 +175,7 @@ static int checkTextEncoding( IN_BUFFER( certObjectLength ) const void *certObje
 	if( format == CRYPT_CERTFORMAT_CERTIFICATE || \
 		format == CRYPT_CERTFORMAT_CERTCHAIN )
 		{
-		assert( offset > 0 );
+		ENSURES( offset > 0 && offset < MAX_INTLENGTH );
 
 		*newObject = ( BYTE * ) certObject + offset;
 		*newObjectLength = certObjectLength - offset;

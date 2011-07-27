@@ -1461,7 +1461,6 @@ int sioctlSetString( INOUT STREAM *stream,
 #endif /* USE_TCP */
 			return( CRYPT_OK );
 
-#ifdef USE_TCP
 		case STREAM_IOCTL_IOBUFFER:
 			REQUIRES_S( dataLen == 0 || \
 						dataLen == 512 || dataLen == 1024 || \
@@ -1469,7 +1468,6 @@ int sioctlSetString( INOUT STREAM *stream,
 						dataLen == 8192 || dataLen == 16384 );
 
 			return( setStreamBuffer( stream, data, dataLen ) );
-#endif /* USE_TCP */
 		}
 
 	retIntError_Stream( stream );

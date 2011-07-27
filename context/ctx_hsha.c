@@ -282,8 +282,8 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_HMAC_SHA, bitsToBytes( 160 ), "HMAC-SHA", 8,
-	bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE,
+	CRYPT_ALGO_HMAC_SHA1, bitsToBytes( 160 ), "HMAC-SHA", 8,
+	bitsToBytes( 64 ), bitsToBytes( 160 ), CRYPT_MAX_KEYSIZE,
 	selfTest, getInfo, NULL, NULL, initKey, NULL, hash, hash
 	};
 

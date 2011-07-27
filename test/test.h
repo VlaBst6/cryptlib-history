@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Test Routines Header File					*
-*						Copyright Peter Gutmann 1995-2010					*
+*						Copyright Peter Gutmann 1995-2011					*
 *																			*
 ****************************************************************************/
 
@@ -415,12 +415,14 @@ typedef struct {
    code */
 
 typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
-			   KEYFILE_OPENPGP, KEYFILE_OPENPGP_HASH, KEYFILE_OPENPGP_AES,
+			   KEYFILE_OPENPGP_HASH, KEYFILE_OPENPGP_AES, 
 			   KEYFILE_OPENPGP_RSA, KEYFILE_NAIPGP,
 			   KEYFILE_OPENPGP_PARTIAL } KEYFILE_TYPE;
 
-/* The generic password for private keys */
+/* The generic password used for password-based encryption, and another one 
+   for private key storage */
 
+#define TEST_PASSWORD			TEXT( "password" )
 #define TEST_PRIVKEY_PASSWORD	TEXT( "test" )
 
 /* The database keyset type and name.  Under Windoze we use ODBC, for
@@ -469,7 +471,7 @@ typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
 #define SSL_USER_NAME			TEXT( "test" )
 #define SSL_PASSWORD			TEXT( "test" )
 #define PKI_SRV_NAME			TEXT( "_pkiboot._tcp.cryptoapps.com" )
-#define TSP_DEFAULTSERVER_NAME	TEXT( "http://www.edelweb.fr/cgi-bin/service-tsp" )
+#define TSP_DEFAULTSERVER_NAME	TEXT( "http://timestamping.edelweb.fr/service/tsp" )
 
 /* Labels for the various public-key objects.  These are needed when the
    underlying implementation creates persistent objects (eg keys held in PKCS
@@ -677,9 +679,8 @@ int testUser( void );
 
 int testGetPGPPublicKey( void );
 int testGetPGPPrivateKey( void );
-int testGetBorkenKey( void );
 int testReadWriteFileKey( void );
-int testWriteAltFileKey( void );
+int testReadWriteAltFileKey( void );
 int testImportFileKey( void );
 int testReadFilePublicKey( void );
 int testAddTrustedCert( void );
@@ -697,6 +698,7 @@ int testSingleStepFileCert( void );
 int testSingleStepAltFileCert( void );
 int testDoubleCertFile( void );
 int testRenewedCertFile( void );
+int testReadAltFileKey( void );
 int testReadMiscFile( void );
 
 /* Prototypes for functions in keydbx.c */
@@ -853,6 +855,7 @@ int testSessionTLS12ClientCert( void );
   int testSessionTLSSharedKeyClientServer( void );
   int testSessionTLSNoSharedKeyClientServer( void );
   int testSessionTLSBulkTransferClientServer( void );
+  int testSessionTLSResumeClientServer( void );
   int testSessionTLS11ClientServer( void );
   int testSessionTLS12ClientServer( void );
   int testSessionTLS12ClientServerEccKey( void );
@@ -890,7 +893,8 @@ BOOLEAN testMidLevel( void );
 BOOLEAN testHighLevel( void );
 BOOLEAN testCert( void );
 BOOLEAN testCertMgmt( void );
-BOOLEAN testKeyset( void );
+BOOLEAN testKeysetFile( void );
+BOOLEAN testKeysetDatabase( void );
 BOOLEAN testEnveloping( void );
 BOOLEAN testSessions( void );
 BOOLEAN testSessionsLoopback( void );

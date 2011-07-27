@@ -619,8 +619,6 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 	if( cryptAlgo == CRYPT_ALGO_DH || cryptAlgo == CRYPT_ALGO_ECDH )
 		return( TRUE );
 #endif /* TEST_DH */
-	if( cryptAlgo == CRYPT_ALGO_KEA )
-		return( TRUE );
 
 	/* Test each mode of an algorithm.  We have to be very careful about
 	   destroying any objects we create before we exit, because objects left
@@ -638,13 +636,6 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 									   ( BYTE * ) "12345678", 8 );
 				break;
 
-			case CRYPT_ALGO_SKIPJACK:
-				status = loadContexts( &cryptContext, &decryptContext,
-									   cryptDevice, cryptAlgo, cryptMode,
-									   ( BYTE * ) "1234567890", 10 );
-				break;
-
-			case CRYPT_ALGO_CAST:
 			case CRYPT_ALGO_IDEA:
 			case CRYPT_ALGO_AES:
 				status = loadContexts( &cryptContext, &decryptContext,
@@ -671,8 +662,6 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 									   ( BYTE * ) "1234567890098765432112345678900987654321", 40 );
 				break;
 
-			case CRYPT_ALGO_MD2:
-			case CRYPT_ALGO_MD4:
 			case CRYPT_ALGO_MD5:
 			case CRYPT_ALGO_SHA:
 			case CRYPT_ALGO_SHA2:

@@ -463,7 +463,22 @@ static int completeKeysetFileOpen( INOUT KEYSET_INFO *keysetInfoPtr,
 			retIntError();
 		}
 	if( cryptStatusError( status ) )
+		{
+		/* Normally if an access method is unavailable we'd return
+		   CRYPT_ARGERROR_NUM1 to indicate that the overall CRYPT_KEYSET_xxx
+		   type isn't supported, however in the case of CRYPT_KEYSET_FILE
+		   we're dealing with subtypes rather than the CRYPT_KEYSET_FILE in
+		   general.  To deal with this, if the subtype is anything other than
+		   PKCS #15 files then we report it as CRYPT_ERROR_NOTAVAIL to indicate
+		   that while CRYPT_KEYSET_FILE as a whole may be supported, this
+		   particular subtype isn't.  For PKCS #15 files, the generic "file
+		   keyset", we report it as a standard CRYPT_ARGERROR_NUM1 */
+		if( status == CRYPT_ARGERROR_NUM1 && \
+			subType != KEYSET_SUBTYPE_PKCS15 )
+			return( CRYPT_ERROR_NOTAVAIL );
+
 		return( status );
+		}
 	ENSURES( keysetInfoPtr->initFunction != NULL && \
 			 keysetInfoPtr->shutdownFunction != NULL && \
 			 keysetInfoPtr->getItemFunction != NULL );
@@ -979,7 +994,7 @@ static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iCryptKeyset,
 	switch( keysetType )
 		{
 		case CRYPT_KEYSET_FILE:
-			subType = SUBTYPE_KEYSET_FILE_PARTIAL;
+			subType = SUBTYPE_KEYSET_FILE_READONLY;
 			storageSize = sizeof( FILE_INFO );
 			break;
 
@@ -1038,6 +1053,37 @@ static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iCryptKeyset,
 		   keyset rather than just a generic flat-file store */
 		if( keysetSubType == KEYSET_SUBTYPE_PKCS15 )
 			subType = SUBTYPE_KEYSET_FILE;
+
+		/* If it's a limited keyset type that nonetheless allows writing
+		   at least one public/private key, mark it as a restricted-function
+		   keyset */
+		if( keysetSubType == KEYSET_SUBTYPE_PKCS12 )
+			subType = SUBTYPE_KEYSET_FILE_PARTIAL;
+
+		/* Make sure that the open-mode that's been specified is compatible
+		   with the object subtype */
+		switch( subType )
+			{
+			case SUBTYPE_KEYSET_FILE:
+				/* All access modes allowed */
+				break;
+
+			case SUBTYPE_KEYSET_FILE_PARTIAL:
+				/* Update access not allowed */
+				if( options != CRYPT_KEYOPT_READONLY && \
+					options != CRYPT_KEYOPT_CREATE )
+					return( CRYPT_ARGERROR_NUM2 );
+				break;
+
+			case SUBTYPE_KEYSET_FILE_READONLY:
+				/* Only read access allowed */
+				if( options != CRYPT_KEYOPT_READONLY )
+					return( CRYPT_ARGERROR_NUM2 );
+				break;
+
+			default:
+				retIntError();
+			}
 		}
 
 	/* Create the keyset object */

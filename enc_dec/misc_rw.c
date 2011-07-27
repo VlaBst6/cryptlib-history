@@ -39,8 +39,8 @@ static int readInteger( INOUT STREAM *stream,
 						IN_LENGTH_PKC const int minLength, 
 						IN_LENGTH_PKC const int maxLength,
 						IN_ENUM( LENGTH ) const LENGTH_TYPE lengthType,
-						IN_ENUM_OPT( SHORTKEY_CHECK ) \
-							const SHORTKEY_CHECK_TYPE checkType )
+						IN_ENUM_OPT( KEYSIZE_CHECK ) \
+							const KEYSIZE_CHECK_TYPE checkType )
 	{
 	int length;
 
@@ -51,8 +51,8 @@ static int readInteger( INOUT STREAM *stream,
 	REQUIRES_S( minLength > 0 && minLength < maxLength && \
 				maxLength <= CRYPT_MAX_PKCSIZE );
 	REQUIRES_S( lengthType > LENGTH_NONE && lengthType < LENGTH_LAST );
-	REQUIRES_S( checkType >= SHORTKEY_CHECK_NONE && \
-				checkType < SHORTKEY_CHECK_LAST );
+	REQUIRES_S( checkType >= KEYSIZE_CHECK_NONE && \
+				checkType < KEYSIZE_CHECK_LAST );
 
 	/* Clear return values */
 	if( integer != NULL )
@@ -70,17 +70,17 @@ static int readInteger( INOUT STREAM *stream,
 		return( length );
 	if( lengthType == LENGTH_16U_BITS )
 		length = bitsToBytes( length );
-	if( checkType != SHORTKEY_CHECK_NONE )
+	if( checkType != KEYSIZE_CHECK_NONE )
 		{
-		REQUIRES( ( checkType == SHORTKEY_CHECK_ECC && \
+		REQUIRES( ( checkType == KEYSIZE_CHECK_ECC && \
 					minLength > bitsToBytes( 176 ) ) || \
-				  ( checkType != SHORTKEY_CHECK_ECC && \
+				  ( checkType != KEYSIZE_CHECK_ECC && \
 					minLength > bitsToBytes( 256 ) ) );
 
 		/* If the length is below the minimum allowed but still looks at 
 		   least vaguely valid, report it as a too-short key rather than a
 		   bad data error */
-		if( checkType == SHORTKEY_CHECK_ECC )
+		if( checkType == KEYSIZE_CHECK_ECC )
 			{
 			if( isShortECCKey( length ) )
 				return( CRYPT_ERROR_NOSECURE );
@@ -112,10 +112,10 @@ static int readInteger( INOUT STREAM *stream,
 			return( status );
 		length--;
 		}
-	if( checkType != SHORTKEY_CHECK_NONE )
+	if( checkType != KEYSIZE_CHECK_NONE )
 		{
 		/* Repeat the earlier check on the adjusted value */
-		if( checkType == SHORTKEY_CHECK_ECC )
+		if( checkType == KEYSIZE_CHECK_ECC )
 			{
 			if( isShortECCKey( length ) )
 				return( CRYPT_ERROR_NOSECURE );
@@ -401,7 +401,7 @@ int readInteger16U( INOUT STREAM *stream,
 					IN_LENGTH_PKC const int maxLength )
 	{
 	return( readInteger( stream, integer, integerLength, minLength,
-						 maxLength, LENGTH_16U, SHORTKEY_CHECK_NONE ) );
+						 maxLength, LENGTH_16U, KEYSIZE_CHECK_NONE ) );
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
@@ -413,7 +413,7 @@ int readInteger16Ubits( INOUT STREAM *stream,
 						IN_LENGTH_PKC const int maxLength )
 	{
 	return( readInteger( stream, integer, integerLength, minLength,
-						 maxLength, LENGTH_16U_BITS, SHORTKEY_CHECK_NONE ) );
+						 maxLength, LENGTH_16U_BITS, KEYSIZE_CHECK_NONE ) );
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
@@ -425,7 +425,7 @@ int readInteger32( INOUT STREAM *stream,
 				   IN_LENGTH_PKC const int maxLength )
 	{
 	return( readInteger( stream, integer, integerLength, minLength,
-						 maxLength, LENGTH_32, SHORTKEY_CHECK_NONE ) );
+						 maxLength, LENGTH_32, KEYSIZE_CHECK_NONE ) );
 	}
 
 /* Special-case large integer read routines that explicitly check for a too-
@@ -441,7 +441,7 @@ int readInteger16UChecked( INOUT STREAM *stream,
 						   IN_LENGTH_PKC const int maxLength )
 	{
 	return( readInteger( stream, integer, integerLength, minLength,
-						 maxLength, LENGTH_16U, SHORTKEY_CHECK_PKC ) );
+						 maxLength, LENGTH_16U, KEYSIZE_CHECK_PKC ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
@@ -460,10 +460,10 @@ int readInteger32Checked( INOUT STREAM *stream,
 		maxLength == MAX_PKCSIZE_ECCPOINT )
 		{
 		return( readInteger( stream, integer, integerLength, minLength,
-							 maxLength, LENGTH_32, SHORTKEY_CHECK_ECC ) );
+							 maxLength, LENGTH_32, KEYSIZE_CHECK_ECC ) );
 		}
 	return( readInteger( stream, integer, integerLength, minLength,
-						 maxLength, LENGTH_32, SHORTKEY_CHECK_PKC ) );
+						 maxLength, LENGTH_32, KEYSIZE_CHECK_PKC ) );
 	}
 
 #ifdef USE_PKC
@@ -477,8 +477,8 @@ static int readBignumInteger( INOUT STREAM *stream,
 							  IN_LENGTH_PKC const int maxLength,
 							  IN_OPT TYPECAST( BIGNUM * ) const void *maxRange, 
 							  IN_ENUM( LENGTH ) const LENGTH_TYPE lengthType,
-							  IN_ENUM_OPT( SHORTKEY_CHECK ) \
-									const SHORTKEY_CHECK_TYPE checkType )
+							  IN_ENUM_OPT( KEYSIZE_CHECK ) \
+									const KEYSIZE_CHECK_TYPE checkType )
 	{
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	int length, status;
@@ -490,8 +490,8 @@ static int readBignumInteger( INOUT STREAM *stream,
 	REQUIRES_S( minLength > 0 && minLength < maxLength && \
 				maxLength <= CRYPT_MAX_PKCSIZE );
 	REQUIRES_S( lengthType > LENGTH_NONE && lengthType < LENGTH_LAST );
-	REQUIRES( checkType >= SHORTKEY_CHECK_NONE && \
-			  checkType < SHORTKEY_CHECK_LAST );
+	REQUIRES( checkType >= KEYSIZE_CHECK_NONE && \
+			  checkType < KEYSIZE_CHECK_LAST );
 
 	/* Read the integer data */
 	status = readInteger( stream, buffer, &length, minLength, maxLength, 
@@ -499,7 +499,7 @@ static int readBignumInteger( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Convert the value to a bignum.  Note that we use the checkShortKey
+	/* Convert the value to a bignum.  Note that we use the checkKEYSIZE
 	   parameter for both readInteger() and importBignum(), since the 
 	   former merely checks the byte count while the latter actually parses 
 	   and processes the bignum */
@@ -519,7 +519,7 @@ int readBignumInteger16U( INOUT STREAM *stream,
 						  IN_OPT TYPECAST( BIGNUM * ) const void *maxRange )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength,
-							   maxRange, LENGTH_16U, SHORTKEY_CHECK_NONE ) );
+							   maxRange, LENGTH_16U, KEYSIZE_CHECK_NONE ) );
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -531,7 +531,7 @@ int readBignumInteger16Ubits( INOUT STREAM *stream,
 	{
 	return( readBignumInteger( stream, bignum, bitsToBytes( minBits ),
 							   bitsToBytes( maxBits ), maxRange, 
-							   LENGTH_16U_BITS, SHORTKEY_CHECK_NONE ) );
+							   LENGTH_16U_BITS, KEYSIZE_CHECK_NONE ) );
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -542,7 +542,7 @@ int readBignumInteger32( INOUT STREAM *stream,
 						 IN_OPT TYPECAST( BIGNUM * ) const void *maxRange )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength, 
-							   maxRange, LENGTH_32, SHORTKEY_CHECK_NONE ) );
+							   maxRange, LENGTH_32, KEYSIZE_CHECK_NONE ) );
 	}
 
 /* Special-case bignum read routines that explicitly check for a too-short 
@@ -556,7 +556,7 @@ int readBignumInteger16UChecked( INOUT STREAM *stream,
 								 IN_LENGTH_PKC const int maxLength )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength, NULL, 
-							   LENGTH_16U, SHORTKEY_CHECK_PKC ) );
+							   LENGTH_16U, KEYSIZE_CHECK_PKC ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -567,7 +567,7 @@ int readBignumInteger16UbitsChecked( INOUT STREAM *stream,
 	{
 	return( readBignumInteger( stream, bignum, bitsToBytes( minBits ),
 							   bitsToBytes( maxBits ), NULL, 
-							   LENGTH_16U_BITS, SHORTKEY_CHECK_PKC ) );
+							   LENGTH_16U_BITS, KEYSIZE_CHECK_PKC ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -577,7 +577,7 @@ int readBignumInteger32Checked( INOUT STREAM *stream,
 								IN_LENGTH_PKC const int maxLength )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength, 
-							   NULL, LENGTH_32, SHORTKEY_CHECK_PKC ) );
+							   NULL, LENGTH_32, KEYSIZE_CHECK_PKC ) );
 	}
 #endif /* USE_PKC */
 

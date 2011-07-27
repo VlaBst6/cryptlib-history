@@ -103,7 +103,7 @@ int getCertID( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 	return( CRYPT_OK );
 	}
 
-/* Locate an object based on an ID */
+/* Locate a PKCS #15 object based on an ID */
 
 #define matchID( src, srcLen, dest, destLen ) \
 		( ( srcLen ) > 0 && ( srcLen ) == ( destLen ) && \
@@ -281,12 +281,11 @@ PKCS15_INFO *findFreeEntry( IN_ARRAY( noPkcs15objects ) \
 	if( i >= noPkcs15objects )
 		return( NULL );
 
+	/* Remember the index value (used for enumerating PKCS #15 entries) for 
+	   this entry if required */
 	if( index != NULL )
-		{
-		/* Remember the index value (used for enumerating PKCS #15 entries) 
-		   for this entry */
 		*index = i;
-		}
+
 	return( ( PKCS15_INFO * ) &pkcs15info[ i ] );
 	}
 

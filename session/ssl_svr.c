@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib SSL v3/TLS Server Management					*
-*					   Copyright Peter Gutmann 1998-2010					*
+*					   Copyright Peter Gutmann 1998-2011					*
 *																			*
 ****************************************************************************/
 
@@ -19,6 +19,215 @@
 
 #ifdef USE_SSL
 
+/* Determine whether the server needs to request client certificates/client
+   authentication.  This is normally determined by whether an access-control
+   keyset is available, but for the Suite B tests in which any test 
+   certificate is regarded as being acceptable it can be overridden with a
+   self-test flag */
+
+#ifdef CONFIG_SUITEB_TESTS 
+#define clientCertAuthRequired( sessionInfoPtr ) \
+		( sessionInfoPtr->cryptKeyset != CRYPT_ERROR || suiteBTestClientCert )
+#else
+#define clientCertAuthRequired( sessionInfoPtr ) \
+		( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
+#endif /* CONFIG_SUITEB_TESTS */
+
+/****************************************************************************
+*																			*
+*								Utility Functions							*
+*																			*
+****************************************************************************/
+
+/* Read the client certificate chain and make sure that the certificate 
+   being presented is valid for access */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int readCheckClientCerts( INOUT SESSION_INFO *sessionInfoPtr, 
+								 INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+								 INOUT STREAM *stream )
+	{
+#ifndef CONFIG_SUITEB_TESTS 
+	MESSAGE_KEYMGMT_INFO getkeyInfo;
+	MESSAGE_DATA msgData;
+	BYTE certID[ KEYID_SIZE + 8 ];
+#endif /* !CONFIG_SUITEB_TESTS */
+#ifdef CONFIG_SUITEB
+	int length;
+#endif /* CONFIG_SUITEB */
+	int status;
+
+	/* Read the client certificate chain */
+	status = readSSLCertChain( sessionInfoPtr, handshakeInfo, stream, 
+							   &sessionInfoPtr->iKeyexAuthContext, TRUE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Make sure that the client certificate is present in our certificate 
+	   store.  Since we've already got a copy of the certificate, we only do 
+	   a presence check rather than actually fetching the certificate */
+#ifndef CONFIG_SUITEB_TESTS 
+	setMessageData( &msgData, certID, KEYID_SIZE );
+	status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext, 
+							  IMESSAGE_GETATTRIBUTE_S, &msgData, 
+							  CRYPT_CERTINFO_FINGERPRINT_SHA1 );
+	if( cryptStatusOK( status ) )
+		{
+		setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_CERTID, certID, 
+							   KEYID_SIZE, NULL, 0, KEYMGMT_FLAG_CHECK_ONLY );
+		status = krnlSendMessage( sessionInfoPtr->cryptKeyset, 
+								  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
+								  KEYMGMT_ITEM_PUBLICKEY );
+		}
+	if( cryptStatusError( status ) )
+		{
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+				  "Client certificate is not trusted for authentication "
+				  "purposes" ) );
+		}
+#endif /* CONFIG_SUITEB_TESTS */
+
+	/* Make sure that the key is of the appropriate size for the Suite B 
+	   security level.  At the 128-bit level both P256 and P384 are allowed, 
+	   at the 256-bit level only P384 is allowed */
+#ifdef CONFIG_SUITEB
+	status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext, 
+							  IMESSAGE_GETATTRIBUTE, &length,
+							  CRYPT_CTXINFO_KEYSIZE );
+	if( cryptStatusOK( status ) )
+		{
+		const int suiteBtype = \
+						sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
+
+		if( suiteBtype == SSL_PFLAG_SUITEB_256 )
+			{
+			if( length != bitsToBytes( 384 ) )
+				{
+				retExt( CRYPT_ERROR_INVALID,
+						( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+						  "Client Suite B certificate uses %d-bit key at "
+						  "256-bit security level, should use 384-bit key", 
+						  bytesToBits( length ) ) );
+				}
+			}
+		else
+			{
+			if( length != bitsToBytes( 256 ) && \
+				length != bitsToBytes( 384 ) )
+				{
+				retExt( CRYPT_ERROR_INVALID,
+						( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+						  "Client Suite B certificate uses %d-bit key at "
+						  "128-bit security level, should use 256- or "
+						  "384-bit key", bytesToBits( length ) ) );
+				}
+			}
+		}
+#endif /* CONFIG_SUITEB */
+
+	return( CRYPT_OK );
+	}
+
+
+/* Write the certificate request:
+
+	  [	byte		ID = SSL_HAND_SERVER_CERTREQUEST ]
+	  [	uint24		len				-- Written by caller ]
+		byte		certTypeLen
+		byte[]		certType = { RSA, DSA, ECDSA }
+	  [	uint16	sigHashListLen		-- TLS 1.2 ]
+	  [		byte	hashAlgoID		-- TLS 1.2 ]
+	  [		byte	sigAlgoID		-- TLS 1.2 ]
+		uint16		caNameListLen = 4
+			uint16	caNameLen = 2
+			byte[]	caName = { 0x30, 0x00 }
+
+   This message is a real mess, it originally had a rather muddled 
+   certificate-type indicator (which included things like "Ephemeral DH 
+   signed with RSA") and an equally ambiguous CA list that many 
+   implementations either left empty or filled with the name of every CA 
+   that they'd ever heard of.  TLS 1.2 added a means of indicating which 
+   signature and hash algorithms were acceptable, which is kind of essential 
+   because the explosion of hash algorithms in 1.2 means that a server would 
+   have to run parallel hashes of every handshake message for every possible 
+   hash algorithm until the client sends their certificate-verify message 
+   (!!).  In other words although it was planned as a means of indicating 
+   the server's capabilities, it actually acts as a mechanism for keeping 
+   the client-auth process manageable */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int writeCertRequest( INOUT SESSION_INFO *sessionInfoPtr, 
+							 INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+							 INOUT STREAM *stream )
+	{
+	const BOOLEAN rsaAvailable = algoAvailable( CRYPT_ALGO_RSA );
+	const BOOLEAN dsaAvailable = algoAvailable( CRYPT_ALGO_DSA );
+	const BOOLEAN ecdsaAvailable = algoAvailable( CRYPT_ALGO_ECDSA );
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+
+	REQUIRES( rsaAvailable || ecdsaAvailable );
+
+	/* Write the certificate type */
+	sputc( stream, ( rsaAvailable ? 1 : 0 ) + \
+				   ( dsaAvailable ? 1 : 0 ) + \
+				   ( ecdsaAvailable ? 1 : 0 ) );
+	if( rsaAvailable )
+		sputc( stream, TLS_CERTTYPE_RSA );
+	if( dsaAvailable )
+		sputc( stream, TLS_CERTTYPE_DSA );
+	if( ecdsaAvailable )
+		sputc( stream, TLS_CERTTYPE_ECDSA );
+
+	/* Write the list of accepted signature and hash algorithms if required.  
+	   In theory we could write the full list of algorithms, but thanks to 
+	   SSL/TLS' braindamaged way of handling certificate-based 
+	   authentication (see the comment above) this would make the 
+	   certificate-authentication process unmanageable.  To get around this 
+	   we only allow one single algorithm, the SHA-2 default for TLS 1.2+.  
+	   In addition we can't allow DSA because it's only defined for use with 
+	   SHA-1 (unless we go for "DSA-2" / FIPS 186-3 key sizes like 2048 
+	   bits, which nothing seems to support).
+
+	   For Suite B things get a bit more complicated because this allows 
+	   both SHA-256 and SHA-384, dropping us straight back into the mess 
+	   that we've just escaped from.  To get around this we specify the
+	   use of the hash algorithm that we've negotiated for the handshake,
+	   on the assumption that a client using SHA384 for the handshake isn't 
+	   going to then try and use SHA256 for the authentication */
+	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
+		{
+#ifdef CONFIG_SUITEB
+		writeUint16( stream, 2 );
+		if( handshakeInfo->keyexSigHashAlgoParam == bitsToBytes( 384 ) )
+			sputc( stream, TLS_HASHALGO_SHA384 );
+		else
+			sputc( stream, TLS_HASHALGO_SHA2 );
+		sputc( stream, TLS_SIGALGO_ECDSA );
+#else
+		writeUint16( stream, ( rsaAvailable ? 2 : 0 ) + \
+							 ( ecdsaAvailable ? 2 : 0 ) );
+		if( rsaAvailable )
+			{
+			sputc( stream, TLS_HASHALGO_SHA2 );
+			sputc( stream, TLS_SIGALGO_RSA );
+			}
+		if( ecdsaAvailable )
+			{
+			sputc( stream, TLS_HASHALGO_SHA2 );
+			sputc( stream, TLS_SIGALGO_ECDSA );
+			}
+#endif /* CONFIG_SUITEB */
+		}
+
+	/* Write the CA name list */ 
+	writeUint16( stream, UINT16_SIZE + 2 );
+	writeUint16( stream, 2 );
+	return( swrite( stream, "\x30\x00", 2 ) );
+	}
+
 /****************************************************************************
 *																			*
 *							Server-side Connect Functions					*
@@ -32,6 +241,7 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 						  INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
 	STREAM *stream = &handshakeInfo->stream;
+	SCOREBOARD_LOOKUP_RESULT lookupResult = DUMMY_INIT_STRUCT;
 	MESSAGE_DATA msgData;
 	int length, resumedSessionID = CRYPT_ERROR;
 	int packetOffset, status;
@@ -55,10 +265,13 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		/* The client has sent us a sessionID in an attempt to resume a 
 		   previous session, see if it's in the session cache */
 		resumedSessionID = \
-			findScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
-					handshakeInfo->sessionID, handshakeInfo->sessionIDlength,
-					handshakeInfo->premasterSecret, SSL_SECRET_SIZE,
-					&handshakeInfo->premasterSecretSize );
+			lookupScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
+					SCOREBOARD_KEY_SESSIONID_SVR, handshakeInfo->sessionID, 
+					handshakeInfo->sessionIDlength,
+					&lookupResult );
+#ifdef CONFIG_SUITEB_TESTS 
+		resumedSessionID = CRYPT_ERROR;	/* Disable for Suite B tests */
+#endif /* CONFIG_SUITEB_TESTS */
 		}
 
 	/* Handle session resumption.  If it's a new session or the session data 
@@ -72,6 +285,16 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 		handshakeInfo->sessionIDlength = SESSIONID_SIZE;
+		}
+	else
+		{
+		/* We're resuming a previous session, remember the premaster secret */
+		status = attributeCopyParams( handshakeInfo->premasterSecret, 
+									  SSL_SECRET_SIZE,
+									  &handshakeInfo->premasterSecretSize,
+									  lookupResult.data, 
+									  lookupResult.dataSize );
+		ENSURES( cryptStatusOK( status ) );
 		}
 
 	/* Get the nonce that's used to randomise all crypto operations and set 
@@ -155,7 +378,13 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 			return( status );
 			}
 
-		/* Tell the caller that it's a resumed session */
+		/* Tell the caller that it's a resumed session, leaving the stream
+		   open in order to write the change cipherspec message that follows 
+		   the server hello in a resumed session */
+		DEBUG_PRINT(( "Resuming session with client based on "
+					  "sessionID = \n" ));
+		DEBUG_DUMP_DATA( handshakeInfo->sessionID, 
+						 handshakeInfo->sessionIDlength );
 		return( OK_SPECIAL );
 		}
 
@@ -273,32 +502,15 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		uint24		len
 		byte		certTypeLen
 		byte[]		certType = { RSA, DSA, ECDSA }
-	  [	uint16	sigHashListLen		-- TLS 1.2
-			byte	hashAlgoID
-			byte	sigAlgoID ]
+	  [	uint16	sigHashListLen		-- TLS 1.2 ]
+	  [		byte	hashAlgoID		-- TLS 1.2 ]
+	  [		byte	sigAlgoID		-- TLS 1.2 ]
 		uint16		caNameListLen = 4
 			uint16	caNameLen = 2
 			byte[]	caName = { 0x30, 0x00 }
-		... 
-
-	   This message is a real mess, it originally had a rather muddled
-	   certificate-type indicator (which included things like "Ephemeral DH
-	   signed with RSA") and an equally ambiguous CA list that many 
-	   implementations either left empty or filled with the name of every
-	   CA that they'd ever heard of.  TLS 1.2 added a means of indicating 
-	   which signature and hash algorithms were acceptable, which is kind of 
-	   essential because the explosion of hash algorithms in 1.2 means
-	   that a server would have to run parallel hashes of every handshake
-	   message for every possible hash algorithm until the client sends
-	   their certificate-verify message (!!).  In other words although it 
-	   was planned as a means of indicating the server's capabilities, it 
-	   actually acts as a mechanism for keeping the client-auth process
-	   manageable */
-	if( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
+		... */
+	if( clientCertAuthRequired( sessionInfoPtr ) )
 		{
-		const BOOLEAN dsaAvailable = algoAvailable( CRYPT_ALGO_DSA );
-		const BOOLEAN ecdsaAvailable = algoAvailable( CRYPT_ALGO_ECDSA );
-
 		status = continueHSPacketStream( stream, SSL_HAND_SERVER_CERTREQUEST, 
 										 &packetOffset );
 		if( cryptStatusError( status ) )
@@ -306,37 +518,7 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 			sMemDisconnect( stream );
 			return( status );
 			}
-		sputc( stream, 1 + ( dsaAvailable ? 1 : 0 ) + \
-					   ( ecdsaAvailable ? 1 : 0 ) );
-		sputc( stream, TLS_CERTTYPE_RSA );
-		if( dsaAvailable )
-			sputc( stream, TLS_CERTTYPE_DSA );
-		if( ecdsaAvailable )
-			sputc( stream, TLS_CERTTYPE_ECDSA );
-		if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
-			{
-			/* Write the list of accepted signature and hash algorithms.  In
-			   theory we could write the full list of algorithms, but thanks
-			   to SSL/TLS' braindamaged way of handling certificate-based 
-			   authentication (see the comment above) this would make the 
-			   certificate-authentication process unmanageable.  To get 
-			   around this we only allow one single algorithm, the SHA-2 
-			   default for TLS 1.2+.  In addition we can't allow DSA because 
-			   it's only defined for use with SHA-1 (unless we go for 
-			   "DSA-2" / FIPS 186-3 key sizes like 2048 bits, which nothing 
-			   seems to support) */
-			writeUint16( stream, 2 + ( ecdsaAvailable ? 2 : 0 ) );
-			sputc( stream, TLS_HASHALGO_SHA2 );
-			sputc( stream, TLS_SIGALGO_RSA );
-			if( ecdsaAvailable )
-				{
-				sputc( stream, TLS_HASHALGO_SHA2 );
-				sputc( stream, TLS_SIGALGO_ECDSA );
-				}
-			}
-		writeUint16( stream, UINT16_SIZE + 2 );
-		writeUint16( stream, 2 );
-		status = swrite( stream, "\x30\x00", 2 );
+		status = writeCertRequest( sessionInfoPtr, handshakeInfo, stream );
 		if( cryptStatusOK( status ) )
 			status = completeHSPacketStream( stream, packetOffset );
 		if( cryptStatusError( status ) )
@@ -388,75 +570,17 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	sMemConnect( stream, sessionInfoPtr->receiveBuffer, length );
-	if( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
+	if( clientCertAuthRequired( sessionInfoPtr ) )
 		{
-		MESSAGE_KEYMGMT_INFO getkeyInfo;
-		MESSAGE_DATA msgData;
-		BYTE certID[ KEYID_SIZE + 8 ];
-
-		/* Process the client certificate chain */
-		status = readSSLCertChain( sessionInfoPtr, handshakeInfo,
-								   stream, &sessionInfoPtr->iKeyexAuthContext, 
-								   TRUE );
+		/* Read the client certificate chain and make sure that the 
+		   certificate being presented is valid for access */
+		status = readCheckClientCerts( sessionInfoPtr, handshakeInfo, 
+									   stream );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
 			return( status );
 			}
-
-		/* Make sure that the client certificate is present in our 
-		   certificate store.  Since we've already got a copy of the 
-		   certificate, we only do a presence check rather than actually 
-		   fetching the certificate */
-		setMessageData( &msgData, certID, KEYID_SIZE );
-		status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext, 
-								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
-								  CRYPT_CERTINFO_FINGERPRINT_SHA1 );
-		if( cryptStatusOK( status ) )
-			{
-			setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_CERTID, certID, 
-								   KEYID_SIZE, NULL, 0, 
-								   KEYMGMT_FLAG_CHECK_ONLY );
-			status = krnlSendMessage( sessionInfoPtr->cryptKeyset, 
-									  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
-									  KEYMGMT_ITEM_PUBLICKEY );
-			}
-		if( cryptStatusError( status ) )
-			{
-			sMemDisconnect( stream );
-			retExt( CRYPT_ERROR_INVALID,
-					( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
-					  "Client certificate is not trusted for "
-					  "authentication purposes" ) );
-			}
-
-		/* Make sure that the key is of the appropriate size for the Suite B
-		   security level */
-#ifdef CONFIG_SUITEB
-		status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext, 
-								  IMESSAGE_GETATTRIBUTE, &length,
-								  CRYPT_CTXINFO_KEYSIZE );
-		if( cryptStatusOK( status ) )
-			{
-			const int suiteBtype = \
-						sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
-
-			if( ( suiteBtype == SSL_PFLAG_SUITEB_128 && \
-				  length != bitsToBytes( 256 ) ) || \
-				( suiteBtype == SSL_PFLAG_SUITEB_256 && \
-				  length != bitsToBytes( 384 ) ) )
-				{
-				sMemDisconnect( stream );
-				retExt( CRYPT_ERROR_INVALID,
-						( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
-						  "Client Suite B certificate uses %d-bit key at "
-						  "%d-bit security level, should use %d-bit key", 
-						  bytesToBits( length ), 
-						  ( suiteBtype == SSL_PFLAG_SUITEB_128 ) ? 128 : 256,
-						  ( suiteBtype == SSL_PFLAG_SUITEB_128 ) ? 256 : 384 ) );
-				}
-			}
-#endif /* CONFIG_SUITEB */
 
 		/* Read the next packet(s) if necessary */
 		status = refreshHSStream( sessionInfoPtr, handshakeInfo );
@@ -698,7 +822,7 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* If we're expecting a client certificate, process the client 
 	   certificate verify */
-	if( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
+	if( clientCertAuthRequired( sessionInfoPtr ) )
 		{
 		const BOOLEAN isECC = isEccAlgo( handshakeInfo->keyexAlgo );
 

@@ -790,7 +790,7 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	BYTE buffer[ 128 + ( CRYPT_MAX_PKCSIZE * 4 ) + 8 ];
 	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE + 8 ];
 	void *blobData = DUMMY_INIT_PTR;
-	int blobDataLength = DUMMY_INIT, hashSize, value, status;
+	int blobDataLength = DUMMY_INIT, hashSize, pkcAlgo, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
@@ -805,19 +805,21 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	   their own custom 256-bit curve, or conversely load a known NIST curve 
 	   as a series of discrete key parameters, for now we just assume that a 
 	   curve of the given size is the correct one */
-	status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE, &value, 
-							  CRYPT_CTXINFO_ALGO );
+	status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE, 
+							  &pkcAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( isEccAlgo( value ) )
+	if( isEccAlgo( pkcAlgo ) )
 		{
+		int keySize;
+
 		status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE, 
-								  &value, CRYPT_CTXINFO_KEYSIZE );
+								  &keySize, CRYPT_CTXINFO_KEYSIZE );
 		if( cryptStatusError( status ) )
 			return( status );
-		if( value != bitsToBytes( 256 ) && \
-			value != bitsToBytes( 384 ) && \
-			value != bitsToBytes( 521 ) )
+		if( keySize != bitsToBytes( 256 ) && \
+			keySize != bitsToBytes( 384 ) && \
+			keySize != bitsToBytes( 521 ) )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 

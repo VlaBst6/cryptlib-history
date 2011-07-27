@@ -168,14 +168,14 @@ mh_decl uint_32t rotr32(uint_32t x, int n)
 }
 #endif
 
-#if !defined( rotl64 )  /* NOTE: 0 <= n <= 64 ASSUMED */
+#if ( UNIT_BITS == 64 ) && !defined( rotl64 )  /* NOTE: 0 <= n <= 64 ASSUMED */
 mh_decl uint_64t rotl64(uint_64t x, int n)
 {
     return (((x) << n) | ((x) >> (64 - n)));
 }
 #endif
 
-#if !defined( rotr64 )  /* NOTE: 0 <= n <= 64 ASSUMED */
+#if ( UNIT_BITS == 64 ) && !defined( rotr64 )  /* NOTE: 0 <= n <= 64 ASSUMED */
 mh_decl uint_64t rotr64(uint_64t x, int n)
 {
     return (((x) >> n) | ((x) << (64 - n)));
@@ -198,7 +198,7 @@ mh_decl uint_32t bswap_32(uint_32t x)
 }
 #endif
 
-#if !defined(bswap_64)
+#if ( UNIT_BITS == 64 ) && !defined(bswap_64)
 mh_decl uint_64t bswap_64(uint_64t x)
 {   
     return bswap_32((uint_32t)(x >> 32)) | ((uint_64t)bswap_32((uint_32t)x) << 32);

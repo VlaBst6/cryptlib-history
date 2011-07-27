@@ -33,18 +33,24 @@ typedef struct {
 static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 	/* Encryption algos */
 	{ PGP_ALGO_3DES, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_3DES },
+#ifdef USE_BLOWFISH
 	{ PGP_ALGO_BLOWFISH, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_BLOWFISH },
-	{ PGP_ALGO_CAST5, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_CAST },
+#endif /* USE_BLOWFISH */
+#ifdef USE_IDEA
 	{ PGP_ALGO_IDEA, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_IDEA },
+#endif /* USE_IDEA */
 	{ PGP_ALGO_AES_128, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_AES },
 	{ PGP_ALGO_AES_192, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_AES },
 	{ PGP_ALGO_AES_256, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_AES },
 
 	/* Password-based encryption algos */
 	{ PGP_ALGO_3DES, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_3DES },
+#ifdef USE_BLOWFISH
 	{ PGP_ALGO_BLOWFISH, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_BLOWFISH },
-	{ PGP_ALGO_CAST5, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_CAST },
+#endif /* USE_BLOWFISH */
+#ifdef USE_IDEA
 	{ PGP_ALGO_IDEA, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_IDEA },
+#endif /* USE_IDEA */
 	{ PGP_ALGO_AES_128, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES },
 	{ PGP_ALGO_AES_192, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES },
 	{ PGP_ALGO_AES_256, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES },
@@ -52,7 +58,9 @@ static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 	/* PKC encryption algos */
 	{ PGP_ALGO_RSA, PGP_ALGOCLASS_PKCCRYPT, CRYPT_ALGO_RSA },
 	{ PGP_ALGO_RSA_ENCRYPT, PGP_ALGOCLASS_PKCCRYPT, CRYPT_ALGO_RSA },
+#ifdef USE_ELGAMAL
 	{ PGP_ALGO_ELGAMAL, PGP_ALGOCLASS_PKCCRYPT, CRYPT_ALGO_ELGAMAL },
+#endif /* USE_ELGAMAL */
 
 	/* PKC sig algos */
 	{ PGP_ALGO_RSA, PGP_ALGOCLASS_SIGN, CRYPT_ALGO_RSA },
@@ -60,11 +68,16 @@ static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 	{ PGP_ALGO_DSA, PGP_ALGOCLASS_SIGN, CRYPT_ALGO_DSA },
 
 	/* Hash algos */
-	{ PGP_ALGO_MD2, PGP_ALGOCLASS_HASH, CRYPT_ALGO_MD2 },
+#ifdef USE_MD5
 	{ PGP_ALGO_MD5, PGP_ALGOCLASS_HASH, CRYPT_ALGO_MD5 },
+#endif /* USE_MD5 */
 	{ PGP_ALGO_SHA, PGP_ALGOCLASS_HASH, CRYPT_ALGO_SHA1 },
+#ifdef USE_RIPEMD160
 	{ PGP_ALGO_RIPEMD160, PGP_ALGOCLASS_HASH, CRYPT_ALGO_RIPEMD160 },
+#endif /* USE_RIPEMD160 */
+#ifdef USE_SHA2
 	{ PGP_ALGO_SHA2_256, PGP_ALGOCLASS_HASH, CRYPT_ALGO_SHA2 },
+#endif /* USE_SHA2 */
 
 	{ PGP_ALGO_NONE, 0, CRYPT_ALGO_NONE },
 	{ PGP_ALGO_NONE, 0, CRYPT_ALGO_NONE }
@@ -176,10 +189,9 @@ int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 					  IN_RANGE( 0, CRYPT_MAX_HASHSIZE ) const int saltSize,
 					  IN_INT const int iterations )
 	{
-	CRYPT_ALGO_TYPE algorithm;
 	MESSAGE_DATA msgData;
 	BYTE hashedKey[ CRYPT_MAX_KEYSIZE + 8 ];
-	int keySize = DUMMY_INIT, status;
+	int algorithm, keySize = DUMMY_INIT, status;	/* int vs.enum */
 
 	assert( isReadPtr( password, passwordLength ) );
 	assert( ( salt == NULL && saltSize == 0 ) || \
@@ -245,9 +257,12 @@ int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 									  CRYPT_CTXINFO_KEYING_ITERATIONS );
 			}
 		if( cryptStatusOK( status ) )
+			{
+			const int value = hashAlgo;	/* int vs.enum */
 			status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-									  ( MESSAGE_CAST ) &hashAlgo, 
+									  ( MESSAGE_CAST ) &value, 
 									  CRYPT_CTXINFO_KEYING_ALGO );
+			}
 		if( cryptStatusError( status ) )
 			{
 			zeroise( hashedKey, CRYPT_MAX_KEYSIZE );

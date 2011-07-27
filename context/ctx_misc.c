@@ -119,6 +119,8 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 			( capabilityInfoPtr->minKeySize < MIN_KEYSIZE || \
 			  capabilityInfoPtr->maxKeySize > CRYPT_MAX_KEYSIZE ) )
 			return( FALSE );
+		if( capabilityInfoPtr->keySize > MAX_WORKING_KEYSIZE )
+			return( FALSE );	/* Requirement for key wrap */
 		if( capabilityInfoPtr->initParamsFunction == NULL || \
 			capabilityInfoPtr->initKeyFunction == NULL )
 			return( FALSE );
@@ -195,6 +197,8 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 			( capabilityInfoPtr->minKeySize < MIN_KEYSIZE || \
 			  capabilityInfoPtr->maxKeySize > CRYPT_MAX_KEYSIZE ) )
 			return( FALSE );
+		if( capabilityInfoPtr->keySize > MAX_WORKING_KEYSIZE )
+			return( FALSE );	/* Requirement for key wrap */
 		if( capabilityInfoPtr->initKeyFunction == NULL )
 			return( FALSE );
 
@@ -295,6 +299,17 @@ int getDefaultInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type,
 			/* If we're falling through to a default handler for this then 
 			   it's because the context has no state information */
 			*valuePtr = 0;
+
+			return( CRYPT_OK );
+			}
+
+		case CAPABILITY_INFO_STATEALIGNTYPE:
+			{
+			int *valuePtr = ( int * ) data;
+
+			/* Default alignment for the algorithm-specific state data is
+			   64 bits */
+			*valuePtr = 8;
 
 			return( CRYPT_OK );
 			}
@@ -527,8 +542,8 @@ static int checkBignum( const BIGNUM *bignum,
 						IN_LENGTH_PKC const int minLength, 
 						IN_LENGTH_PKC const int maxLength, 
 						IN_OPT const BIGNUM *maxRange,
-						IN_ENUM_OPT( SHORTKEY_CHECK ) \
-							const SHORTKEY_CHECK_TYPE checkType )
+						IN_ENUM_OPT( KEYSIZE_CHECK ) \
+							const KEYSIZE_CHECK_TYPE checkType )
 	{
 	BN_ULONG bnWord;
 	int bignumLength;
@@ -537,9 +552,11 @@ static int checkBignum( const BIGNUM *bignum,
 	assert( maxRange == NULL || isReadPtr( maxRange, sizeof( BIGNUM ) ) );
 
 	REQUIRES( minLength > 0 && minLength <= maxLength && \
-			  maxLength <= CRYPT_MAX_PKCSIZE );
-	REQUIRES( checkType >= SHORTKEY_CHECK_NONE && \
-			  checkType < SHORTKEY_CHECK_LAST );
+			  maxLength <= CRYPT_MAX_PKCSIZE + \
+						   ( ( checkType == KEYSIZE_CHECK_SPECIAL ) ? \
+							   DLP_OVERFLOW_SIZE : 0 ) );
+	REQUIRES( checkType >= KEYSIZE_CHECK_NONE && \
+			  checkType < KEYSIZE_CHECK_LAST_SPECIAL );
 
 	/* The following should never happen because BN_bin2bn() works with 
 	   unsigned values but we perform the check anyway just in case someone 
@@ -562,19 +579,27 @@ static int checkBignum( const BIGNUM *bignum,
 	bignumLength = BN_num_bytes( bignum );
 	switch( checkType )
 		{
-		case SHORTKEY_CHECK_NONE:
+		case KEYSIZE_CHECK_NONE:
 			/* No specific weak-key check for this value */
 			break;
 
-		case SHORTKEY_CHECK_PKC:
+		case KEYSIZE_CHECK_PKC:
 			if( isShortPKCKey( bignumLength ) )
 				return( CRYPT_ERROR_NOSECURE );
 			break;
 
-		case SHORTKEY_CHECK_ECC:
+		case KEYSIZE_CHECK_ECC:
 			if( isShortECCKey( bignumLength ) )
 				return( CRYPT_ERROR_NOSECURE );
 			break;
+
+		case KEYSIZE_CHECK_SPECIAL:
+			/* This changes the upper bound of the check rather than the 
+			   lower bound so there's no special check required */
+			break;
+
+		default:
+			retIntError();
 		}
 	if( bignumLength < minLength || bignumLength > maxLength )
 		return( CRYPT_ERROR_BADDATA );
@@ -594,8 +619,8 @@ int importBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr,
 				  IN_LENGTH_PKC const int minLength, 
 				  IN_LENGTH_PKC const int maxLength, 
 				  IN_OPT const void *maxRangePtr,
-				  IN_ENUM_OPT( SHORTKEY_CHECK ) \
-					const SHORTKEY_CHECK_TYPE checkType )
+				  IN_ENUM_OPT( KEYSIZE_CHECK ) \
+					const KEYSIZE_CHECK_TYPE checkType )
 	{
 	BIGNUM *bignum = ( BIGNUM * ) bignumPtr;
 	BIGNUM *maxRange = ( BIGNUM * ) maxRangePtr;
@@ -605,16 +630,28 @@ int importBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr,
 	assert( maxRange == NULL || isReadPtr( maxRange, sizeof( BIGNUM ) ) );
 
 	REQUIRES( minLength > 0 && minLength <= maxLength && \
-			  maxLength <= CRYPT_MAX_PKCSIZE );
-	REQUIRES( checkType >= SHORTKEY_CHECK_NONE && \
-			  checkType < SHORTKEY_CHECK_LAST );
+			  maxLength <= CRYPT_MAX_PKCSIZE + \
+						   ( ( checkType == KEYSIZE_CHECK_SPECIAL ) ? \
+							   DLP_OVERFLOW_SIZE : 0 ) );
+	REQUIRES( checkType >= KEYSIZE_CHECK_NONE && \
+			  checkType < KEYSIZE_CHECK_LAST_SPECIAL );
 
 	/* Make sure that we've been given valid input.  This should have been 
 	   checked by the caller anyway using far more specific checks than the
 	   very generic values that we use here, but we perform the check anyway
 	   just to be sure */
-	if( length < 1 || length > CRYPT_MAX_PKCSIZE )
+	if( length < 1 )
 		return( CRYPT_ERROR_BADDATA );
+	if( checkType == KEYSIZE_CHECK_SPECIAL )
+		{
+		if( length > CRYPT_MAX_PKCSIZE + DLP_OVERFLOW_SIZE )
+			return( CRYPT_ERROR_BADDATA );
+		}
+	else
+		{
+		if( length > CRYPT_MAX_PKCSIZE )
+			return( CRYPT_ERROR_BADDATA );
+		}
 
 	/* Convert the byte string into a bignum */
 	if( BN_bin2bn( buffer, length, bignum ) == NULL )
@@ -669,8 +706,8 @@ int importECCPoint( INOUT TYPECAST( BIGNUM * ) void *bignumPtr1,
 					IN_LENGTH_PKC const int maxLength, 
 					IN_LENGTH_PKC const int fieldSize,
 					IN_OPT const void *maxRangePtr,
-					IN_ENUM( SHORTKEY_CHECK ) \
-						const SHORTKEY_CHECK_TYPE checkType )
+					IN_ENUM( KEYSIZE_CHECK ) \
+						const KEYSIZE_CHECK_TYPE checkType )
 	{
 	const BYTE *eccPointData = buffer;
 	BIGNUM *bignum1 = ( BIGNUM * ) bignumPtr1;
@@ -687,8 +724,8 @@ int importECCPoint( INOUT TYPECAST( BIGNUM * ) void *bignumPtr1,
 			  maxLength <= CRYPT_MAX_PKCSIZE_ECC );
 	REQUIRES( fieldSize >= MIN_PKCSIZE_ECC && \
 			  fieldSize <= CRYPT_MAX_PKCSIZE_ECC );
-	REQUIRES( checkType >= SHORTKEY_CHECK_NONE && \
-			  checkType < SHORTKEY_CHECK_LAST );
+	REQUIRES( checkType >= KEYSIZE_CHECK_NONE && \
+			  checkType < KEYSIZE_CHECK_LAST );
 
 	/* Make sure that we've been given valid input.  This should have been 
 	   checked by the caller anyway using far more specific checks than the

@@ -265,22 +265,6 @@ typedef struct AL {
 	DECLARE_VARSTRUCT_VARS;
 	} ATTRIBUTE_LIST;
 
-/* Scoreboard information */
-
-typedef struct {
-	/* Scoreboard index and data storage, and the total number of entries in
-	   the scoreboard */
-	void *index, *data;			/* Scoreboard index and data */
-	int size;					/* Scoreboard total size */
-
-	/* The last used entry in the scoreboard, and a unique ID for each 
-	   scoreboard entry.  This is incremented for each index entry added,
-	   so even if an entry is deleted and then another one with the same
-	   index value added, the uniqueID for the two will be different */
-	int lastEntry;				/* Last used entry in scoreboard */
-	int uniqueID;				/* Unique ID for scoreboard entry */
-	} SCOREBOARD_INFO;
-
 /* Deferred response information.  When we get a request, we may be in the 
    middle of assembling or sending a data packet, so the response has to be 
    deferred until after the data packet has been completed and sent.  The
@@ -328,7 +312,7 @@ typedef struct {
 	int gcmSaltSize;
 
 	/* The session scoreboard, used for the SSL session cache */
-	SCOREBOARD_INFO *scoreboardInfoPtr;	/* Session scoreboard */
+	void *scoreboardInfoPtr;			/* Session scoreboard */
 
 	/* A buffer for the SSL packet header, which is read out-of-band */
 	BUFFER_FIXED( 8 + CRYPT_MAX_IVSIZE ) \
@@ -693,25 +677,6 @@ CHECK_RETVAL_ENUM( CRYPT_ATTRIBUTE ) \
 CRYPT_ATTRIBUTE_TYPE checkMissingInfo( IN_OPT const ATTRIBUTE_LIST *attributeListHead,
 									   const BOOLEAN isServer );
 
-/* Session scoreboard management functions */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 6 ) ) \
-int findScoreboardEntry( INOUT SCOREBOARD_INFO *scoreboardInfo,
-						 IN_BUFFER( keyLength ) const void *key, 
-						 IN_LENGTH_SHORT_MIN( 8 ) const int keyLength, 
-						 OUT_BUFFER( maxValueLength, *valueLength ) void *value, 
-						 IN_LENGTH_SHORT_MIN( 16 ) const int maxValueLength,
-						 OUT_LENGTH_Z int *valueLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
-int addScoreboardEntry( INOUT SCOREBOARD_INFO *scoreboardInfo,
-						IN_BUFFER( keyLength ) const void *key, 
-						IN_LENGTH_SHORT_MIN( 8 ) const int keyLength, 
-						IN_BUFFER( valueLength ) const void *value, 
-						IN_LENGTH_SHORT const int valueLength );
-STDC_NONNULL_ARG( ( 1 ) ) \
-void deleteScoreboardEntry( INOUT SCOREBOARD_INFO *scoreboardInfo, 
-							IN_INT_Z const int uniqueID );
-
 /* Prototypes for functions in sess_rw.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -806,15 +771,8 @@ int sendCloseNotification( INOUT SESSION_INFO *sessionInfoPtr,
 #ifdef USE_SSL
   CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
   int setAccessMethodSSL( INOUT SESSION_INFO *sessionInfoPtr );
-  CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-  int initScoreboard( INOUT SCOREBOARD_INFO *scoreboardInfo, 
-					  IN_LENGTH_SHORT_MIN( 16 ) const int scoreboardSize );
-  STDC_NONNULL_ARG( ( 1 ) ) \
-  void endScoreboard( INOUT SCOREBOARD_INFO *scoreboardInfo );
 #else
   #define setAccessMethodSSL( x )	CRYPT_ARGERROR_NUM1
-  #define initScoreboard( scoreboardInfo, scoreboardSize )	CRYPT_OK
-  #define endScoreboard( scoreboardInfo )
 #endif /* USE_SSL */
 #ifdef USE_TSP
   CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \

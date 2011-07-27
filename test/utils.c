@@ -333,8 +333,6 @@ const C_STR getKeyfileName( const KEYFILE_TYPE type,
 		case KEYFILE_PGP:
 		case KEYFILE_PGP_SPECIAL:
 			return( isPrivKey ? PGP_PRIVKEY_FILE : PGP_PUBKEY_FILE );
-		case KEYFILE_OPENPGP:
-			return( isPrivKey ? OPENPGP_PRIVKEY_FILE : OPENPGP_PUBKEY_FILE );
 		case KEYFILE_OPENPGP_HASH:
 			return( isPrivKey ? OPENPGP_PRIVKEY_HASH_FILE : OPENPGP_PUBKEY_HASH_FILE );
 		case KEYFILE_OPENPGP_AES:
@@ -357,7 +355,6 @@ const C_STR getKeyfilePassword( const KEYFILE_TYPE type )
 		case KEYFILE_X509:
 			return( TEST_PRIVKEY_PASSWORD );
 		case KEYFILE_PGP:
-		case KEYFILE_OPENPGP:
 		case KEYFILE_OPENPGP_HASH:
 		case KEYFILE_OPENPGP_RSA:
 			return( TEXT( "test1" ) );
@@ -388,7 +385,6 @@ const C_STR getKeyfileUserID( const KEYFILE_TYPE type,
 			return( TEXT( "suzuki" ) );
 		case KEYFILE_NAIPGP:
 			return( isPrivKey ? TEXT( "test" ) : TEXT( "test cryptlib" ) );
-		case KEYFILE_OPENPGP:
 		case KEYFILE_OPENPGP_HASH:
 		case KEYFILE_OPENPGP_RSA:
 			return( TEXT( "test1" ) );
@@ -1444,7 +1440,8 @@ static int printComponent( const CRYPT_CERTIFICATE certificate,
 	char buffer[ 1024 + 1 ];
 	int length, status;
 
-	status = cryptGetAttributeString( certificate, component, NULL, &length );
+	status = cryptGetAttributeString( certificate, component, NULL, 
+									  &length );
 	if( cryptStatusError( status ) )
 		{
 		if( status == CRYPT_ERROR_NOTAVAIL && \
@@ -1465,6 +1462,8 @@ static int printComponent( const CRYPT_CERTIFICATE certificate,
 		}
 	status = cryptGetAttributeString( certificate, component, buffer, 
 									  &length );
+	if( cryptStatusError( status ) )
+		return( FALSE );
 	if( isUnicode( buffer, length ) )
 		{
 		wchar_t wcBuffer[ 1024 + 1 ];

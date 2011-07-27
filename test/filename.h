@@ -30,6 +30,7 @@
 #define PNP_PRIVKEY_FILE			"testlib/zkeypnpu"
 #define PNPCA_PRIVKEY_FILE			"testlib/zkeypnpc"
 #define SERVER_PRIVKEY_FILE_TEMPLATE "testlib/zkeysrv%d"
+#define SERVER_ECPRIVKEY_FILE_TEMPLATE "testlib/zkeysrp%d"
 #define SSH_PRIVKEY_FILE_TEMPLATE	"testlib/zkeyssh%d"
 #define SSL_CLI_PRIVKEY_FILE		"testlib/zkeysslc"
 #define TSA_PRIVKEY_FILE			"testlib/zkeytsa"
@@ -39,8 +40,6 @@
 #define PGP_PUBKEY_FILE				"testlib/zpubring"
 #define PGP_PRIVKEY_FILE			"testlib/zsecring"
 #define OPENPGP_PUBKEY_FILE			"testlib/zpubringg"
-#define OPENPGP_PRIVKEY_FILE		"testlib/zsecringg"
-#define OPENPGP_PUBKEY_HASH_FILE	"testlib/zpubhash"
 #define OPENPGP_PRIVKEY_HASH_FILE	"testlib/zsechash"
 #define OPENPGP_PUBKEY_AES_FILE		"testlib/zpubaes"
 #define OPENPGP_PRIVKEY_AES_FILE	"testlib/zsecaes"
@@ -50,9 +49,9 @@
 #define NAIPGP_PUBKEY_FILE			"testlib/zpubnai"
 #define NAIPGP_PRIVKEY_FILE			"testlib/zsecnai"
 
-#define CERT_FILE_TEMPLATE			"testlib/zcert%d"
+#define CERT_FILE_TEMPLATE			"testlib/zcert%02d"
 #define BASE64CERT_FILE_TEMPLATE	"testlib/zcerta%d"
-#define ECC_CERT_FILE_TEMPLATE		"testlib/zeccert%d"
+#define ECC_CERT_FILE_TEMPLATE		"testlib/zeccert%02d"
 #define BROKEN_CERT_FILE			"testlib/zcertb"
 #define BROKEN_USER_CERT_FILE		"testlib/zcertbus"
 #define BROKEN_CA_CERT_FILE			"testlib/zcertbca"
@@ -113,6 +112,7 @@
 #define PNP_PRIVKEY_FILE			":test:keys:pnp_user.p15"
 #define PNPCA_PRIVKEY_FILE			":test:keys:pnp_ca.p15"
 #define SERVER_PRIVKEY_FILE_TEMPLATE ":test:keys:server%d.p15"
+#define SERVER_ECPRIVKEY_FILE_TEMPLATE ":test:keys:serverp%d.p15"
 #define SSH_PRIVKEY_FILE_TEMPLATE	":test:keys:ssh%d.p15"
 #define SSL_CLI_PRIVKEY_FILE		":test:keys:ssl_cli.p15"
 #define TSA_PRIVKEY_FILE			":test:keys:tsa.p15"
@@ -121,8 +121,6 @@
 
 #define PGP_PUBKEY_FILE				":test:pgp:pubring.pgp"
 #define PGP_PRIVKEY_FILE			":test:pgp:secring.pgp"
-#define OPENPGP_PUBKEY_FILE			":test:pgp:pubring.gpg"
-#define OPENPGP_PRIVKEY_FILE		":test:pgp:secring.gpg"
 #define OPENPGP_PUBKEY_HASH_FILE	":test:pgp:pub_hash.gpg"
 #define OPENPGP_PRIVKEY_HASH_FILE	":test:pgp:sec_hash.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		":test:pgp:pub_aes.pkr"
@@ -133,9 +131,9 @@
 #define NAIPGP_PUBKEY_FILE			":test:pgp:pub_nai.pkr"
 #define NAIPGP_PRIVKEY_FILE			":test:pgp:sec_nai.skr"
 
-#define CERT_FILE_TEMPLATE			":test:certs:cert%d.der"
+#define CERT_FILE_TEMPLATE			":test:certs:cert%02d.der"
 #define BASE64CERT_FILE_TEMPLATE	":test:certs:cert%d.asc"
-#define ECC_CERT_FILE_TEMPLATE		":test:certs:eccert%d.der"
+#define ECC_CERT_FILE_TEMPLATE		":test:certs:eccert%02d.der"
 #define BROKEN_CERT_FILE			":test:certs:broken.der"
 #define BROKEN_USER_CERT_FILE		":test:certs:broken_ee.der"
 #define BROKEN_CA_CERT_FILE			":test:certs:broken_ca.der"
@@ -196,6 +194,7 @@
 #define PNP_PRIVKEY_FILE			"DD:CLBP15(KEYPNPU)"
 #define PNPCA_PRIVKEY_FILE			"DD:CLBP15(KEYPNPC)"
 #define SERVER_PRIVKEY_FILE_TEMPLATE "DD:CLBP15(KEYSRV%d)"
+#define SERVER_ECPRIVKEY_FILE_TEMPLATE "DD:CLBP15(KEYSRP%d)"
 #define SSH_PRIVKEY_FILE_TEMPLATE	"DD:CLBP15(KEYSSH%d)"
 #define SSL_CLI_PRIVKEY_FILE		"DD:CLBP15(KEYSSLC)"
 #define TSA_PRIVKEY_FILE			"DD:CLBP15(KEYTSA)"
@@ -204,8 +203,6 @@
 
 #define PGP_PUBKEY_FILE				"DD:CLBPGP(PUBRING)"
 #define PGP_PRIVKEY_FILE			"DD:CLBPGP(SECRING)"
-#define OPENPGP_PUBKEY_FILE			"DD:CLBGPG(PUBRING)"
-#define OPENPGP_PRIVKEY_FILE		"DD:CLBGPG(SECRING)"
 #define OPENPGP_PUBKEY_HASH_FILE	"DD:CLBGPG(PUBHASH)"
 #define OPENPGP_PRIVKEY_HASH_FILE	"DD:CLBGPG(SECHASH)"
 #define OPENPGP_PUBKEY_AES_FILE		"DD:CLBPKR(PUBAES)"
@@ -216,9 +213,9 @@
 #define NAIPGP_PUBKEY_FILE			"DD:CLBPKR(PUBNAI)"
 #define NAIPGP_PRIVKEY_FILE			"DD:CLBSKR(SECNAI)"
 
-#define CERT_FILE_TEMPLATE			"DD:CLBDER(CERT%d)"
+#define CERT_FILE_TEMPLATE			"DD:CLBDER(CERT%02d)"
 #define BASE64CERT_FILE_TEMPLATE	"DD:CLBDER(CERT%d)"
-#define ECC_CERT_FILE_TEMPLATE		"DD:CLBDER(ECCERT%d)"
+#define ECC_CERT_FILE_TEMPLATE		"DD:CLBDER(ECCERT%02d)"
 #define BROKEN_CERT_FILE			"DD:CLBDER(CERTB)"
 #define BROKEN_USER_CERT_FILE		"DD:CLBDER(CERTBUS)"
 #define BROKEN_CA_CERT_FILE			"DD:CLBDER(CERTBCA)"
@@ -279,6 +276,7 @@
 #define PNP_PRIVKEY_FILE			"zkeypnpu.p15"
 #define PNPCA_PRIVKEY_FILE			"zkeypnpc.p15"
 #define SERVER_PRIVKEY_FILE_TEMPLATE "zkeysrv%d.p15"
+#define SERVER_ECPRIVKEY_FILE_TEMPLATE "zkeysrp%d.p15"
 #define SSH_PRIVKEY_FILE_TEMPLATE	"zkeyssh%d.p15"
 #define SSL_CLI_PRIVKEY_FILE		"zkeysslc.p15"
 #define TSA_PRIVKEY_FILE			"zkeytsa.p15"
@@ -287,8 +285,6 @@
 
 #define PGP_PUBKEY_FILE				"zpubring.pgp"
 #define PGP_PRIVKEY_FILE			"zsecring.pgp"
-#define OPENPGP_PUBKEY_FILE			"zpubring.gpg"
-#define OPENPGP_PRIVKEY_FILE		"zsecring.gpg"
 #define OPENPGP_PUBKEY_HASH_FILE	"zpubhash.gpg"
 #define OPENPGP_PRIVKEY_HASH_FILE	"zsechash.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		"zpubaes.pkr"
@@ -299,9 +295,9 @@
 #define NAIPGP_PUBKEY_FILE			"zpubnai.pkr"
 #define NAIPGP_PRIVKEY_FILE			"zsecnai.skr"
 
-#define CERT_FILE_TEMPLATE			"zcert%d.der"
+#define CERT_FILE_TEMPLATE			"zcert%02d.der"
 #define BASE64CERT_FILE_TEMPLATE	"zcert%d.asc"
-#define ECC_CERT_FILE_TEMPLATE		"zeccert%d.der"
+#define ECC_CERT_FILE_TEMPLATE		"zeccert%02d.der"
 #define BROKEN_CERT_FILE			"zcertb.der"
 #define BROKEN_USER_CERT_FILE		"zcertbus.der"
 #define BROKEN_CA_CERT_FILE			"zcertbca.der"
@@ -362,6 +358,7 @@
 #define PNP_PRIVKEY_FILE			L"\\Storage Card\\keys\\pnp_user.p15"
 #define PNPCA_PRIVKEY_FILE			L"\\Storage Card\\keys\\pnp_ca.p15"
 #define SERVER_PRIVKEY_FILE_TEMPLATE L"\\Storage Card\\keys\\server%d.p15"
+#define SERVER_ECPRIVKEY_FILE_TEMPLATE L"\\Storage Card\\keys\\serverp%d.p15"
 #define SSH_PRIVKEY_FILE_TEMPLATE	L"\\Storage Card\\keys\\ssh%d.p15"
 #define SSL_CLI_PRIVKEY_FILE		L"\\Storage Card\\keys\\ssl_cli.p15"
 #define TSA_PRIVKEY_FILE			L"\\Storage Card\\keys\\tsa.p15"
@@ -370,8 +367,6 @@
 
 #define PGP_PUBKEY_FILE				L"\\Storage Card\\pgp\\pubring.pgp"
 #define PGP_PRIVKEY_FILE			L"\\Storage Card\\pgp\\secring.pgp"
-#define OPENPGP_PUBKEY_FILE			L"\\Storage Card\\pgp\\pubring.gpg"
-#define OPENPGP_PRIVKEY_FILE		L"\\Storage Card\\pgp\\secring.gpg"
 #define OPENPGP_PUBKEY_HASH_FILE	L"\\Storage Card\\pgp\\pub_hash.gpg"
 #define OPENPGP_PRIVKEY_HASH_FILE	L"\\Storage Card\\pgp\\sec_hash.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		L"\\Storage Card\\pgp\\pub_aes.pkr"
@@ -382,9 +377,9 @@
 #define NAIPGP_PUBKEY_FILE			L"\\Storage Card\\pgp\\pub_nai.pkr"
 #define NAIPGP_PRIVKEY_FILE			L"\\Storage Card\\pgp\\sec_nai.skr"
 
-#define CERT_FILE_TEMPLATE			L"\\Storage Card\\certs\\cert%d.der"
+#define CERT_FILE_TEMPLATE			L"\\Storage Card\\certs\\cert%02d.der"
 #define BASE64CERT_FILE_TEMPLATE	L"\\Storage Card\\certs\\cert%d.asc"
-#define ECC_CERT_FILE_TEMPLATE		L"\\Storage Card\\certs\\eccert%d.der"
+#define ECC_CERT_FILE_TEMPLATE		L"\\Storage Card\\certs\\eccert%02d.der"
 #define BROKEN_CERT_FILE			L"\\Storage Card\\certs\\broken.der"
 #define BROKEN_USER_CERT_FILE		L"\\Storage Card\\certs\\broken_ee.der"
 #define BROKEN_CA_CERT_FILE			L"\\Storage Card\\certs\\broken_ca.der"
@@ -445,6 +440,7 @@
 #define PNP_PRIVKEY_FILE			TEXT( "test/keys/pnp_user.p15" )
 #define PNPCA_PRIVKEY_FILE			TEXT( "test/keys/pnp_ca.p15" )
 #define SERVER_PRIVKEY_FILE_TEMPLATE TEXT( "test/keys/server%d.p15" )
+#define SERVER_ECPRIVKEY_FILE_TEMPLATE TEXT( "test/keys/serverp%d.p15" )
 #define SSH_PRIVKEY_FILE_TEMPLATE	TEXT( "test/keys/ssh%d.p15" )
 #define SSL_CLI_PRIVKEY_FILE		TEXT( "test/keys/ssl_cli.p15" )
 #define TSA_PRIVKEY_FILE			TEXT( "test/keys/tsa.p15" )
@@ -453,8 +449,6 @@
 
 #define PGP_PUBKEY_FILE				TEXT( "test/pgp/pubring.pgp" )
 #define PGP_PRIVKEY_FILE			TEXT( "test/pgp/secring.pgp" )
-#define OPENPGP_PUBKEY_FILE			TEXT( "test/pgp/pubring.gpg" )
-#define OPENPGP_PRIVKEY_FILE		TEXT( "test/pgp/secring.gpg" )
 #define OPENPGP_PUBKEY_HASH_FILE	TEXT( "test/pgp/pub_hash.gpg" )
 #define OPENPGP_PRIVKEY_HASH_FILE	TEXT( "test/pgp/sec_hash.gpg" )
 #define OPENPGP_PUBKEY_AES_FILE		TEXT( "test/pgp/pub_aes.pkr" )
@@ -465,9 +459,9 @@
 #define NAIPGP_PUBKEY_FILE			TEXT( "test/pgp/pub_nai.pkr" )
 #define NAIPGP_PRIVKEY_FILE			TEXT( "test/pgp/sec_nai.skr" )
 
-#define CERT_FILE_TEMPLATE			TEXT( "test/certs/cert%d.der" )
+#define CERT_FILE_TEMPLATE			TEXT( "test/certs/cert%02d.der" )
 #define BASE64CERT_FILE_TEMPLATE	TEXT( "test/certs/cert%d.asc" )
-#define ECC_CERT_FILE_TEMPLATE		TEXT( "test/certs/eccert%d.der" )
+#define ECC_CERT_FILE_TEMPLATE		TEXT( "test/certs/eccert%02d.der" )
 #define BROKEN_CERT_FILE			TEXT( "test/certs/broken.der" )
 #define BROKEN_USER_CERT_FILE		TEXT( "test/certs/broken_ee.der" )
 #define BROKEN_CA_CERT_FILE			TEXT( "test/certs/broken_ca.der" )

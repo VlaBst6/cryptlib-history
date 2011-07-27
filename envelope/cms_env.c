@@ -214,11 +214,12 @@ static int writeEOCs( INOUT ENVELOPE_INFO *envelopeInfoPtr, const int count )
 						{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 						  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 	const int dataLeft = envelopeInfoPtr->bufSize - envelopeInfoPtr->bufPos;
-	const int eocLength = count * 2;
+	const int eocLength = count * sizeofEOC();
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
-	REQUIRES( eocLength >= 2 && eocLength <= 16 );	/* Count = 1...8 */
+	REQUIRES( eocLength >= sizeofEOC() && \
+			  eocLength <= ( 8 * sizeofEOC() ) );	/* Count = 1...8 */
 
 	if( dataLeft < eocLength )
 		return( CRYPT_ERROR_OVERFLOW );
@@ -304,7 +305,16 @@ static int writeSignedDataHeader( INOUT STREAM *stream,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	writeShortInteger( stream, 1, DEFAULT_TAG );
+	if( envelopeInfoPtr->contentType != CRYPT_CONTENT_DATA )
+		{
+		/* If the encapsulated content-type isn't Data, the version number
+		   is 3 rather than 1 (no known implementation actually pays any 
+		   attention to this, but the spec requires it so we may as well do
+		   it) */
+		writeShortInteger( stream, 3, DEFAULT_TAG );
+		}
+	else
+		writeShortInteger( stream, 1, DEFAULT_TAG );
 	writeSet( stream, hashActionSize );
 	for( actionListPtr = envelopeInfoPtr->actionList, iterationCount = 0;
 		 actionListPtr != NULL && iterationCount < FAILSAFE_ITERATIONS_MED;
@@ -516,10 +526,6 @@ static int writeEnvelopedDataHeader( INOUT STREAM *stream,
 	{
 	const BYTE *contentOID = getContentOID( envelopeInfoPtr->contentType );
 	long blockedPayloadSize, encrContentInfoSize;
-#ifdef USE_KEA
-	const int originatorInfoSize = ( envelopeInfoPtr->extraDataSize > 0 ) ? \
-			( int ) sizeofObject( envelopeInfoPtr->extraDataSize ) : 0;
-#endif /* USE_KEA */
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -541,7 +547,6 @@ static int writeEnvelopedDataHeader( INOUT STREAM *stream,
 	   through all sorts of hoops based on the contents and versions of 
 	   encapsulated RecipientInfo structures but nothing seems to care about 
 	   this so we just use a version of 0 */
-#ifndef USE_KEA
 	status = writeEncryptionHeader( stream, OID_CMS_ENVELOPEDDATA, 
 						sizeofOID( OID_CMS_ENVELOPEDDATA ), 0, 
 						blockedPayloadSize,
@@ -551,41 +556,6 @@ static int writeEnvelopedDataHeader( INOUT STREAM *stream,
 								encrContentInfoSize );
 	if( cryptStatusError( status ) )
 		return( status );
-#else
-	status = writeEncryptionHeader( stream, OID_CMS_ENVELOPEDDATA, 
-						sizeofOID( OID_CMS_ENVELOPEDDATA ),
-						( originatorInfoSize > 0 ) ? 2 : 0, 
-						blockedPayloadSize,
-						( envelopeInfoPtr->cryptActionSize == CRYPT_UNUSED ) ? \
-							CRYPT_UNUSED : \
-							sizeofObject( envelopeInfoPtr->cryptActionSize ) + \
-								originatorInfoSize + encrContentInfoSize );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( originatorInfoSize > 0 )
-		{
-		int status;
-
-		/* Write the wrapper for the originator info and the originator info
-		   itself */
-		writeConstructed( stream, envelopeInfoPtr->extraDataSize, 0 );
-
-		/* Export the originator certificate chain either directly into the 
-		   main buffer or into the auxBuffer if there's not enough room */
-		if( originatorInfoSize >= sMemDataLeft( stream ) )
-			{
-			/* The originator chain is too big for the main buffer so we 
-			   have to write everything from this point on into the 
-			   auxBuffer.  This is then flushed into the main buffer in the 
-			   calling code before anything else is written */
-			stream = ( STREAM * ) &envelopeInfoPtr->auxStream;
-			}
-		status = exportCertToStream( stream, envelopeInfoPtr->iExtraCertChain,
-									 CRYPT_ICERTFORMAT_CERTSET );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
-#endif /* USE_KEA */
 
 	return( ( envelopeInfoPtr->cryptActionSize == CRYPT_UNUSED ) ? \
 			writeSetIndef( stream ) : \
@@ -679,7 +649,8 @@ static int setAlgoParams( IN_HANDLE const CRYPT_CONTEXT iGenericSecret,
 	if( attribute == CRYPT_IATTRIBUTE_ENCPARAMS )
 		status = writeCryptContextAlgoID( &stream, iCryptContext );
 	else
-		status = writeContextAlgoID( &stream, iCryptContext, 0 );
+		status = writeContextAlgoID( &stream, iCryptContext, 
+									 CRYPT_ALGO_NONE );
 	if( cryptStatusOK( status ) )
 		algorithmParamDataSize = stell( &stream );
 	sMemDisconnect( &stream );
@@ -1009,7 +980,7 @@ static int writeCertchainTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 							  envelopeInfoPtr->bufPos, 
 							  MAX_INTLENGTH_SHORT - 1 );
 	const int eocSize = ( envelopeInfoPtr->payloadSize == CRYPT_UNUSED ) ? \
-						( 3 * 2 ) : 0;
+						( 3 * sizeofEOC() ) : 0;
 	int certChainBufSize, certChainSize = DUMMY_INIT, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -1208,7 +1179,7 @@ static int writeMAC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	MESSAGE_DATA msgData;
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
 	const int eocSize = ( envelopeInfoPtr->payloadSize == CRYPT_UNUSED ) ? \
-						( 3 * 2 ) : 0;
+						( 3 * sizeofEOC() ) : 0;
 	const int dataLeft = min( envelopeInfoPtr->bufSize - \
 							  envelopeInfoPtr->bufPos, 512 );
 	int length = DUMMY_INIT, status;
@@ -1378,7 +1349,7 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 								  MAX_INTLENGTH_SHORT - 1 );
 
 		REQUIRES( contentOID != NULL );
-		ENSURES( dataLeft >= dataLeft && dataLeft < MAX_INTLENGTH_SHORT );
+		ENSURES( dataLeft >= 0 && dataLeft < MAX_INTLENGTH_SHORT );
 
 		/* Make sure that there's enough room to emit the data header.  The
 		   value used is only approximate, if there's not enough room left
@@ -1439,7 +1410,7 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			   header to locate the AlgoID data and MACing that */
 			sMemConnect( &stream, envelopeInfoPtr->buffer + originalBufPos,
 						 envelopeInfoPtr->bufPos - originalBufPos );
-			readSequenceI( &stream, NULL );		/* Outer encapsulation */
+			readLongSequence( &stream, NULL );	/* Outer encapsulation */
 			status = readUniversal( &stream );	/* Content-type OID */
 			if( cryptStatusOK( status ) )
 				status = getStreamObjectLength( &stream, &macDataLength );
@@ -1658,7 +1629,7 @@ static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 STDC_NONNULL_ARG( ( 1 ) ) \
 void initCMSEnveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
-	int status;
+	int algorithm, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	
@@ -1679,27 +1650,29 @@ void initCMSEnveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   subset of what's available we have to drop back to fixed values if 
 	   the caller has selected something exotic */
 	status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
-							  IMESSAGE_GETATTRIBUTE,
-							  &envelopeInfoPtr->defaultHash, 
+							  IMESSAGE_GETATTRIBUTE, &algorithm, 
 							  CRYPT_OPTION_ENCR_HASH );
 	if( cryptStatusError( status ) || \
-		!checkAlgoID( envelopeInfoPtr->defaultHash, CRYPT_MODE_NONE ) )
+		!checkAlgoID( algorithm, CRYPT_MODE_NONE ) )
 		envelopeInfoPtr->defaultHash = CRYPT_ALGO_SHA1;
+	else
+		envelopeInfoPtr->defaultHash = algorithm;	/* int vs.enum */
 	status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
-							  IMESSAGE_GETATTRIBUTE,
-							  &envelopeInfoPtr->defaultAlgo, 
+							  IMESSAGE_GETATTRIBUTE, &algorithm, 
 							  CRYPT_OPTION_ENCR_ALGO );
 	if( cryptStatusError( status ) || \
-		!checkAlgoID( envelopeInfoPtr->defaultAlgo,
-					  ( envelopeInfoPtr->defaultAlgo == CRYPT_ALGO_RC4 ) ? \
-					  CRYPT_MODE_OFB : CRYPT_MODE_CBC ) )
+		!checkAlgoID( algorithm, ( algorithm == CRYPT_ALGO_RC4 ) ? \
+								 CRYPT_MODE_OFB : CRYPT_MODE_CBC ) )
 		envelopeInfoPtr->defaultAlgo = CRYPT_ALGO_3DES;
+	else
+		envelopeInfoPtr->defaultAlgo = algorithm;	/* int vs.enum */
 	status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
-							  IMESSAGE_GETATTRIBUTE,
-							  &envelopeInfoPtr->defaultMAC, 
+							  IMESSAGE_GETATTRIBUTE, &algorithm, 
 							  CRYPT_OPTION_ENCR_MAC );
 	if( cryptStatusError( status ) || \
-		!checkAlgoID( envelopeInfoPtr->defaultMAC, CRYPT_MODE_NONE ) )
-		envelopeInfoPtr->defaultMAC = CRYPT_ALGO_HMAC_SHA;
+		!checkAlgoID( algorithm, CRYPT_MODE_NONE ) )
+		envelopeInfoPtr->defaultMAC = CRYPT_ALGO_HMAC_SHA1;
+	else
+		envelopeInfoPtr->defaultMAC = algorithm;	/* int vs.enum */
 	}
 #endif /* USE_ENVELOPES */

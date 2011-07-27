@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib SSL/TLS Routines						*
-*						Copyright Peter Gutmann 1998-2010					*
+*						Copyright Peter Gutmann 1998-2011					*
 *																			*
 ****************************************************************************/
 
@@ -16,24 +16,35 @@
   #pragma convert( 0 )
 #endif /* IBM medium iron */
 
-/* We can run the SSL/TLS self-test with a large variety of options, rather
-   than using dozens of boolean option flags to control them all we define
+/* SSL/TLS gets a bit complicated because in the presence of the session 
+   cache every session after the first one will be a resumed session.  To 
+   deal with this, the VC++ 6 debug build disables the client-side session 
+   cache, while every other version just ends up going through a series 
+   of session resumes */
+
+#if defined( __WINDOWS__ ) && defined( _MSC_VER ) && ( _MSC_VER == 1200 ) && \
+	!defined( NDEBUG ) && 1
+  #define NO_SESSION_CACHE
+#endif /* VC++ 6.0 debug build */
+
+/* We can run the SSL/TLS self-test with a large variety of options, rather 
+   than using dozens of boolean option flags to control them all we define 
    various test classes that exercise each option type.
    
-   Two of the tests aren't run as part of the normal self-test since their
-   use of random threads results in somewhat nondeterministic behaviour that
-   would require extensive extra locking to resolve.  SSL_TEST_DUALTHREAD
-   starts the SSL server with one thread and has the server session return
+   Two of the tests aren't run as part of the normal self-test since their 
+   use of random threads results in somewhat nondeterministic behaviour that 
+   would require extensive extra locking to resolve.  SSL_TEST_DUALTHREAD 
+   starts the SSL server with one thread and has the server session return 
    control to the caller for the password check.  The initial server thread 
    then exits and a second thread takes over for the rest of the connect.
 
-   SSL_TEST_MULTITHREAD is just a multithreaded client and server test.
-   This is even more nondeterministic, with thread pileups possible due to
+   SSL_TEST_MULTITHREAD is just a multithreaded client and server test. 
+   This is even more nondeterministic, with thread pileups possible due to 
    the lack of extensive locking on the client side.
 
    For SSL_TEST_CLIENTCERT against the Windows interop server, the test 
-   server client-auth key needs to be converted to PKCS #15 format since it
-   uses a too-short password in the original Microsoft-provided file.  To do
+   server client-auth key needs to be converted to PKCS #15 format since it 
+   uses a too-short password in the original Microsoft-provided file.  To do 
    this, in mechs/mech_drv.c, initDSP() add the following kludge:
 
 	*( ( int * ) &keyLength ) = 1;
@@ -44,12 +55,12 @@
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CONTEXT cryptContext;
 
-	cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
+	cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE, 
 					 "r:/woodgrove.p12", CRYPT_KEYOPT_READONLY );
-	cryptGetPrivateKey( cryptKeyset, &cryptContext, CRYPT_KEYID_NAME,
+	cryptGetPrivateKey( cryptKeyset, &cryptContext, CRYPT_KEYID_NAME, 
  						TEXT( "test" ), TEXT( "11" ) );
 	cryptKeysetClose( cryptKeyset );
-	cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
+	cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE, 
 					 TEST_PRIVKEY_TMP_FILE, CRYPT_KEYOPT_CREATE );
 	cryptAddPrivateKey( cryptKeyset, cryptContext, TEST_PRIVKEY_PASSWORD );
 	cryptKeysetClose( cryptKeyset );
@@ -67,6 +78,7 @@ typedef enum {
 	SSL_TEST_ECC,				/* Use ECC instead of RSA/DH */
 	SSL_TEST_ECC_P384,			/* Use ECC P384 instead of P256 */
 	SSL_TEST_STARTTLS,			/* STARTTLS/STLS/AUTH TLS */
+	SSL_TEST_RESUME,			/* Session resumption */
 	SSL_TEST_DUALTHREAD,		/* Two-phase connect via different threads */
 	SSL_TEST_MULTITHREAD		/* Multiple server threads */
 	} SSL_TEST_TYPE;
@@ -85,72 +97,76 @@ typedef enum {
   #include <winsock.h>
 #endif /* __WINDOWS__ && !_WIN32_WCE */
 
-/* There are various servers running that we can use for testing, the
+/* There are various servers running that we can use for testing, the 
    following remapping allows us to switch between them.  Notes:
 
 	Server 1: Local loopback.
-	Server 2: Generic test server.
-	Server 3: ~40K data returned.
-	Server 4: Sends zero-length blocks (actually a POP server).
-	Server 5: Novell GroupWise, requires CRYPT_OPTION_CERT_COMPLIANCELEVEL =
+	Server 2-4: Generic test servers at amazon.com, paypal.com, redhat.com. 
+			  There have to be three distinct servers in order to force a 
+			  full handshake rather than just pulling a previous session out 
+			  of the session cache.
+	Server 5: ~40K data returned.
+	Server 6: Sends zero-length blocks (actually a POP server).
+	Server 7: Novell GroupWise, requires CRYPT_OPTION_CERT_COMPLIANCELEVEL = 
 			  CRYPT_COMPLIANCELEVEL_OBLIVIOUS due to b0rken certs.
-	Server 6: (Causes MAC failure during handshake when called from PMail,
+	Server 8: (Causes MAC failure during handshake when called from PMail, 
 			   works OK when called here).
-	Server 7: Can only do crippled crypto (not even conventional crippled
-			  crypto but RC4-56) and instead of sending an alert for this
-			  just drops the connection (this may be caused by the NetApp
-			  NetCache it's using).  This site is also running an Apache
-			  server that claims it's optimised for MSIE, and that the page
-			  won't work properly for non-MSIE browsers.  The mind boggles...
-	Server 8: Server ("Hitachi Web Server 02-00") can only do SSL, when
-			  cryptlib is set to perform a TLS handshake (i.e. cryptlib is
-			  told to expect TLS but falls back to SSL), goes through the
-			  full handshake, then returns a handshake failure alert.  The
-			  same occurs for other apps (e.g. MSIE) when TLS is enabled.
-	Server 9: Buggy older IIS that can only do crippled crypto and drops
-			  the connection as soon as it sees the client hello advertising
-			  strong crypto only.
-	Server 10: Newer IIS (certificate is actually for akamai.net, so the SSL
+	Server 9: Can only do crippled crypto (not even conventional crippled 
+			  crypto but RC4-56) and instead of sending an alert for this 
+			  just drops the connection (this may be caused by the NetApp 
+			  NetCache it's using).  This site is also running an Apache 
+			  server that claims it's optimised for MSIE, and that the page 
+			  won't work properly for non-MSIE browsers.  The mind 
+			  boggles...
+	Server 10: Server ("Hitachi Web Server 02-00") can only do SSL, when 
+			   cryptlib is set to perform a TLS handshake (i.e. cryptlib is 
+			   told to expect TLS but falls back to SSL), goes through the 
+			   full handshake, then returns a handshake failure alert.  The 
+			   same occurs for other apps (e.g. MSIE) when TLS is enabled.
+	Server 11: Buggy older IIS that can only do crippled crypto and drops 
+			   the connection as soon as it sees the client hello 
+			   advertising strong crypto only.
+	Server 12: Newer IIS (certificate is actually for akamai.net, so the SSL 
 			   may not be Microsoft's at all).
-	Server 11: IBM (Websphere?).
-	Server 12: Server is running TLS with SSL disabled, drops connection 
+	Server 13: IBM (Websphere?).
+	Server 14: Server is running TLS with SSL disabled, drops connection 
 			   when it sees an SSL handshake.  MSIE in its default config 
 			   (TLS disabled) can't connect to this server.
-	Server 13: GnuTLS.
-	Server 14: GnuTLS test server with TLS 1.1.
-	Server 15: Can only do SSLv2, server hangs when sent an SSLv3 handshake.
-	Server 16: Can't handle TLS 1.1 handshake (drops connection).
-	Server 17: Can't handle TLS 1.1 handshake (drops connection).  Both of
-			   these servers are sitting behind NetApp NetCache's (see also
-			   server 7), which could be the cause of the problem.
-	Server 18: Generic OpenSSL server.
-	Server 19: Crippled crypto using NS Server 3.6.
-	Server 20: Apache with Thawte certs, requires
-			   CRYPT_OPTION_CERT_COMPLIANCELEVEL =
+	Server 15: GnuTLS.
+	Server 16: GnuTLS test server with TLS 1.1.
+	Server 17: Can only do SSLv2, server hangs when sent an SSLv3 handshake.
+	Server 18: Can't handle TLS 1.1 handshake (drops connection).
+	Server 19: Can't handle TLS 1.1 handshake (drops connection).  Both of 
+			   these servers are sitting behind NetApp NetCaches (see also 
+			   server #9), which could be the cause of the problem.
+	Server 20: Generic OpenSSL server.
+	Server 21: Crippled crypto using NS Server 3.6.
+	Server 22: Apache with Thawte certs, requires 
+			   CRYPT_OPTION_CERT_COMPLIANCELEVEL = 
 			   CRYPT_COMPLIANCELEVEL_REDUCED due to b0rken certs.
-	Server 21: Supports TLS-ext, max-fragment-size extension, session 
-			   tickets, TLS 1.2, and assorted other odds and ends, but
-			   not ECC or GSM, reports info on connect in handy text format.
-			   Will also perform client-auth verification if the client 
-			   sends a client-auth message, accepting any cert and using
-			   it to verify the handshake-data signature.
-	Server 22: GnuTLS server supporting all sorts of oddities (PGP certs, 
+	Server 23: Supports TLS-ext, max-fragment-size extension, session 
+			   tickets, TLS 1.2, and assorted other odds and ends, but 
+			   not ECC or GSM, reports info on connect in handy text 
+			   format.  Will also perform client-auth verification if the 
+			   client sends a client-auth message, accepting any cert and 
+			   using it to verify the handshake-data signature.
+	Server 24: GnuTLS server supporting all sorts of oddities (PGP certs, 
 			   SRP, compression, TLS-ext, and others, see 
-			   http://www.gnu.org/software/gnutls/server.html for details),
-			   reports info on connect in HTML table format.  Note that this
-			   server claims to support TLS 1.2 but returns a TLS 1.1 server
-			   hello in response to a TLS 1.2 handshake request for several
+			   http://www.gnu.org/software/gnutls/server.html for details), 
+			   reports info on connect in HTML table format.  Note that this 
+			   server claims to support TLS 1.2 but returns a TLS 1.1 server 
+			   hello in response to a TLS 1.2 handshake request for several 
 			   different TLS 1.2 client implementations.
-	Server 23: Supports SNI extension and reports info on connect.
-	Server 24: Certicom server using ECDSA P256.  Returns a server cert with 
+	Server 25: Supports SNI extension and reports info on connect.
+	Server 26: Certicom server using ECDSA P256.  Returns a server cert with  
 			   a bizarro X9.62 OID with implied sub-parameters that can't be 
 			   handled (at least in a sane manner) by the AlgoID read code.
-	Server 25: RedHat server using NSS for ECC support for ECDSA P256.  This
+	Server 27: RedHat server using NSS for ECC support for ECDSA P256.  This 
 			   server doesn't support any non-ECC suites, making it useful 
 			   for testing handling of the ECC-only case.
-	Server 26: Certicom umbrella server (see #24) that also does TLS 1.2
+	Server 28: Certicom umbrella server (see #26) that also does TLS 1.2 
 			   under very restricted circumstances (see below) and GCM.  
-			   Details at https://tls.secg.org/, transaction log at
+			   Details at https://tls.secg.org/, transaction log at 
 			   https://tls.secg.org/index1.php?action=https_log (this log 
 			   rolls over fairly quickly, requiring opening the last several 
 			   entries and matching cipher suites to see which one was 
@@ -158,41 +174,47 @@ typedef enum {
 			   returns a TLS 1.1 server hello in response to a TLS 1.2 
 			   handshake request unless you report DHE_DSS as your only 
 			   available cipher suite.  A more standard combination like 
-			   RSA or DHE_RSA results in the server returning a TLS 1.1
+			   RSA or DHE_RSA results in the server returning a TLS 1.1 
 			   response, and an attempt to force matters with a TLS 1.2-only 
 			   cipher suite like DHE_AES_GCM returns an alert message with 
 			   the version number set to SSLv3, i.e. { 3, 0 }.
-	Server 27: Microsoft interop test server that does TLS 1.2, ECC, and 
+	Server 29: Microsoft interop test server that does TLS 1.2, ECC, and 
 			   unlike GnuTLS and Certicom/SECG it actually really does TLS 
-			   1.2.  This is the generic interface with all cipher suites,
-			   see Server #28 and #29 for variants.  This server also claims 
+			   1.2.  This is the generic interface with all cipher suites, 
+			   see Server #30 and #31 for variants.  This server also claims 
 			   to support GCM (although only with ECC, not with RSA/DSA) but 
 			   in practice closes the connection when sent a client hello 
 			   with this cipher suite.  
-	Server 28: As Server #27 but restricted to 256-bit ECC only, this server 
+	Server 30: As Server #29 but restricted to 256-bit ECC only, this server 
 			   does actually support GCM.  Requires 
-			   CRYPT_OPTION_CERT_COMPLIANCELEVEL =
+			   CRYPT_OPTION_CERT_COMPLIANCELEVEL = 
 			   CRYPT_COMPLIANCELEVEL_OBLIVIOUS due to b0rken certs.
-	Server 29: As server #27 but restricted to 384-bit ECC only, however it
+	Server 31: As server #29 but restricted to 384-bit ECC only, however it 
 			   closes the connection when sent a SHA-384 cipher suite.
-	Server 30: As Server #27 but tests rehandshake handling.  This is 
-			   actually meant to test RSA client authentication, i.e.
+	Server 32: As Server #29 but tests rehandshake handling.  This is 
+			   actually meant to test RSA client authentication, i.e. 
 			   SSL_TEST_CLIENTCERT, but Windows implements this by 
 			   performning a standard handshake without client-auth and then 
 			   immediately performing a rehandshake with client-auth, which 
 			   can be used to test the ability to handle a rehandshake 
 			   request.  In practice the Windows server hangs waiting for 
-			   the rehandshake, so eventually we exit with a read timeout
+			   the rehandshake, so eventually we exit with a read timeout 
 			   error.
-	Server 31: RSA interop server, this requires a complex pre-approval 
+	Server 33: RSA interop server, this requires a complex pre-approval 
 			   application process to enable access which makes it not worth 
 			   the bother, it's only listed here for completeness */
 
 #define SSL_SERVER_NO	2
-#define TLS_SERVER_NO	2
-#define TLS11_SERVER_NO	2	/* Use 25 for ECC, otherwise 2 */
-#define TLS12_SERVER_NO	27	/* Options = 21, 22, 26, 27/28/29
-							   (but see above for 22, 26, and some of 27) */
+#define TLS_SERVER_NO	3
+#define TLS11_SERVER_NO	4	/* Use #27 for ECC, otherwise #2 */
+#define TLS12_SERVER_NO	29	/* Options = #23, #24, #28, #29/30/31
+							   (but see above for #24, #28, and some of 
+							   #29) */
+#if ( SSL_SERVER_NO == TLS_SERVER_NO ) || \
+	( SSL_SERVER_NO == TLS11_SERVER_NO ) || \
+	( TLS_SERVER_NO == TLS11_SERVER_NO )
+  #error SSL/TLS/TLS11 servers must be distinct to avoid tests being no-op'd due to cacheing
+#endif /* Make sure that servers are distinct */
 
 static const struct {
 	const C_STR name;
@@ -201,35 +223,37 @@ static const struct {
 	{ NULL, NULL },
 	/*  1 */ { TEXT( "localhost" ), "/" },
 	/*  2 */ { TEXT( "https://www.amazon.com" ), "/" },
-	/*  3 */ { TEXT( "https://www.cs.berkeley.edu" ), "/~daw/people/crypto.html" },
-	/*  4 */ { TEXT( "pop.web.de:995" ), "/" },
-	/*  5 */ { TEXT( "imap4-gw.uni-regensburg.de:993" ), "/" },
-	/*  6 */ { TEXT( "securepop.t-online.de:995" ), "/" },
-	/*  7 */ { TEXT( "https://homedir.wlv.ac.uk" ), "/" },
-	/*  8 */ { TEXT( "https://www.horaso.com:20443" ), "/" },
+	/*  3 */ { TEXT( "https://www.paypal.com" ), "/" },
+	/*  4 */ { TEXT( "https://www.redhat.com" ), "/" },
+	/*  5 */ { TEXT( "https://www.cs.berkeley.edu" ), "/~daw/people/crypto.html" },
+	/*  6 */ { TEXT( "pop.web.de:995" ), "/" },
+	/*  7 */ { TEXT( "imap4-gw.uni-regensburg.de:993" ), "/" },
+	/*  8 */ { TEXT( "securepop.t-online.de:995" ), "/" },
 	/*  9 */ { TEXT( "https://homedir.wlv.ac.uk" ), "/" },
-	/* 10 */ { TEXT( "https://www.microsoft.com" ), "/" },
-	/* 11 */ { TEXT( "https://alphaworks.ibm.com/" ), "/" },
-	/* 12 */ { TEXT( "https://webmount.turbulent.ca/" ), "/" },
-	/* 13 */ { TEXT( "https://www.gnutls.org/" ), "/" },
-	/* 14 */ { TEXT( "https://www.gnutls.org:5555/" ), "/" },
-	/* 15 */ { TEXT( "https://www.networksolutions.com/" ), "/" },
-	/* 16 */ { TEXT( "https://olb.westpac.com.au/" ), "/" },
-	/* 17 */ { TEXT( "https://www.hertz.com/" ), "/" },
-	/* 18 */ { TEXT( "https://www.openssl.org/" ), "/" },
-	/* 19 */ { TEXT( "https://secureads.ft.com/" ), "/" },
-	/* 20 */ { TEXT( "https://mail.maine.edu/" ), "/" },
-	/* 21 */ { TEXT( "https://www.mikestoolbox.net/" ), "/" },
-	/* 22 */ { TEXT( "https://test.gnutls.org:5556/" ), "/" },
-	/* 23 */ { TEXT( "https://sni.velox.ch/" ), "/" },
-	/* 24 */ { TEXT( "https://tls.secg.org:40023/connect.php" ), "/" },
-	/* 25 */ { TEXT( "https://ecc.fedora.redhat.com" ), "/" },
-	/* 26 */ { TEXT( "https://tls.secg.org/" ), "/" },
-	/* 27 */ { TEXT( "https://tls.woodgrovebank.com:25000/" ), "/" },
-	/* 28 */ { TEXT( "https://tls.woodgrovebank.com:25002/" ), "/" },
-	/* 29 */ { TEXT( "https://tls.woodgrovebank.com:25003/" ), "/" },
-	/* 30 */ { TEXT( "https://tls.woodgrovebank.com:25005/" ), "/" },
-	/* 31 */ { TEXT( "https://203.166.62.199/" ), "/" },
+	/* 10 */ { TEXT( "https://www.horaso.com:20443" ), "/" },
+	/* 11 */ { TEXT( "https://homedir.wlv.ac.uk" ), "/" },
+	/* 12 */ { TEXT( "https://www.microsoft.com" ), "/" },
+	/* 13 */ { TEXT( "https://alphaworks.ibm.com/" ), "/" },
+	/* 14 */ { TEXT( "https://webmount.turbulent.ca/" ), "/" },
+	/* 15 */ { TEXT( "https://www.gnutls.org/" ), "/" },
+	/* 16 */ { TEXT( "https://www.gnutls.org:5555/" ), "/" },
+	/* 17 */ { TEXT( "https://www.networksolutions.com/" ), "/" },
+	/* 18 */ { TEXT( "https://olb.westpac.com.au/" ), "/" },
+	/* 19 */ { TEXT( "https://www.hertz.com/" ), "/" },
+	/* 20 */ { TEXT( "https://www.openssl.org/" ), "/" },
+	/* 21 */ { TEXT( "https://secureads.ft.com/" ), "/" },
+	/* 22 */ { TEXT( "https://mail.maine.edu/" ), "/" },
+	/* 23 */ { TEXT( "https://www.mikestoolbox.net/" ), "/" },
+	/* 24 */ { TEXT( "https://test.gnutls.org:5556/" ), "/" },
+	/* 25 */ { TEXT( "https://sni.velox.ch/" ), "/" },
+	/* 26 */ { TEXT( "https://tls.secg.org:40023/connect.php" ), "/" },
+	/* 27 */ { TEXT( "https://ecc.fedora.redhat.com" ), "/" },
+	/* 28 */ { TEXT( "https://tls.secg.org/" ), "/" },
+	/* 29 */ { TEXT( "https://tls.woodgrovebank.com:25000/" ), "/" },
+	/* 30 */ { TEXT( "https://tls.woodgrovebank.com:25002/" ), "/" },
+	/* 31 */ { TEXT( "https://tls.woodgrovebank.com:25003/" ), "/" },
+	/* 32 */ { TEXT( "https://tls.woodgrovebank.com:25005/" ), "/" },
+	/* 33 */ { TEXT( "https://203.166.62.199/" ), "/" },
 	{ NULL, NULL }
 	};
 
@@ -238,25 +262,25 @@ static const struct {
 	Server 1: SMTP: mailbox.ucsd.edu:25 (132.239.1.57) requires a client 
 			  certificate.
 	Server 2: POP: pop.cae.wisc.edu:1110 (144.92.240.11) OK.
-	Server 3: SMTP: smtpauth.cae.wisc.edu:25 (144.92.12.93) requires a client
-			  certificate.
+	Server 3: SMTP: smtpauth.cae.wisc.edu:25 (144.92.12.93) requires a 
+			  client certificate.
 	Server 4: SMTP: send.columbia.edu:25 (128.59.59.23) returns invalid 
 			  certificate (lower compliance level to fix).
-	Server 5: POP: pop3.myrealbox.com:110 (192.108.102.201) returns invalid
+	Server 5: POP: pop3.myrealbox.com:110 (192.108.102.201) returns invalid 
 			  certificate (lower compliance level to fix).
-	Server 6: Encrypted POP: securepop.t-online.de:995 (194.25.134.46) direct
-			  SSL connect.
-	Server 7: FTP: ftp.windsorchapel.net:21 (68.38.166.195) sends redundant
+	Server 6: Encrypted POP: securepop.t-online.de:995 (194.25.134.46) 
+			  direct SSL connect.
+	Server 7: FTP: ftp.windsorchapel.net:21 (68.38.166.195) sends redundant 
 			  client certificate request with invalid length.
-	Server 8: POP: webmail.chm.tu-dresden.de:110 (141.30.198.37), another
-			  GroupWise server (see the server comments above) with b0rken
+	Server 8: POP: webmail.chm.tu-dresden.de:110 (141.30.198.37), another 
+			  GroupWise server (see the server comments above) with b0rken 
 			  certs.
 
-			  To test FTP with SSL/TLS manually: Disable auto-login with FTP,
-			  then send an RFC 2389 FEAT command to check security facilities.
-			  If this is supported, one of the responses will be either
-			  AUTH SSL or AUTH TLS, use this to turn on SSL/TLS.  If FEAT
-			  isn't supported, AUTH TLS should usually work:
+			  To test FTP with SSL/TLS manually: Disable auto-login with 
+			  FTP, then send an RFC 2389 FEAT command to check security 
+			  facilities.  If this is supported, one of the responses will 
+			  be either AUTH SSL or AUTH TLS, use this to turn on SSL/TLS.  
+			  If FEAT isn't supported, AUTH TLS should usually work:
 
 				ftp -n ftp.windsorchapel.net
 				quote feat
@@ -267,20 +291,20 @@ static const struct {
 				telnet ftp.windsorchapel.net 21
 				auth ssl
 
-	Server 9: SMTP: mailer.gwdg.de:25 (134.76.10.26), sends each SSL message
+	Server 9: SMTP: mailer.gwdg.de:25 (134.76.10.26), sends each SSL message 
 			  as a discrete packet, providing a nice test of cryptlib's on-
 			  demand buffer refill.
-	Server 10: Encrypted POP: mrdo.vosn.net:995 (209.151.91.6), direct SSL
+	Server 10: Encrypted POP: mrdo.vosn.net:995 (209.151.91.6), direct SSL 
 			   connect, sends a CA certificate which is also used for 
 			   encryption, but with no keyUsage flags set.
 	Server 11: POP: pop.gmail.com:110 (64.233.167.111) (moved to 995 as of 
 			   some time in 2008).
-	Server 12: POP: mail.rochester.edu:995 (128.151.224.17), direct SSL
+	Server 12: POP: mail.rochester.edu:995 (128.151.224.17), direct SSL 
 			   connect (also sends zero-length packets as a kludge for pre-
 			   TLS 1.1 chosen-IV attacks).
 	Server 13: SMTP: smtp.umn.edu:465 (134.84.119.35), direct SSL connect.
-	Server 14: POP3: pop3.live.com:995 (65.55.172.253), direct SSL connect,
-			   returns a malformed certificate.  Can also be accessed via
+	Server 14: POP3: pop3.live.com:995 (65.55.172.253), direct SSL connect, 
+			   returns a malformed certificate.  Can also be accessed via 
 			   smtp.live.com, port 25 or 587 */
 
 #define STARTTLS_SERVER_NO	12
@@ -313,7 +337,20 @@ static const struct {
 	{ NULL, 0 }
 	};
 
-/* If we're testing dual-thread handling of sessions, we need to provide a
+/* Special-case handling for buggy/broken/odd servers */
+
+#if ( SSL_SERVER_NO == 7 ) || ( TLS12_SERVER_NO == 30 ) || \
+	( TLS12_SERVER_NO == 31 ) || ( STARTTLS_SERVER_NO == 8 )
+  #define IS_BROKEN_SERVER
+  #ifdef _MSC_VER
+	#pragma message( "  Building with reduced compliance level for buggy SSL/TLS server." )
+  #endif /* VC++ */
+#endif /* Broken servers */
+#if ( SSL_SERVER_NO == 3 )
+  #define IS_HIGHVOLUME_SERVER
+#endif /* Servers with high result volume */
+
+/* If we're testing dual-thread handling of sessions, we need to provide a 
    forward declaration of the threading function since it's called from 
    within the SSL connect code */
 
@@ -335,8 +372,8 @@ static int checksumData( const void *data, const int dataLength )
 	const BYTE *dataPtr = data;
 	int sum1 = 0, sum2 = 0, i;
 
-	/* Calculate a 16-bit Fletcher-like checksum of the data (it doesn't
-	   really matter if it's not exactly right, as long as the behaviour is
+	/* Calculate a 16-bit Fletcher-like checksum of the data (it doesn't 
+	   really matter if it's not exactly right, as long as the behaviour is 
 	   the same for all data) */
 	for( i = 0; i < dataLength; i++ )
 		{
@@ -351,7 +388,7 @@ static BOOLEAN handleBulkBuffer( BYTE *buffer, const BOOLEAN isInit )
 	{
 	int checkSum, i;
 
-	/* If we're initialising the buffer, fill it with [0...256]* followed by
+	/* If we're initialising the buffer, fill it with [0...256]* followed by 
 	   a checksum of the buffer contents */
 	if( isInit )
 		{
@@ -469,7 +506,7 @@ static SOCKET negotiateSTARTTLS( int *protocol )
 			break;
 
 		case PROTOCOL_IMAP:
-			/* It's possible for some servers that we may need to explicitly
+			/* It's possible for some servers that we may need to explicitly 
 			   send a CAPABILITY command first to enable STARTTLS:
 				a001 CAPABILITY
 				> CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED
@@ -544,8 +581,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 	SOCKET netSocket;
 #endif /* Win32 */
 	char buffer[ FILEBUFFER_SIZE ];
-#if ( SSL_SERVER_NO == 5 ) || ( TLS12_SERVER_NO == 28 ) || \
-	( TLS12_SERVER_NO == 29 ) || ( STARTTLS_SERVER_NO == 8 )
+#ifdef IS_BROKEN_SERVER
 	int complianceLevel;
 #endif /* SSL servers with b0rken certs */
 	int bytesCopied, protocol = PROTOCOL_SMTP, status;
@@ -642,12 +678,20 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #endif /* UNICODE_STRINGS */
 			void *fileNamePtr = filenameBuffer;
 
-			/* We don't add a private key if we're doing TLS-PSK, to test
+			/* We don't add a private key if we're doing TLS-PSK, to test 
 			   TLS-PSK's abiltiy to work without a PKC */
-			filenameFromTemplate( filenameBuffer, 
-								  SERVER_PRIVKEY_FILE_TEMPLATE, 
-								  ( testType == SSL_TEST_ECC_P384 ) ? 3 : \
-								  ( testType == SSL_TEST_ECC ) ? 2 : 1 );
+			if( testType == SSL_TEST_ECC || testType == SSL_TEST_ECC_P384 )
+				{
+				filenameFromTemplate( filenameBuffer, 
+									  SERVER_ECPRIVKEY_FILE_TEMPLATE, 
+									  ( testType == SSL_TEST_ECC_P384 ) ? \
+										384 : 256 );
+				}
+			else
+				{
+				filenameFromTemplate( filenameBuffer, 
+									  SERVER_PRIVKEY_FILE_TEMPLATE, 1 );
+				}
 #ifdef UNICODE_STRINGS
 			mbstowcs( wcBuffer, filenameBuffer, 
 					  strlen( filenameBuffer ) + 1 );
@@ -686,14 +730,14 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		{
 		if( testType == SSL_TEST_STARTTLS )
 			{
-			/* Testing this fully requires a lot of OS-specific juggling so
-			   unless we're running under Windows we just supply the handle
-			   to stdin, which will return a read/write error during the
-			   connect.  This checks that the handle has been assigned
-			   corectly without requiring a lot of OS-specific socket
-			   handling code.  Under Windows, we use a (very cut-down) set
-			   of socket calls to set up a minimal socket.  Since there's
-			   very little error-checking done, we don't treat a failure
+			/* Testing this fully requires a lot of OS-specific juggling so 
+			   unless we're running under Windows we just supply the handle 
+			   to stdin, which will return a read/write error during the 
+			   connect.  This checks that the handle has been assigned 
+			   corectly without requiring a lot of OS-specific socket 
+			   handling code.  Under Windows, we use a (very cut-down) set 
+			   of socket calls to set up a minimal socket.  Since there's 
+			   very little error-checking done, we don't treat a failure 
 			   as fatal */
 #if defined( __WINDOWS__ ) && !( defined( __WIN16__ ) || defined( _WIN32_WCE ) )
 			WSADATA wsaData;
@@ -705,9 +749,9 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				return( FALSE );
 				}
 
-			/* Try and negotiate a STARTTLS session.  We don't treat most
-			   types of failure as fatal since there are a great many minor
-			   things that can go wrong that we don't want to have to handle
+			/* Try and negotiate a STARTTLS session.  We don't treat most 
+			   types of failure as fatal since there are a great many minor 
+			   things that can go wrong that we don't want to have to handle 
 			   without writing half an MUA */
 			netSocket = negotiateSTARTTLS( &protocol );
 			if( netSocket <= 0 )
@@ -790,12 +834,12 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		  ( isServer && testType == SSL_TEST_PSK_SVRONLY ) || \
 		  ( !isServer && testType == SSL_TEST_PSK_CLIONLY ) ) )
 		{
-		/* If we're testing the no-PSK handling, only the server is
-		   expecting TLS-PSK, so the client isn't supplied with a
+		/* If we're testing the no-PSK handling, only the server is 
+		   expecting TLS-PSK, so the client isn't supplied with a 
 		   password */
 		if( cryptStatusOK( status ) && isServer && testType == SSL_TEST_PSK )
 			{
-			/* If we're testing PSK, add several preceding usernames and
+			/* If we're testing PSK, add several preceding usernames and 
 			   passwords */
 			cryptSetAttributeString( cryptSession,
 								CRYPT_SESSINFO_USERNAME, TEXT( "before1" ),
@@ -843,8 +887,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			closesocket( netSocket );
 			WSACleanup();
 #else
-			/* Creating a socket in a portable manner is too difficult so
-			   we've passed in a stdio handle, this should return an error
+			/* Creating a socket in a portable manner is too difficult so 
+			   we've passed in a stdio handle, this should return an error 
 			   since it's not a blocking socket */
 			return( TRUE );
 #endif /* __WINDOWS__ && !_WIN32_WCE */
@@ -853,8 +897,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-#if ( SSL_SERVER_NO == 5 ) || ( TLS12_SERVER_NO == 28 ) || \
-	( TLS12_SERVER_NO == 29 ) || ( STARTTLS_SERVER_NO == 8 )
+#ifdef IS_BROKEN_SERVER
 	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &complianceLevel );
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
@@ -872,7 +915,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				versionStr[ version ] );
 
 		/* For the loopback test we also increase the connection timeout to 
-		   a higher-than-normal level, since this gives us more time for
+		   a higher-than-normal level, since this gives us more time for 
 		   tracing through the code when debugging */
 		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_CONNECTTIMEOUT, 
 						   120 );
@@ -883,16 +926,15 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		releaseMutex();
 		}
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
-#if ( SSL_SERVER_NO == 5 ) || ( TLS12_SERVER_NO == 28 ) || \
-	( TLS12_SERVER_NO == 29 ) || ( STARTTLS_SERVER_NO == 8 )
+#ifdef IS_BROKEN_SERVER
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   complianceLevel );
 #endif /* SSL server with b0rken certs */
 	if( isServer && testType != SSL_TEST_PSK_CLIONLY && \
 					testType != SSL_TEST_PSK_SVRONLY )
 		{
-		/* We don't check the return status for this since the session may
-		   be disconnected before we get the client info, which would cause
+		/* We don't check the return status for this since the session may 
+		   be disconnected before we get the client info, which would cause 
 		   us to bail out before we display the error info */
 		if( sessionID != CRYPT_UNUSED )
 			printf( "%02d: ", sessionID );
@@ -934,8 +976,8 @@ dualThreadContinue:
 			closesocket( netSocket );
 			WSACleanup();
 #else
-			/* If we're using a dummy local socket, we'll get a R/W error at
-			   this point since it's not connected to anything, so we
+			/* If we're using a dummy local socket, we'll get a R/W error at 
+			   this point since it's not connected to anything, so we 
 			   intercept it before it gets any further */
 			if( status == CRYPT_ERROR_READ || status == CRYPT_ERROR_WRITE )
 				{
@@ -956,16 +998,16 @@ dualThreadContinue:
 		if( !isServer && \
 			( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND ) )
 			{
-			/* These servers are constantly appearing and disappearing so if
-			   we get a straight connect error we don't treat it as a serious
-			   failure */
+			/* These servers are constantly appearing and disappearing so if 
+			   we get a straight connect error we don't treat it as a 
+			   serious failure */
 			puts( "  (Server could be down, faking it and continuing...)\n" );
 			return( CRYPT_ERROR_FAILED );
 			}
 		if( testType == SSL_TEST_PSK_CLIONLY || \
 			testType == SSL_TEST_PSK_SVRONLY )
 			{
-			/* The CLIONLY/SVRONLY test is supposed to fail, so if this
+			/* The CLIONLY/SVRONLY test is supposed to fail, so if this 
 			   happens then the overall test has succeeded */
 			puts( "  (This test checks error handling, so the failure "
 				  "response is correct).\n" );
@@ -976,6 +1018,7 @@ dualThreadContinue:
 
 	/* The CLIONLY/SVRONLY test is supposed to fail, if this doesn't happen 
 	   then there's a problem */
+#ifdef NO_SESSION_CACHE
 	if( testType == SSL_TEST_PSK_CLIONLY || \
 		testType == SSL_TEST_PSK_SVRONLY )
 		{
@@ -984,17 +1027,48 @@ dualThreadContinue:
 				isServer ? "SVR: " : "", __LINE__  );
 		return( FALSE );
 		}
+#endif /* NO_SESSION_CACHE */
+
+	/* If we're testing session resumption and there's a server key present 
+	   then we didn't actually resume the session */
+#ifndef NO_SESSION_CACHE
+	if( testType == SSL_TEST_RESUME )
+		{
+		CRYPT_CONTEXT serverKey;
+
+		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_RESPONSE,
+									&serverKey );
+		if( cryptStatusOK( status ) )
+			{
+			cryptDestroyContext( serverKey );
+			printf( "%sSession resumption didn't actually resume a previous "
+					"session, line %d.\n", isServer ? "SVR: " : "", 
+					__LINE__  );
+			return( FALSE );
+			}
+		}
+#endif /* !NO_SESSION_CACHE */
 
 	/* Report the session security info */
 	if( testType != SSL_TEST_MULTITHREAD )
 		{
+		const BOOLEAN isFirstSession = \
+			( testType == SSL_TEST_NORMAL && version == 0 ) ? TRUE : FALSE;
 		int actualVersion;
 
+#ifdef NO_SESSION_CACHE
 		if( !printSecurityInfo( cryptSession, isServer,
-								( testType != SSL_TEST_PSK ), 
-								( !isServer && testType != SSL_TEST_PSK ),
+								( testType != SSL_TEST_PSK && \
+								  testType != SSL_TEST_RESUME ), 
+								( !isServer && testType != SSL_TEST_PSK && \
+											   testType != SSL_TEST_RESUME ),
 								( isServer && testType == SSL_TEST_CLIENTCERT ) ) )
 			return( FALSE );
+#else
+		if( !printSecurityInfo( cryptSession, isServer, isFirstSession,
+								!isServer && isFirstSession, FALSE ) )
+			return( FALSE );
+#endif /* NO_SESSION_CACHE */
 		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_VERSION,
 									&actualVersion );
 		if( cryptStatusOK( status ) && actualVersion != version )
@@ -1004,8 +1078,12 @@ dualThreadContinue:
 					versionStr[ actualVersion ] );
 			}
 		}
+#ifdef NO_SESSION_CACHE
 	if( ( !localSession && !isServer ) ||
 		( localSession && isServer && testType == SSL_TEST_CLIENTCERT ) )
+#else
+	if( !localSession && !isServer )
+#endif /* NO_SESSION_CACHE */
 		{
 		CRYPT_CERTIFICATE cryptCertificate;
 
@@ -1046,10 +1124,10 @@ dualThreadContinue:
 #endif /* UNICODE_STRINGS */
 		}
 
-	/* Send data over the SSL/TLS link.  If we're doing a bulk transfer
-	   we use fully asynchronous I/O to verify the timeout handling in
+	/* Send data over the SSL/TLS link.  If we're doing a bulk transfer 
+	   we use fully asynchronous I/O to verify the timeout handling in 
 	   the session code */
-#if SSL_SERVER_NO == 3
+#ifdef IS_HIGHVOLUME_SERVER
 	/* This server has a large amount of data on it, used to test high-
 	   latency bulk transfers, so we set a larger timeout for the read */
 	status = cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT,
@@ -1057,7 +1135,7 @@ dualThreadContinue:
 #else
 	status = cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT,
 								( testType == SSL_TEST_BULKTRANSER ) ? 0 : 5 );
-#endif /* SSL_SERVER_NO == 3 */
+#endif /* IS_HIGHVOLUME_SERVER */
 	if( cryptStatusError( status ) )
 		{
 		printExtError( cryptSession, isServer ? \
@@ -1146,10 +1224,11 @@ dualThreadContinue:
 		free( bulkBuffer );
 		}
 	else
-		/* It's a standard transfer, send/receive and HTTP request/response.
-		   We clean up if we exit due to an error, if we're running a local
-		   loopback test the client and server threads can occasionally lose
-		   sync, which isn't a fatal error but can turn into a
+		{
+		/* It's a standard transfer, send/receive and HTTP request/response. 
+		   We clean up if we exit due to an error, if we're running a local 
+		   loopback test the client and server threads can occasionally lose 
+		   sync, which isn't a fatal error but can turn into a 
 		   CRYPT_ERROR_INCOMPLETE once all the tests are finished */
 		if( isServer )
 			{
@@ -1171,7 +1250,7 @@ dualThreadContinue:
 				"<head>\n"
 				"<title>cryptlib SSL/TLS test page</title>\n"
 				"<body>\n"
-				"Test message from the cryptlib SSL/TLS server<p>\n"
+				"Test message from the cryptlib SSL/TLS server.<p>\n"
 				"</body>\n"
 				"</html>\n";
 #if defined( __MVS__ ) || defined( __VMCMS__ )
@@ -1216,7 +1295,7 @@ dualThreadContinue:
 				return( FALSE );
 				}
 
-			/* Wait for the data to be flushed through to the client before
+			/* Wait for the data to be flushed through to the client before 
 			   we close the session */
 			delayThread( 1 );
 			}
@@ -1279,8 +1358,8 @@ dualThreadContinue:
 				}
 			if( bytesCopied == 0 && testType != SSL_TEST_STARTTLS )
 				{
-				/* We've set a 5s timeout, we should get at least some
-				   data, however we allow this for the STARTTLS tests since
+				/* We've set a 5s timeout, we should get at least some 
+				   data, however we allow this for the STARTTLS tests since 
 				   the servers can exhibit all sorts of odd behaviour that 
 				   we can't do much about with the partial client that we 
 				   have here */
@@ -1302,8 +1381,8 @@ dualThreadContinue:
 				puts( "---- End of output ----" );
 				}
 
-#if SSL_SERVER_NO == 3
-			/* If we're reading a lot of data, more may have arrived in the
+#ifdef IS_HIGHVOLUME_SERVER
+			/* If we're reading a lot of data, more may have arrived in the 
 			   meantime */
 			status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE,
 								   &bytesCopied );
@@ -1311,8 +1390,8 @@ dualThreadContinue:
 				{
 				if( status == CRYPT_ERROR_READ )
 					{
-					/* Since this is HTTP, the other side can close the
-					   connection with no further warning, even though SSL
+					/* Since this is HTTP, the other side can close the 
+					   connection with no further warning, even though SSL 
 					   says you shouldn't really do this */
 					puts( "Remote system closed connection." );
 					}
@@ -1338,7 +1417,7 @@ dualThreadContinue:
 					puts( "---- End of output ----" );
 					}
 				}
-#endif /* SSL_SERVER_NO == 3 */
+#endif /* IS_HIGHVOLUME_SERVER */
 
 			/* If it's a chatty protocol, exchange some more pleasantries */
 			if( testType == SSL_TEST_STARTTLS )
@@ -1396,6 +1475,7 @@ dualThreadContinue:
 					}
 				}
 			}
+		}
 
 	/* Clean up */
 	status = cryptDestroySession( cryptSession );
@@ -1711,6 +1791,32 @@ int testSessionTLSBulkTransferClientServer( void )
 
 	/* Connect to the local server */
 	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_BULKTRANSER, 1, CRYPT_UNUSED, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
+	return( status );
+	}
+
+unsigned __stdcall tlsResumeServerThread( void *dummy )
+	{
+	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_RESUME, 1, CRYPT_UNUSED, TRUE );
+	_endthreadex( 0 );
+	return( 0 );
+	}
+
+int testSessionTLSResumeClientServer( void )
+	{
+	HANDLE hThread;
+	unsigned threadID;
+	int status;
+
+	/* Start the server */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tlsServerThread,
+										 NULL, 0, &threadID );
+	Sleep( 1000 );
+
+	/* Connect to the local server */
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_RESUME, 1, CRYPT_UNUSED, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );

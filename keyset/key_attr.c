@@ -209,9 +209,8 @@ int setKeysetAttributeS( INOUT KEYSET_INFO *keysetInfoPtr,
 		case CRYPT_KEYINFO_QUERY_REQUESTS:
 			{
 			REQUIRES( keysetInfoPtr->type == KEYSET_DBMS );
-
-			assert( keysetInfoPtr->setSpecialItemFunction != NULL );
-			assert( keysetInfoPtr->isBusyFunction != NULL );
+			REQUIRES( keysetInfoPtr->setSpecialItemFunction != NULL );
+			REQUIRES( keysetInfoPtr->isBusyFunction != NULL );
 
 			/* If we're in the middle of an existing query the user needs to
 			   cancel it before starting another one */

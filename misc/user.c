@@ -8,14 +8,10 @@
 #include <stdio.h>		/* For snprintf_s() */
 #include "crypt.h"
 #ifdef INC_ALL
-  #include "trustmgr.h"
   #include "asn1.h"
-  #include "asn1_ext.h"
   #include "user.h"
 #else
-  #include "cert/trustmgr.h"
   #include "enc_dec/asn1.h"
-  #include "enc_dec/asn1_ext.h"
   #include "misc/user.h"
 #endif /* Compiler-specific includes */
 

@@ -171,7 +171,7 @@ static int writeDlpSubjectPublicKey( INOUT STREAM *stream,
 
 	/* Write the SubjectPublicKeyInfo header field */
 	writeSequence( stream, totalSize );
-	writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, parameterSize );
+	writeAlgoIDparam( stream, cryptAlgo, parameterSize );
 
 	/* Write the parameter data */
 	writeSequence( stream, sizeofBignum( &dlpKey->dlpParam_p ) + \
@@ -253,8 +253,7 @@ static int writeEccSubjectPublicKey( INOUT STREAM *stream,
 
 	/* Write the SubjectPublicKeyInfo header field */
 	writeSequence( stream, totalSize );
-	writeAlgoIDex( stream, CRYPT_ALGO_ECDSA, CRYPT_ALGO_NONE, 
-				   sizeofOID( oid ) );
+	writeAlgoIDparam( stream, CRYPT_ALGO_ECDSA, sizeofOID( oid ) );
 
 	/* Write the parameter data */
 	writeOID( stream, oid );
@@ -960,61 +959,6 @@ static int writePrivateKeyEccFunction( INOUT STREAM *stream,
 *																			*
 ****************************************************************************/
 
-#ifdef USE_KEA
-
-/* Generate KEA domain parameters from flat-format values */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 6 ) ) \
-static int generateDomainParameters( OUT_BUFFER_FIXED( 10 ) BYTE *domainParameters,
-									 IN_BUFFER( pLength ) const void *p, 
-									 IN_LENGTH_PKC const int pLength,
-									 IN_BUFFER( qLength ) const void *q, 
-									 IN_LENGTH_PKC const int qLength,
-									 IN_BUFFER( gLength ) const void *g, 
-									 IN_LENGTH_PKC const int gLength )
-	{
-	STREAM stream;
-	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
-	BYTE dataBuffer[ 16 + ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ];
-	HASHFUNCTION hashFunction;
-	const int pSize = sizeofInteger( p, pLength );
-	const int qSize = sizeofInteger( q, qLength );
-	const int gSize = sizeofInteger( g, gLength );
-	int hashSize, dataSize, i, status;
-
-	assert( isWritePtr( domainParameters, CRYPT_MAX_HASHSIZE ) );
-	assert( isReadPtr( p, pLength ) );
-	assert( isReadPtr( q, qLength ) );
-	assert( isReadPtr( g, gLength ) );
-
-	REQUIRES( pLength >= MIN_PKCSIZE && pLength <= CRYPT_MAX_PKCSIZE );
-	REQUIRES( qLength >= MIN_PKCSIZE && qLength <= CRYPT_MAX_PKCSIZE );
-	REQUIRES( gLength >= MIN_PKCSIZE && gLength <= CRYPT_MAX_PKCSIZE );
-
-	/* Write the parameters to a stream.  The stream length is in case
-	   KEA is at some point extended up to the max.allowed PKC size */
-	sMemOpen( &stream, dataBuffer, 16 + ( CRYPT_MAX_PKCSIZE * 3 ) );
-	writeSequence( &stream, pSize + qSize + gSize );
-	writeInteger( &stream, p, pLength, DEFAULT_TAG );
-	writeInteger( &stream, q, qLength, DEFAULT_TAG );
-	status = writeInteger( &stream, g, gLength, DEFAULT_TAG );
-	assert( cryptStatusOK( status ) );
-	dataSize = stell( &stream );
-	sMemDisconnect( &stream );
-
-	/* Hash the DSA/KEA parameters and reduce them down to get the domain
-	   identifier */
-	getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
-	hashFunction( NULL, hash, hashSize, dataBuffer, dataSize, HASH_ALL );
-	zeroise( dataBuffer, CRYPT_MAX_PKCSIZE * 3 );
-	hashSize /= 2;	/* Output = hash result folded in half */
-	for( i = 0; i < hashSize; i++ )
-		domainParameters[ i ] = hash[ i ] ^ hash[ hashSize + i ];
-
-	return( hashSize );
-	}
-#endif /* USE_KEA */
-
 /* If the keys are stored in a crypto device rather than being held in the
    context all that we'll have available are the public components in flat 
    format.  The following code writes flat-format public components in the 
@@ -1089,13 +1033,6 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 			componentSize = sizeofInteger( component4, component4Length );
 			break;
 
-#ifdef USE_KEA
-		case CRYPT_ALGO_KEA:
-			parameterSize = ( int) sizeofObject( 10 );
-			componentSize = component4Length;
-			break;
-#endif /* USE_KEA */			
-		
 		case CRYPT_ALGO_RSA:
 			REQUIRES( component3 == NULL && component4 == NULL );
 
@@ -1126,10 +1063,10 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 
 	/* Write the SubjectPublicKeyInfo header field */
 	writeSequence( &stream, totalSize );
-	writeAlgoIDex( &stream, cryptAlgo, CRYPT_ALGO_NONE, parameterSize );
+	writeAlgoIDparam( &stream, cryptAlgo, parameterSize );
 
 	/* Write the parameter data if necessary */
-	if( isDlpAlgo( cryptAlgo ) && cryptAlgo != CRYPT_ALGO_KEA )
+	if( isDlpAlgo( cryptAlgo ) )
 		{
 		writeSequence( &stream, comp1Size + comp2Size + comp3Size );
 		writeInteger( &stream, component1, component1Length, DEFAULT_TAG );
@@ -1144,20 +1081,6 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 			writeInteger( &stream, component3, component3Length, DEFAULT_TAG );
 			}
 		}
-#ifdef USE_KEA
-	if( cryptAlgo == CRYPT_ALGO_KEA )
-		{
-		BYTE domainParameters[ 10 + 8 ];
-		const int domainParameterLength = \
-					generateDomainParameters( domainParameters,
-											  component1, component1Length,
-											  component2, component2Length,
-											  component3, component3Length );
-
-		writeOctetString( &stream, domainParameters, domainParameterLength,
-						  DEFAULT_TAG );
-		}
-#endif /* USE_KEA */
 
 	/* Write the BIT STRING wrapper and the PKC information */
 	writeBitStringHole( &stream, componentSize, DEFAULT_TAG );
@@ -1170,13 +1093,8 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 		}
 	else
 		{
-#ifdef USE_KEA
-		if( cryptAlgo == CRYPT_ALGO_KEA )
-			status = swrite( &stream, component4, component4Length );
-		else
-#endif /* USE_KEA */
-			status = writeInteger( &stream, component4, component4Length, 
-								   DEFAULT_TAG );
+		status = writeInteger( &stream, component4, component4Length, 
+							   DEFAULT_TAG );
 		}
 	if( cryptStatusOK( status ) )
 		*bufSize = stell( &stream );

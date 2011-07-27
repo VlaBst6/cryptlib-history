@@ -49,16 +49,11 @@ static const CRYPT_ALGO_TYPE FAR_BSS algoKeyexList[] = {
 	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 
 static const CRYPT_ALGO_TYPE FAR_BSS algoEncrList[] = {
-	/* We can't list AES as an option because the peer can pick up anything
-	   it wants from the list as its preferred choice which means that if
-	   we're talking to any non-cryptlib implementation they always go for
-	   AES even though it doesn't yet have the full provenance of 3DES */
-	CRYPT_ALGO_3DES, /*CRYPT_ALGO_AES,*/ CRYPT_ALGO_BLOWFISH,
-	CRYPT_ALGO_CAST, CRYPT_ALGO_IDEA, CRYPT_ALGO_RC4, 
+	CRYPT_ALGO_3DES, CRYPT_ALGO_AES, CRYPT_ALGO_BLOWFISH, 
 	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 
 static const CRYPT_ALGO_TYPE FAR_BSS algoMACList[] = {
-	CRYPT_ALGO_HMAC_SHA, CRYPT_ALGO_HMAC_MD5, 
+	CRYPT_ALGO_HMAC_SHA2, CRYPT_ALGO_HMAC_SHA1, CRYPT_ALGO_HMAC_MD5, 
 	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 
 /* Encode a list of available algorithms */
@@ -69,44 +64,19 @@ static int writeAlgoList( INOUT STREAM *stream,
 								const CRYPT_ALGO_TYPE *algoList,
 						  IN_RANGE( 1, 16 ) const int algoListLength )
 	{
-	static const ALGO_STRING_INFO FAR_BSS algoStringMapTbl[] = {
-		/* Signature algorithms */
-		{ "ssh-rsa", 7, CRYPT_ALGO_RSA },
-		{ "ssh-dss", 7, CRYPT_ALGO_DSA },
-		{ "ecdsa-sha2-nistp256", 19, CRYPT_ALGO_ECDSA,
-		  CRYPT_ALGO_ECDH, CRYPT_ALGO_SHA2 },
-
-		/* Encryption algorithms */
-		{ "3des-cbc", 8, CRYPT_ALGO_3DES },
-		{ "aes128-cbc", 10, CRYPT_ALGO_AES },
-		{ "blowfish-cbc", 12, CRYPT_ALGO_BLOWFISH },
-		{ "cast128-cbc", 11, CRYPT_ALGO_CAST },
-		{ "idea-cbc", 8, CRYPT_ALGO_IDEA },
-		{ "arcfour", 7, CRYPT_ALGO_RC4 },
-
-		/* Keyex algorithms */
-		{ "diffie-hellman-group-exchange-sha256", 36, CRYPT_PSEUDOALGO_DHE_ALT, 
-		  CRYPT_ALGO_DH, CRYPT_ALGO_SHA2 },
-		{ "diffie-hellman-group-exchange-sha1", 34, CRYPT_PSEUDOALGO_DHE, 
-		  CRYPT_ALGO_DH },
-		{ "diffie-hellman-group1-sha1", 26, CRYPT_ALGO_DH },
-		{ "ecdh-sha2-nistp256", 18, CRYPT_ALGO_ECDH,
-		  CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2 },
-
-		/* MAC algorithms */
-		{ "hmac-sha1", 9, CRYPT_ALGO_HMAC_SHA },
-		{ "hmac-md5", 8, CRYPT_ALGO_HMAC_MD5 },
-		{ "password", 8, CRYPT_PSEUDOALGO_PASSWORD },
-		{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
-		};
+	const ALGO_STRING_INFO FAR_BSS *algoStringInfoTbl;
 	int availAlgoIndex[ 16 + 8 ];
-	int noAlgos = 0, length = 0, algoIndex, status;
+	int noAlgos = 0, length = 0, algoIndex, noAlgoStringInfoEntries, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( algoList, sizeof( CRYPT_ALGO_TYPE ) * \
 								 algoListLength ) );
 
 	REQUIRES( algoListLength >= 1 && algoListLength <= 16 );
+
+	/* Get the list of SSH algorithms and names */
+	status = getAlgoStringInfo( &algoStringInfoTbl, &noAlgoStringInfoEntries );
+	ENSURES( cryptStatusOK( status ) );
 
 	/* Walk down the list of algorithms remembering the encoded name of each
 	   one that's available for use */
@@ -116,7 +86,7 @@ static int writeAlgoList( INOUT STREAM *stream,
 			algoIndex < FAILSAFE_ITERATIONS_SMALL;
 		 algoIndex++ )
 		{
-		const ALGO_STRING_INFO *algoStringMapInfo;
+		const ALGO_STRING_INFO *algoStringInfo;
 		const CRYPT_ALGO_TYPE cryptAlgo = algoList[ algoIndex ];
 		int i;
 
@@ -129,31 +99,29 @@ static int writeAlgoList( INOUT STREAM *stream,
 
 		/* Find the mapping entry for this algorithm or cipher suite */
 		for( i = 0; 
-			 algoStringMapTbl[ i ].algo != CRYPT_ALGO_NONE && \
-				algoStringMapTbl[ i ].algo != cryptAlgo && \
-				i < FAILSAFE_ARRAYSIZE( algoStringMapTbl, ALGO_STRING_INFO ); 
-			 i++ );
-		ENSURES( i < FAILSAFE_ARRAYSIZE( algoStringMapTbl, \
-										 ALGO_STRING_INFO ) );
-		ENSURES( algoStringMapTbl[ i ].algo != CRYPT_ALGO_NONE && \
+			 algoStringInfoTbl[ i ].algo != CRYPT_ALGO_NONE && \
+				algoStringInfoTbl[ i ].algo != cryptAlgo && \
+				i < noAlgoStringInfoEntries; i++ );
+		ENSURES( i < noAlgoStringInfoEntries );
+		ENSURES( algoStringInfoTbl[ i ].algo != CRYPT_ALGO_NONE && \
 				 noAlgos >= 0 && noAlgos < 16 );
-		algoStringMapInfo = &algoStringMapTbl[ i ];
+		algoStringInfo = &algoStringInfoTbl[ i ];
 
 		/* If it's a cipher suite, make sure that the algorithms that it's
 		   made up of are available */
 		if( isPseudoAlgo( cryptAlgo ) )
 			{
-			if( algoStringMapInfo->checkCryptAlgo != CRYPT_ALGO_NONE && \
-				!algoAvailable( algoStringMapInfo->checkCryptAlgo ) )
+			if( algoStringInfo->checkCryptAlgo != CRYPT_ALGO_NONE && \
+				!algoAvailable( algoStringInfo->checkCryptAlgo ) )
 				continue;
-			if( algoStringMapInfo->checkHashAlgo != CRYPT_ALGO_NONE && \
-				!algoAvailable( algoStringMapInfo->checkHashAlgo ) )
+			if( algoStringInfo->checkHashAlgo != CRYPT_ALGO_NONE && \
+				!algoAvailable( algoStringInfo->checkHashAlgo ) )
 				continue;
 			}
 
 		/* Remember the algorithm details */
 		availAlgoIndex[ noAlgos++ ] = i;
-		length += algoStringMapInfo->nameLen;
+		length += algoStringInfo->nameLen;
 		if( noAlgos > 1 )
 			length++;			/* Room for comma delimiter */
 		}
@@ -165,7 +133,7 @@ static int writeAlgoList( INOUT STREAM *stream,
 		 algoIndex++ )
 		{
 		const ALGO_STRING_INFO *algoStringInfo = \
-				&algoStringMapTbl[ availAlgoIndex[ algoIndex ] ];
+				&algoStringInfoTbl[ availAlgoIndex[ algoIndex ] ];
 
 		if( algoIndex > 0 )
 			sputc( stream, ',' );	/* Add comma delimiter */
@@ -202,18 +170,18 @@ static int initPubkeyAlgo( INOUT SESSION_INFO *sessionInfoPtr,
 		{ "ecdsa-sha2-nistp521", 19, CRYPT_ALGO_ECDSA },
 		{ NULL, CRYPT_ALGO_NONE }, { NULL, CRYPT_ALGO_NONE }
 		};
-	int keySize, status;
+	int pubKeyAlgo, keySize, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );
 
 	/* Find out which algorithm the server key is using */
 	status = krnlSendMessage( sessionInfoPtr->privateKey,
-							  IMESSAGE_GETATTRIBUTE,
-							  &handshakeInfo->pubkeyAlgo,
+							  IMESSAGE_GETATTRIBUTE, &pubKeyAlgo,
 							  CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
+	handshakeInfo->pubkeyAlgo = pubKeyAlgo;	/* int vs.enum */
 
 	/* If it's a standard public-key algorithm, return the algorithm 
 	   information directly */
@@ -556,16 +524,16 @@ static int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 											 SSH2_COOKIE_SIZE );
 	if( cryptStatusOK( status ) )
 		{
-		int value;
+		int pkcAlgo;
 
 		/* If the server key is a non-ECC key then it can't be used with an 
 		   ECC keyex so we have to explicitly disable it (technically it is 
 		   possible to mix ECDH with RSA but this is more likely an error 
 		   than anything deliberate) */
 		status = krnlSendMessage( sessionInfoPtr->privateKey, 
-								  IMESSAGE_GETATTRIBUTE, &value,
+								  IMESSAGE_GETATTRIBUTE, &pkcAlgo,
 								  CRYPT_CTXINFO_ALGO );
-		if( cryptStatusOK( status ) && isEccAlgo( value ) )
+		if( cryptStatusOK( status ) && isEccAlgo( pkcAlgo ) )
 			{
 			status = writeAlgoList( &stream, algoKeyexEccList,
 									FAILSAFE_ARRAYSIZE( algoKeyexEccList, \
@@ -875,6 +843,15 @@ static int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 		}
 
+	/* Set up the security information required for the session.  We have to 
+	   do this before sending the change cipherspec (rather than during the 
+	   pause while we're waiting for the other side's response) because we 
+	   can only tell the other side to switch to secure mode if we're sure 
+	   that we're already in that state ourselves */
+	status = initSecurityInfo( sessionInfoPtr, handshakeInfo );
+	if( cryptStatusError( status ) )
+		return( status );
+
 	/* Build our change cipherspec message and send the whole mess through
 	   to the client:
 		...
@@ -922,11 +899,6 @@ static int completeServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		if( findSessionInfo( sessionInfoPtr->attributeList, 
 							 CRYPT_SESSINFO_USERNAME ) != NULL )
 			userInfoPresent = TRUE;
-
-		/* Set up the security information required for the session */
-		status = initSecurityInfo( sessionInfoPtr, handshakeInfo );
-		if( cryptStatusError( status ) )
-			return( status );
 
 		/* Wait for the client's change cipherspec message.  From this point
 		   on the read channel is in the secure state */

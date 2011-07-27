@@ -183,13 +183,13 @@ int checkX509signature( IN_BUFFER( signedObjectLength ) const void *signedObject
 						IN_HANDLE const CRYPT_CONTEXT iSigCheckContext,
 						IN_OPT const X509SIG_FORMATINFO *formatInfo )
 	{
-	CRYPT_ALGO_TYPE signAlgo, sigCheckAlgo, hashAlgo;
+	CRYPT_ALGO_TYPE signAlgo, hashAlgo;
 	CRYPT_CONTEXT iHashContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	STREAM stream;
 	void *objectPtr = DUMMY_INIT_PTR, *sigPtr;
 	long length;
-	int status, sigLength;
+	int sigCheckAlgo, sigLength, hashParam, status;	/* int vs.enum */
 
 	assert( isReadPtr( signedObject, signedObjectLength ) );
 	assert( formatInfo == NULL || \
@@ -249,8 +249,8 @@ int checkX509signature( IN_BUFFER( signedObjectLength ) const void *signedObject
 		sMemDisconnect( &stream );
 		return( status );
 		}
-	status = readAlgoIDext( &stream, &signAlgo, &hashAlgo, 
-							ALGOID_CLASS_PKCSIG );
+	status = readAlgoIDex( &stream, &signAlgo, &hashAlgo, &hashParam,
+						   ALGOID_CLASS_PKCSIG );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -270,6 +270,16 @@ int checkX509signature( IN_BUFFER( signedObjectLength ) const void *signedObject
 	if( cryptStatusError( status ) )
 		return( status );
 	iHashContext = createInfo.cryptHandle;
+	if( hashParam != 0 )
+		{
+		/* Some hash algorithms have variable output size, in which case 
+		   we need to explicitly tell the context which one we're working 
+		   with */
+		status = krnlSendMessage( iHashContext, IMESSAGE_SETATTRIBUTE,
+								  &hashParam, CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Hash the signed data and check the signature on the object */
 	status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, 

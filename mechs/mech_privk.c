@@ -394,7 +394,7 @@ static int privateKeyUnwrap( STDC_UNUSED void *dummy,
 	const KEYFORMAT_TYPE formatType = ( type == PRIVATEKEY_WRAP_NORMAL ) ? \
 								KEYFORMAT_PRIVATE : KEYFORMAT_PRIVATE_OLD;
 	void *buffer;
-	int blockSize, status;
+	int blockSize, status, altStatus;
 
 	UNUSED_ARG( dummy );
 
@@ -443,7 +443,8 @@ static int privateKeyUnwrap( STDC_UNUSED void *dummy,
 		sMemDisconnect( &stream );
 		}
 	zeroise( buffer, mechanismInfo->wrappedDataLength );
-	krnlMemfree( &buffer );
+	altStatus = krnlMemfree( &buffer );
+	ENSURES( cryptStatusOK( altStatus ) );
 
 	return( status );
 	}
@@ -516,10 +517,9 @@ static int privateKeyUnwrapPGP( STDC_UNUSED void *dummy,
 								IN_ENUM( PRIVATEKEYPGP_WRAP ) \
 									const PRIVATEKEYPGP_WRAP_TYPE type )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
 	STREAM stream;
 	void *buffer;
-	int bytesToChecksum = DUMMY_INIT, status;
+	int pkcAlgorithm, bytesToChecksum = DUMMY_INIT, status, altStatus;
 
 	UNUSED_ARG( dummy );
 
@@ -530,7 +530,7 @@ static int privateKeyUnwrapPGP( STDC_UNUSED void *dummy,
 
 	/* Get various algorithm parameters */
 	status = krnlSendMessage( mechanismInfo->keyContext,
-							  IMESSAGE_GETATTRIBUTE, &cryptAlgo,
+							  IMESSAGE_GETATTRIBUTE, &pkcAlgorithm,
 							  CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -546,7 +546,7 @@ static int privateKeyUnwrapPGP( STDC_UNUSED void *dummy,
 		{
 		status = pgp2DecryptKey( buffer, mechanismInfo->wrappedDataLength,
 								 &bytesToChecksum, mechanismInfo->wrapContext, 
-								 ( cryptAlgo != CRYPT_ALGO_RSA ) ? \
+								 ( pkcAlgorithm != CRYPT_ALGO_RSA ) ? \
 									TRUE : FALSE );
 		}
 	else
@@ -558,7 +558,8 @@ static int privateKeyUnwrapPGP( STDC_UNUSED void *dummy,
 	if( cryptStatusError( status ) )
 		{
 		zeroise( buffer, mechanismInfo->wrappedDataLength );
-		krnlMemfree( &buffer );
+		altStatus = krnlMemfree( &buffer );
+		ENSURES( cryptStatusOK( altStatus ) );
 		return( status );
 		}
 
@@ -576,7 +577,7 @@ static int privateKeyUnwrapPGP( STDC_UNUSED void *dummy,
 			bytesToChecksum = mechanismInfo->wrappedDataLength - UINT16_SIZE;
 		status = checkPgp2KeyIntegrity( buffer, mechanismInfo->wrappedDataLength,
 										bytesToChecksum,
-										( cryptAlgo != CRYPT_ALGO_RSA ) ? \
+										( pkcAlgorithm != CRYPT_ALGO_RSA ) ? \
 											TRUE : FALSE  );
 		}
 	else
@@ -594,7 +595,8 @@ static int privateKeyUnwrapPGP( STDC_UNUSED void *dummy,
 			status = CRYPT_ERROR_WRONGKEY;
 		}
 	zeroise( buffer, mechanismInfo->wrappedDataLength );
-	krnlMemfree( &buffer );
+	altStatus = krnlMemfree( &buffer );
+	ENSURES( cryptStatusOK( altStatus ) );
 
 	return( status );
 	}

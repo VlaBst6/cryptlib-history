@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Win32 Randomness-Gathering Code					*
-*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2007	*
+*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2010	*
 *																			*
 ****************************************************************************/
 
@@ -37,11 +37,13 @@
 	#define rdtsc		__asm _emit 0x0F __asm _emit 0x31
   #endif /* VC++ 5.0 or earlier */
   #define xstore_rng	__asm _emit 0x0F __asm _emit 0xA7 __asm _emit 0xC0
+  #define rdrand_eax	__asm _emit 0x0F __asm _emit 0xC7 __asm _emit 0xF0
 #endif /* VC++ */
 #if defined __BORLANDC__
   #define cpuid			} __emit__( 0x0F, 0xA2 ); __asm {
   #define rdtsc			} __emit__( 0x0F, 0x31 ); __asm {
   #define xstore_rng	} __emit__( 0x0F, 0xA7, 0xC0 ); __asm {
+  #define rdrand_eax	} __emit__( 0x0F, 0xC7, 0xF0 ); __asm {
 #endif /* BC++ */
 
 /* Map a value that may be 32 or 64 bits depending on the platform to a 
@@ -395,7 +397,6 @@ static void readEverestData( void )
 	{
 	HANDLE hEverestData;
 	const void *everestDataPtr;
-	int length;
 
 	if( ( hEverestData = OpenFileMapping( FILE_MAP_READ, FALSE,
 										  "EVEREST_SensorValues" ) ) == NULL )
@@ -403,7 +404,9 @@ static void readEverestData( void )
 	if( ( everestDataPtr = MapViewOfFile( hEverestData, 
 										  FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
 		{
-		if( ( length = strlen( everestDataPtr ) ) > 128 )
+		const int length = strlen( everestDataPtr );
+
+		if( length > 128 )
 			{
 			MESSAGE_DATA msgData;
 			static const int quality = 40;
@@ -877,7 +880,7 @@ void fastPoll( void )
 	POINT point;
 	RANDOM_STATE randomState;
 	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
-	int status;
+	int trngValue = 0, status;
 
 	if( krnlIsExiting() )
 		return;
@@ -1148,7 +1151,34 @@ void fastPoll( void )
 			pop es
 			}
 		if( byteCount > 0 )
+			{
 			addRandomData( randomState, bufPtr, byteCount );
+			trngValue = 45;
+			}
+		}
+	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_RDRAND )
+		{
+		unsigned long buffer[ 8 + 8 ];
+		int byteCount = 0;
+
+		__asm {
+			xor eax, eax		/* Tell VC++ that EAX will be trashed */
+			xor ecx, ecx
+		trngLoop:
+			rdrand_eax
+			jnc trngExit		/* TRNG result bad, exit with byteCount = 0 */
+			mov [buffer+ecx], eax
+			add ecx, 4
+			cmp ecx, 32			/* Fill 32 bytes worth */
+			jl trngLoop
+			mov [byteCount], ecx
+		trngExit:
+			}
+		if( byteCount > 0 )
+			{
+			addRandomData( randomState, buffer, byteCount );
+			trngValue = 45;
+			}
 		}
 	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_TRNG )
 		{
@@ -1165,12 +1195,16 @@ void fastPoll( void )
 		trngDisabled:
 			}
 		if( value )
+			{
 			addRandomValue( randomState, value );
+			trngValue = 20;
+			}
 		}
 #endif /* NO_ASM */
 
-	/* Flush any remaining data through.  Quality = int( 33 1/3 % ) */
-	endRandomData( randomState, 34 );
+	/* Flush any remaining data through.  Quality = int( 33 1/3 % ) + any 
+	   additional quality from the TRNG if there's one present */
+	endRandomData( randomState, 34 + trngValue );
 	}
 
 /****************************************************************************
@@ -1236,7 +1270,7 @@ static void slowPollWin95( void )
 	HANDLE hSnapshot;
 	RANDOM_STATE randomState;
 	BYTE buffer[ BIG_RANDOM_BUFSIZE + 8 ];
-	int listCount = 0, iterationCount, status;
+	int iterationCount, status;
 
 	/* The following are fixed for the lifetime of the process so we only
 	   add them once */
@@ -1335,10 +1369,11 @@ static void slowPollWin95( void )
 	hl32.dwSize = sizeof( HEAPLIST32 );
 	if( pHeap32ListFirst( hSnapshot, &hl32 ) )
 		{
+		int listCount = 0;
+
 		do
 			{
 			HEAPENTRY32 he32;
-			int entryCount = 0;
 
 			/* First add the information from the basic Heaplist32
 			   structure */
@@ -1354,6 +1389,8 @@ static void slowPollWin95( void )
 			he32.dwSize = sizeof( HEAPENTRY32 );
 			if( pHeap32First( &he32, hl32.th32ProcessID, hl32.th32HeapID ) )
 				{
+				int entryCount = 0;
+
 				do
 					{
 					if( krnlIsExiting() )

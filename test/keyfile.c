@@ -102,6 +102,37 @@ static int loadPrivateKeyContext( CRYPT_CONTEXT *cryptContext,
 	return( FALSE );
 	}
 
+/* Make sure that an item read from a keyset is a certificate */
+
+static int checkCertPresence( const CRYPT_HANDLE cryptHandle,
+							  const char *certTypeName,
+							  const CRYPT_CERTTYPE_TYPE certType )
+	{
+	int value, status;
+
+	/* Make sure that what we've got is a certificate */
+	status = cryptGetAttribute( cryptHandle, CRYPT_CERTINFO_CERTTYPE, 
+								&value );
+	if( cryptStatusError( status ) || value != certType )
+		{
+		printf( "Returned object isn't a %s, line %d.\n", certTypeName, 
+				__LINE__ );
+		return( FALSE );
+		}
+
+	/* Make sure that we can't use the read key (the certificate constrains 
+	   it from being used externally) */
+	status = testCrypt( cryptHandle, cryptHandle, NULL, FALSE, TRUE );
+	if( status != CRYPT_ERROR_NOTAVAIL && status != CRYPT_ERROR_PERMISSION )
+		{
+		puts( "Attempt to perform external operation on context with "
+			  "internal-only action\npermissions succeeded. " );
+		return( FALSE );
+		}
+
+	return( TRUE );
+	}
+
 /* Copy a source file to a destination file, corrupting a given byte in the 
    process.  This is used to test the ability of the keyset-processing code 
    to detect data manipulation in keyset data */
@@ -231,9 +262,8 @@ static int getPGPPublicKey( const KEYFILE_TYPE keyFileType,
 
 int testGetPGPPublicKey( void )
 	{
+	/* See testGetPGPPrivateKey() for the descriptions of the files */
 	if( !getPGPPublicKey( KEYFILE_PGP, NULL, "PGP" ) )
-		return( FALSE );
-	if( !getPGPPublicKey( KEYFILE_OPENPGP, NULL, "OpenPGP (GPG)" ) )
 		return( FALSE );
 	if( !getPGPPublicKey( KEYFILE_OPENPGP_HASH, NULL, "OpenPGP (GPG/hashed key)" ) )
 		return( FALSE );
@@ -323,16 +353,34 @@ static int getPGPPrivateKey( const KEYFILE_TYPE keyFileType,
 
 int testGetPGPPrivateKey( void )
 	{
+	/* PGP 2.x file, RSA with IDEA, secring.pgp */
 	if( !getPGPPrivateKey( KEYFILE_PGP, "PGP" ) )
 		return( FALSE );
-	if( !getPGPPrivateKey( KEYFILE_OPENPGP, "OpenPGP (GPG)" ) )
-		return( FALSE );
+
+	/* OpenPGP file, DSA+Elgamal with 3DES, sec_hash.gpg.  Create with:
+
+		gpg --gen-key --homedir . --s2k-cipher-algo 3des
+
+	   Select DSA+Elgamal, size 1024 bits, key does not expire, 
+	   name = Test1, email = test1@test.org, comment blank, 
+	   password = test1 */
 	if( !getPGPPrivateKey( KEYFILE_OPENPGP_HASH, "OpenPGP (GPG/hashed key)" ) )
 		return( FALSE );
+
+	/* OpenPGP file, DSA+Elgamal with AES, sec_aes.skr */
 	if( !getPGPPrivateKey( KEYFILE_OPENPGP_AES, "OpenPGP (GPG/AES-256 key)" ) )
 		return( FALSE );
+	
+	/* OpenPGP file, RSA+RSA with 3DES and SHA256, sec_rsa.gpg.  Create with:
+
+		gpg --gen-key --homedir . --s2k-cipher-algo 3des --s2k-digest-algo sha256
+
+	   Select RSA, size 2048 bits, key does not expire, name = Test1, 
+	   email = test1@test.org, comment blank, password = test1 */
 	if( !getPGPPrivateKey( KEYFILE_OPENPGP_RSA, "OpenPGP (GPG/RSA key)" ) )
 		return( FALSE );
+
+	/* OpenPGP file, RSA with IDEA, sec_nai.skr */
 	return( getPGPPrivateKey( KEYFILE_NAIPGP, "OpenPGP (NAI)" ) );
 	}
 
@@ -346,22 +394,84 @@ static int borkenKeyImport( const int fileNo )
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CONTEXT cryptContext;
+	const C_STR userID;
+	const C_STR password;
 	BYTE buffer[ BUFFER_SIZE ];
 	int status;
 
-/*	printf( "Testing PKCS #12 file #%d import...\n", fileNo ); */
+	/* Set up the file access information:
+	
+		Keyset #1 = CryptoAPI via OpenSSL, privKey with ID data and 3DES, 
+			then anonymous cert with RC2/40.
+		Keyset #2 = CryptoAPI, privKey with ID data and 3DES, then 
+			anonymous cert with RC2/40.  The private key is identified via a 
+			GUID which we can't do much with so we pass in the special-case 
+			userID "[none]" meaning "return the first key that we find".
+		Keyset #3 = Unknown source, cert chain in plaintext with ID data, 
+			then privKey with ID data and 3DES.  The userID for the private 
+			key is the single hex byte 0x8C, again we use "[none]" for this.
+		Keyset #4 = OpenSSL, anonymous cert with RC2/40, then privKey with 
+			ID data and 3DES.
+		Keyset #5 = Unknown source (possibly OpenSSL), anonymous cert with
+			RC2/40, then privKey with ID data and 3DES.  Unlike keyset #4
+			the ID data doesn't include a userID, so we again have to resort
+			to "[none]" to read it.
+		Keyset $6 = Unknown source, from some CA that generates the private 
+			key for you rather than allowing you to generate it.  Contains 
+			mostly indefinite-length encodings of data, currently not 
+			readable, see the comments in keyset/pkcs12_rd.c for more 
+			details */
+	switch( fileNo )
+		{
+		case 1:
+			userID = TEXT( "test pkcs#12" );
+			password = TEXT( "test" );
+			break;
 
-	/* Open the file keyset */
+		case 2:
+			userID = TEXT( "[none]" );		/* Label = GUID */
+			password = TEXT( "<unknown>" );	/* Unknown, RC2=2C 28 14 C4 01 */
+			break;
+	
+		case 3:
+			userID = TEXT( "[none]" );		/* No label, ID = 0x8C */
+			password = TEXT( "7OPWKMIX" );
+			break;
+
+		case 4:
+			userID = TEXT( "server" );
+			password = TEXT( "cryptlib" );
+			break;
+
+		case 5:
+			userID = TEXT( "[none]" );		/* No label, ID = hash */
+			password = TEXT( "password" );
+			break;
+
+		case 6:
+			userID = TEXT( "SignLabel" );
+			password = TEXT( "vpsign" );
+			/* Drop through */
+
+		default:
+			assert( 0 );
+			return( FALSE );
+		}
+
+	/* Open the file keyset.  Note that we print the usual test message only
+	   after we try and open the keyset, in order to avoid a cascade of PKCS 
+	   #12 file non-opened messages */
 	filenameFromTemplate( buffer, PKCS12_FILE_TEMPLATE, fileNo );
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 							  buffer, CRYPT_KEYOPT_READONLY );
+	if( cryptStatusError( status ) && status == CRYPT_ERROR_NOTAVAIL )
+		{
+		/* If support for this isn't enabled, just exit quietly */
+		return( TRUE );
+		}
+	printf( "Testing PKCS #12 file #%d import...\n", fileNo ); 
 	if( cryptStatusError( status ) )
 		{
-		/* If support for this isn't enabled (which is normal, since the code
-		   doesn't exist), just exit quietly */
-		if( status == CRYPT_ERROR_PARAM3 )
-			return( TRUE );
-
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
 				status, __LINE__ );
 		return( FALSE );
@@ -369,15 +479,33 @@ static int borkenKeyImport( const int fileNo )
 
 	/* Get the key */
 	status = cryptGetPrivateKey( cryptKeyset, &cryptContext, CRYPT_KEYID_NAME,
- 								 TEXT( "test" ), TEXT( "test" ) );
+ 								 userID, password );
 	if( cryptStatusError( status ) )
 		{
-		/* The first file has a 512-bit key and will give a 
-		   CRYPT_ERROR_NOSECURE on import */
-		if( fileNo == 1 && status == CRYPT_ERROR_NOSECURE )
+		switch( fileNo )
 			{
+			case 1:
+				/* This file has a 512-bit key and will give a 
+				   CRYPT_ERROR_NOSECURE on import */
+				if( status == CRYPT_ERROR_NOSECURE )
+					status = CRYPT_OK;
+				break;
+
+			case  2:
+				/* This file has an unknown password, although the cracked 
+				   RC2/40 key for it is 2C 28 14 C4 01 */
+				if( status == CRYPT_ERROR_WRONGKEY )
+					status = CRYPT_OK;
+				break;
+
+			case 3:
+				/* This file contains an invalid private key, specifically
+				   ( q * u ) mod p != 1 (!!!) */
+				if( status == CRYPT_ERROR_INVALID )
+					status = CRYPT_OK;
+				break;
 			}
-		else
+		if( cryptStatusError( status ) )
 			{
 			printExtError( cryptKeyset, "cryptGetPrivateKey()", status, 
 						   __LINE__ );
@@ -385,7 +513,13 @@ static int borkenKeyImport( const int fileNo )
 			}
 		}
 	else
+		{
+		/* Make sure that we got a certificate alongside the private key */
+		if( !checkCertPresence( cryptContext, "private key with certificate", 
+								CRYPT_CERTTYPE_CERTIFICATE ) )
+			return( FALSE );
 		cryptDestroyContext( cryptContext );
+		}
 
 	/* Close the keyset */
 	status = cryptKeysetClose( cryptKeyset );
@@ -396,19 +530,15 @@ static int borkenKeyImport( const int fileNo )
 		return( FALSE );
 		}
 
-/*	puts( "Read of key from PKCS #12 file succeeded.\n" ); */
+	printf( "Read of key from PKCS #12 file #%d succeeded.\n\n", fileNo ); 
 	return( TRUE );
 	}
 
-int testGetBorkenKey( void )
+int testReadAltFileKey( void )
 	{
 	int i;
 
-////////////////////////////////////////////
-borkenKeyImport( 3 );
-////////////////////////////////////////////
-
-	for( i = 1; i <= 1; i++ )
+	for( i = 1; i <= 5; i++ )
 		{
 		if( !borkenKeyImport( i ) )
 			return( FALSE );
@@ -425,20 +555,30 @@ borkenKeyImport( 3 );
 
 /* Read/write a private key from a file */
 
-static int readFileKey( const CRYPT_ALGO_TYPE cryptAlgo )
+static int readFileKey( const CRYPT_ALGO_TYPE cryptAlgo,
+						const BOOLEAN useAltKeyFile )
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CONTEXT cryptContext;
 	int status;
 
-	printf( "Testing %s private key read from key file...\n", 
-			getAlgoName( cryptAlgo ) );
+	printf( "Testing %s private key read from %skey file...\n", 
+			getAlgoName( cryptAlgo ), useAltKeyFile ? "alternative " : "" );
 
 	/* Open the file keyset */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
-							  TEST_PRIVKEY_FILE, CRYPT_KEYOPT_READONLY );
+							  useAltKeyFile ? TEST_PRIVKEY_ALT_FILE : \
+											  TEST_PRIVKEY_FILE, 
+							  CRYPT_KEYOPT_READONLY );
 	if( cryptStatusError( status ) )
 		{
+		if( useAltKeyFile && status == CRYPT_ERROR_NOTAVAIL )
+			{
+			/* If the format isn't supported, this isn't a problem */
+			puts( "Read of RSA private key from alternative key file "
+				  "skipped.\n" );
+			return( TRUE );
+			}
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
 				status, __LINE__ );
 		return( FALSE );
@@ -473,21 +613,21 @@ static int readFileKey( const CRYPT_ALGO_TYPE cryptAlgo )
 		return( FALSE );
 		}
 
-	printf( "Read of %s private key from key file succeeded.\n\n", 
-			getAlgoName( cryptAlgo ) );
+	printf( "Read of %s private key from %skey file succeeded.\n\n", 
+			getAlgoName( cryptAlgo ), useAltKeyFile ? "alternative " : "" );
 	return( TRUE );
 	}
 
 static int writeFileKey( const CRYPT_ALGO_TYPE cryptAlgo, 
-						 const BOOLEAN useAltKeyfile,
+						 const BOOLEAN useAltKeyFile,
 						 const BOOLEAN generateKey )
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CONTEXT privateKeyContext;
 	int status;
 
-	printf( "Testing %s private key write to key file...\n", 
-			getAlgoName( cryptAlgo ) );
+	printf( "Testing %s private key write to %skey file...\n", 
+			getAlgoName( cryptAlgo ), useAltKeyFile ? "alternative " : "" );
 
 	/* Create the private key context */
 	if( generateKey )
@@ -513,16 +653,18 @@ static int writeFileKey( const CRYPT_ALGO_TYPE cryptAlgo,
 	/* Create/open the file keyset.  For the first call (with RSA) we create
 	   a new keyset, for subsequent calls we update the existing keyset */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
-					useAltKeyfile ? TEST_PRIVKEY_ALT_FILE : TEST_PRIVKEY_FILE,
+					useAltKeyFile ? TEST_PRIVKEY_ALT_FILE : TEST_PRIVKEY_FILE,
 					( cryptAlgo == CRYPT_ALGO_RSA ) ? CRYPT_KEYOPT_CREATE : \
 													  CRYPT_KEYOPT_NONE );
 	if( cryptStatusError( status ) )
 		{
-		if( useAltKeyfile && status == CRYPT_ERROR_PARAM2 )
+		cryptDestroyContext( privateKeyContext );
+		if( useAltKeyFile && status == CRYPT_ERROR_NOTAVAIL )
 			{
 			/* If the format isn't supported, this isn't a problem */
-			puts( "Write of RSA private key to key file skipped.\n" );
-			return( CRYPT_OK );
+			puts( "Write of RSA private key to alternative key file "
+				  "skipped.\n" );
+			return( TRUE );
 			}
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
 				status, __LINE__ );
@@ -550,8 +692,8 @@ static int writeFileKey( const CRYPT_ALGO_TYPE cryptAlgo,
 
 	/* Clean up */
 	cryptDestroyContext( privateKeyContext );
-	printf( "Write of %s private key to key file succeeded.\n\n", 
-			getAlgoName( cryptAlgo ) );
+	printf( "Write of %s private key to %skey file succeeded.\n\n", 
+			getAlgoName( cryptAlgo ), useAltKeyFile ? "alternative " : "" );
 	return( TRUE );
 	}
 
@@ -559,30 +701,32 @@ int testReadWriteFileKey( void )
 	{
 	if( !writeFileKey( CRYPT_ALGO_RSA, FALSE, FALSE ) )
 		return( FALSE );
-	if( !readFileKey( CRYPT_ALGO_RSA ) )
+	if( !readFileKey( CRYPT_ALGO_RSA, FALSE ) )
 		return( FALSE );
 	if( !writeFileKey( CRYPT_ALGO_DSA, FALSE, FALSE ) )
 		return( FALSE );
-	if( !readFileKey( CRYPT_ALGO_DSA ) )
+	if( !readFileKey( CRYPT_ALGO_DSA, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
 		!writeFileKey( CRYPT_ALGO_ELGAMAL, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
-		!readFileKey( CRYPT_ALGO_ELGAMAL ) )
+		!readFileKey( CRYPT_ALGO_ELGAMAL, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
 		!writeFileKey( CRYPT_ALGO_ECDSA, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
-		!readFileKey( CRYPT_ALGO_ECDSA ) )
+		!readFileKey( CRYPT_ALGO_ECDSA, FALSE ) )
 		return( FALSE );
 	return( TRUE );
 	}
 
-int testWriteAltFileKey( void )
+int testReadWriteAltFileKey( void )
 	{
-	return( writeFileKey( TRUE, TRUE, FALSE ) );
+	if( !writeFileKey( CRYPT_ALGO_RSA, TRUE, FALSE ) )
+		return( FALSE );
+	return( readFileKey( CRYPT_ALGO_RSA, TRUE ) );
 	}
 
 static int fileKeyImport( const int fileNo )
@@ -758,24 +902,8 @@ static int readCert( const char *certTypeName,
 						   __LINE__ );
 			return( FALSE );
 			}
-		status = cryptGetAttribute( cryptContext, CRYPT_CERTINFO_CERTTYPE,
-									&value );
-		if( cryptStatusError( status ) || value != certType )
-			{
-			printf( "Returned object isn't a %s, line %d.\n", certTypeName, 
-					__LINE__ );
+		if( !checkCertPresence( cryptContext, certTypeName, certType ) )
 			return( FALSE );
-			}
-
-		/* Make sure that we can't use the read key (the certificate 
-		   constrains it from being used externally) */
-		status = testCrypt( cryptContext, cryptContext, NULL, FALSE, TRUE );
-		if( status != CRYPT_ERROR_NOTAVAIL )
-			{
-			puts( "Attempt to perform external operation on context with "
-				  "internal-only action\npermissions succeeded. " );
-			return( FALSE );
-			}
 		cryptDestroyContext( cryptContext );
 		}
 	else
@@ -1378,15 +1506,15 @@ int testChangeFileKeyPassword( void )
 /* Write a key and certificate to a file in a single operation */
 
 static int writeSingleStepFileCert( const CRYPT_ALGO_TYPE cryptAlgo,
-									const BOOLEAN useAltKeyfile )
+									const BOOLEAN useAltKeyFile )
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT cryptContext;
 	int status;
 
-	printf( "Testing single-step %s key+certificate write to key file...\n",
-			getAlgoName( cryptAlgo ) );
+	printf( "Testing single-step %s key+certificate write to %skey file...\n",
+			getAlgoName( cryptAlgo ), useAltKeyFile ? "alternative " : "" );
 
 	/* Create a self-signed CA certificate */
 	if( !loadPrivateKeyContext( &cryptContext, cryptAlgo ) )
@@ -1416,10 +1544,18 @@ static int writeSingleStepFileCert( const CRYPT_ALGO_TYPE cryptAlgo,
 
 	/* Open the keyset, write the key and certificate, and close it */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
-					useAltKeyfile ? TEST_PRIVKEY_ALT_FILE : TEST_PRIVKEY_FILE,
+					useAltKeyFile ? TEST_PRIVKEY_ALT_FILE : TEST_PRIVKEY_FILE,
 					CRYPT_KEYOPT_CREATE );
 	if( cryptStatusError( status ) )
 		{
+		cryptDestroyContext( cryptContext );
+		cryptDestroyCert( cryptCert );
+		if( useAltKeyFile && status == CRYPT_ERROR_NOTAVAIL )
+			{
+			/* If the format isn't supported, this isn't a problem */
+			puts( "Single-step update to alternative key file skipped.\n" );
+			return( TRUE );
+			}
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
 				status, __LINE__ );
 		return( FALSE );
@@ -1444,21 +1580,17 @@ static int writeSingleStepFileCert( const CRYPT_ALGO_TYPE cryptAlgo,
 
 	/* Try and read the key+certificate back before we close the keyset.  
 	   This ensures that the in-memory data has been updated correctly */
-	if( !useAltKeyfile )
+	status = cryptGetPrivateKey( cryptKeyset, &cryptContext, 
+								 CRYPT_KEYID_NAME, getAlgoLabel( cryptAlgo ),
+								 TEST_PRIVKEY_PASSWORD );
+	cryptDestroyContext( cryptContext );
+	if( cryptStatusError( status ) )
 		{
-		status = cryptGetPrivateKey( cryptKeyset, &cryptContext,
-									 CRYPT_KEYID_NAME, 
-									 getAlgoLabel( cryptAlgo ),
-									 TEST_PRIVKEY_PASSWORD );
-		cryptDestroyContext( cryptContext );
-		if( cryptStatusError( status ) )
-			{
-			cryptKeysetClose( cryptKeyset );
-			printExtError( cryptKeyset, 
-						   "private key read from in-memory cached keyset data", 
-						   status, __LINE__ );
-			return( FALSE );
-			}
+		cryptKeysetClose( cryptKeyset );
+		printExtError( cryptKeyset, 
+					   "private key read from in-memory cached keyset data", 
+					   status, __LINE__ );
+		return( FALSE );
 		}
 
 	/* Close the keyset, which flushes the in-memory changes to disk.  The
@@ -1475,23 +1607,20 @@ static int writeSingleStepFileCert( const CRYPT_ALGO_TYPE cryptAlgo,
 
 	/* Try and read the key+certificate back from disk rather than the 
 	   cached, in-memory version */
-	if( !useAltKeyfile )
+	status = getPrivateKey( &cryptContext, 
+				useAltKeyFile ? TEST_PRIVKEY_ALT_FILE : TEST_PRIVKEY_FILE,
+				getAlgoLabel( cryptAlgo ), TEST_PRIVKEY_PASSWORD );
+	cryptDestroyContext( cryptContext );
+	if( cryptStatusError( status ) )
 		{
-		status = getPrivateKey( &cryptContext, TEST_PRIVKEY_FILE,
-								getAlgoLabel( cryptAlgo ), 
-								TEST_PRIVKEY_PASSWORD );
-		cryptDestroyContext( cryptContext );
-		if( cryptStatusError( status ) )
-			{
-			printExtError( cryptKeyset, 
-						   "private key read from on-disk keyset data", 
-						   status, __LINE__ );
-			return( FALSE );
-			}
+		printExtError( cryptKeyset, 
+					   "private key read from on-disk keyset data", 
+					   status, __LINE__ );
+		return( FALSE );
 		}
 
-	printf( "Single-step %s key+certificate write to key file succeeded.\n\n",
-			getAlgoName( cryptAlgo ) );
+	printf( "Single-step %s key+certificate write to %skey file succeeded.\n\n",
+			getAlgoName( cryptAlgo ), useAltKeyFile ? "alternative " : "" );
 	return( TRUE );
 	}
 
@@ -1507,13 +1636,10 @@ int testSingleStepFileCert( void )
 	return( TRUE );
 	}
 
-#if 0	/* 14/12/09 Doesn't seem to be used by anything */
-
 int testSingleStepAltFileCert( void )
 	{
 	return( writeSingleStepFileCert( CRYPT_ALGO_RSA, TRUE ) );
 	}
-#endif /* 0 */
 
 /* Write two keys and certs (signature + encryption) with the same DN to a
    file */
@@ -2367,7 +2493,7 @@ int createTestKeys( void )
 		{
 		printf( "done.\nSSL/TLS ECC P256 server key..." );
 
-		filenameFromTemplate( filenameBuffer, SERVER_PRIVKEY_FILE_TEMPLATE, 2 );
+		filenameFromTemplate( filenameBuffer, SERVER_ECPRIVKEY_FILE_TEMPLATE, 256 );
 #ifdef UNICODE_STRINGS
 		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
 		fileNamePtr = wcBuffer;
@@ -2381,7 +2507,7 @@ int createTestKeys( void )
 		{
 		printf( "done.\nSSL/TLS ECC P384 server key..." );
 
-		filenameFromTemplate( filenameBuffer, SERVER_PRIVKEY_FILE_TEMPLATE, 3 );
+		filenameFromTemplate( filenameBuffer, SERVER_ECPRIVKEY_FILE_TEMPLATE, 384 );
 #ifdef UNICODE_STRINGS
 		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
 		fileNamePtr = wcBuffer;
@@ -2389,6 +2515,20 @@ int createTestKeys( void )
 		if( !writeFileCertChain( serverCertRequestData, fileNamePtr,
 								 NULL, FALSE, FALSE, CRYPT_ALGO_ECDSA,
 								 48 /* P384 */ ) )
+			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nSSL/TLS ECC P521 server key..." );
+
+		filenameFromTemplate( filenameBuffer, SERVER_ECPRIVKEY_FILE_TEMPLATE, 521 );
+#ifdef UNICODE_STRINGS
+		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+		fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
+		if( !writeFileCertChain( serverCertRequestData, fileNamePtr,
+								 NULL, FALSE, FALSE, CRYPT_ALGO_ECDSA,
+								 66 /* P521 */ ) )
 			status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )

@@ -115,40 +115,57 @@ static const CRYPT_KEYID_TYPE dataIDs[] = {
 
   The (optional) specific object types entry is required for some keysets
   that require a specific object (typically a certificate or cert chain)
-  rather than just a generic PKC context for the overall keyset item type */
+  rather than just a generic PKC context for the overall keyset item type.
+  
+  The file keysets have three different subtypes, full-featured ones for 
+  which any access is allowed (KEYSET_FILE), mininmal ones for which only
+  a single key can be written but that don't contain enough information
+  for deletion, find-first/find-next, or storage of anything other than
+  public/private keys (KEYSET_FILE_PARTIAL), and ones whose format is
+  sufficiently oddball that only read access is allowed (KEYSET_RO).  The
+  schema for these is as follows (+ = all types, F = full only, - = no 
+  access):
+
+			|	R	|	W	|	D	| FF/FN	|	Q	|
+	--------+-------+-------+-------+-------+-------+
+	Pubkey	|	+	|  P/F	|	F	|	F	|	-	|
+	Privkey	|	+	|  P/F	|	F	|	-	|	-	|
+	Secret	|	F	|	F	|	F	|	-	|	-	|
+	Metadata|	-	|	F	|	-	|	-	|	-	|
+	--------+-------+-------+-------+-------+-------+ */
 
 static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 	/* Access public key */
 	MK_KEYACL_EX( KEYMGMT_ITEM_PUBLICKEY,
-		/* R */	ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
-				ST_DEV_HW,
-		/* W */	ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_LDAP | \
-				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
+		/* R */	ST_KEYSET_ANY | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
+		/* W */	ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | ST_KEYSET_DBMS | \
+				ST_KEYSET_LDAP | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
 		/* D */	ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_LDAP | \
-				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
+				ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
 		/* Fn*/	ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | \
-				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
+				ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
 		/* Q */	ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_KEYSET_LDAP,
 		/*Obj*/	ST_CTX_PKC | ST_CERT_CERT | ST_CERT_CERTCHAIN,
 		/*IDs*/	pubKeyIDs,
-		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY | KEYMGMT_FLAG_LABEL_ONLY | KEYMGMT_MASK_CERTOPTIONS,
+		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY | KEYMGMT_FLAG_LABEL_ONLY | \
+				KEYMGMT_MASK_CERTOPTIONS,
 		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx,
 		ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_KEYSET_LDAP | \
-						 ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
+						 ST_DEV_P11 | ST_DEV_CAPI,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN ),
 
 	/* Access private key */
 	MK_KEYACL_RWD( KEYMGMT_ITEM_PRIVATEKEY,
-		/* R */	ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | ST_DEV_FORT | \
+		/* R */	ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | ST_KEYSET_FILE_RO | \
 				ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
-		/* W */	ST_KEYSET_FILE | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
-				ST_DEV_HW,
-		/* D */	ST_KEYSET_FILE | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
-				ST_DEV_HW,
+		/* W */	ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | ST_DEV_P11 | \
+				ST_DEV_CAPI | ST_DEV_HW,
+		/* D */	ST_KEYSET_FILE | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
 		/*FnQ*/	ST_NONE, ST_NONE,
 		/*Obj*/	ST_CTX_PKC,
 		/*IDs*/	privKeyIDs,
-		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY | KEYMGMT_FLAG_LABEL_ONLY | KEYMGMT_MASK_USAGEOPTIONS,
+		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY | KEYMGMT_FLAG_LABEL_ONLY | \
+				KEYMGMT_MASK_USAGEOPTIONS,
 		ACCESS_KEYSET_xxRxD, ACCESS_KEYSET_xxXXx ),
 
 	/* Access secret key */
@@ -228,19 +245,19 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 
 typedef struct {
 	const CRYPT_KEYID_TYPE idType;
-	const OBJECT_SUBTYPE keysetSubTypeA;
+	const OBJECT_SUBTYPE keysetSubTypeB;
 	} IDTYPE_ACL;
 
 static const IDTYPE_ACL idTypeACL[] = {
 	{ CRYPT_KEYID_NAME, 
-	  ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW },
+	  ST_KEYSET_ANY | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW },
 	{ CRYPT_KEYID_URI, 
 	  ST_KEYSET_ANY | ST_DEV_P11 | ST_DEV_HW },
 	{ CRYPT_IKEYID_KEYID, 
-	  ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | \
-	  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_DEV_P11 | ST_DEV_HW },
+	  ST_KEYSET_FILE | ST_KEYSET_FILE_RO | ST_KEYSET_DBMS | \
+	  ST_KEYSET_DBMS_STORE | ST_DEV_P11 | ST_DEV_HW },
 	{ CRYPT_IKEYID_PGPKEYID, 
-	  ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | ST_DEV_HW },
+	  ST_KEYSET_FILE | ST_KEYSET_FILE_RO | ST_DEV_HW },
 	{ CRYPT_IKEYID_CERTID, 
 	  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE },
 	{ CRYPT_IKEYID_ISSUERID, 
@@ -273,64 +290,72 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 		const KEYMGMT_ACL *keyMgmtACL = &keyManagementACL[ i ];
 		int j;
 
-		if( ( keyMgmtACL->keysetR_subTypeA & SUBTYPE_CLASS_B ) || \
-			( keyMgmtACL->keysetR_subTypeA & \
-				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI | \
-									 ST_DEV_HW ) ) != 0 || \
-			keyMgmtACL->keysetR_subTypeB != ST_NONE )
+		if( keyMgmtACL->keysetR_subTypeA != ST_NONE || \
+			( keyMgmtACL->keysetR_subTypeB & ( SUBTYPE_CLASS_A | \
+											   SUBTYPE_CLASS_C ) ) || \
+			( keyMgmtACL->keysetR_subTypeB & \
+				~( SUBTYPE_CLASS_B | ST_KEYSET_ANY | ST_DEV_P11 | \
+									 ST_DEV_CAPI | ST_DEV_HW ) ) != 0 || \
+			keyMgmtACL->keysetR_subTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
 			}
 
-		if( ( keyMgmtACL->keysetW_subTypeA & SUBTYPE_CLASS_B ) || \
-			( keyMgmtACL->keysetW_subTypeA & \
-				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI | \
-									 ST_DEV_HW ) ) != 0 || \
-			keyMgmtACL->keysetW_subTypeB != ST_NONE )
+		if( keyMgmtACL->keysetR_subTypeA != ST_NONE || \
+			( keyMgmtACL->keysetW_subTypeB & ( SUBTYPE_CLASS_A | \
+											   SUBTYPE_CLASS_C ) ) || \
+			( keyMgmtACL->keysetW_subTypeB & \
+				~( SUBTYPE_CLASS_B | ST_KEYSET_ANY | ST_DEV_P11 | \
+									 ST_DEV_CAPI | ST_DEV_HW ) ) != 0 || \
+			keyMgmtACL->keysetW_subTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
 			}
 
-		if( ( keyMgmtACL->keysetD_subTypeA & SUBTYPE_CLASS_B ) || \
-			( keyMgmtACL->keysetD_subTypeA & \
-				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI | \
-									 ST_DEV_HW ) ) != 0 || \
-			keyMgmtACL->keysetD_subTypeB != ST_NONE )
+		if( keyMgmtACL->keysetR_subTypeA != ST_NONE || \
+			( keyMgmtACL->keysetD_subTypeB & ( SUBTYPE_CLASS_A | \
+											   SUBTYPE_CLASS_C ) ) || \
+			( keyMgmtACL->keysetD_subTypeB & \
+				~( SUBTYPE_CLASS_B | ST_KEYSET_ANY | ST_DEV_P11 | \
+									 ST_DEV_CAPI | ST_DEV_HW ) ) != 0 || \
+			keyMgmtACL->keysetD_subTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
 			}
 
-		if( ( keyMgmtACL->keysetFN_subTypeA & SUBTYPE_CLASS_B ) || \
-			( keyMgmtACL->keysetFN_subTypeA & \
-				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI | \
-									 ST_DEV_HW ) ) != 0 || \
-			keyMgmtACL->keysetFN_subTypeB != ST_NONE )
+		if( keyMgmtACL->keysetR_subTypeA != ST_NONE || \
+			( keyMgmtACL->keysetFN_subTypeB & ( SUBTYPE_CLASS_A | \
+											    SUBTYPE_CLASS_C ) ) || \
+			( keyMgmtACL->keysetFN_subTypeB & \
+				~( SUBTYPE_CLASS_B | ST_KEYSET_ANY | ST_DEV_P11 | \
+									 ST_DEV_CAPI | ST_DEV_HW ) ) != 0 || \
+			keyMgmtACL->keysetFN_subTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
 			}
 
-		if( ( keyMgmtACL->keysetQ_subTypeA & SUBTYPE_CLASS_B ) || \
-			( keyMgmtACL->keysetQ_subTypeA & \
-				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY ) ) != 0 || \
-			keyMgmtACL->keysetQ_subTypeB != ST_NONE )
+		if( keyMgmtACL->keysetR_subTypeA != ST_NONE || \
+			( keyMgmtACL->keysetQ_subTypeB & ( SUBTYPE_CLASS_A | \
+											   SUBTYPE_CLASS_C ) ) || \
+			( keyMgmtACL->keysetQ_subTypeB & \
+				~( SUBTYPE_CLASS_B | ST_KEYSET_ANY ) ) != 0 || \
+			keyMgmtACL->keysetQ_subTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
 			}
 
-		if( ( keyMgmtACL->objSubTypeA & SUBTYPE_CLASS_B ) || \
+		if( ( keyMgmtACL->objSubTypeA & ( SUBTYPE_CLASS_B | \
+										  SUBTYPE_CLASS_C ) ) || \
 			( keyMgmtACL->objSubTypeA & \
 				~( SUBTYPE_CLASS_A | ST_CERT_ANY | ST_CTX_PKC | \
 									 ST_CTX_CONV ) ) != 0 || \
-			keyMgmtACL->objSubTypeB != ST_NONE )
+			keyMgmtACL->objSubTypeB != ST_NONE || \
+			keyMgmtACL->objSubTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
@@ -348,20 +373,24 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 		ENSURES( keyMgmtACL->allowedFlags >= KEYMGMT_FLAG_NONE && \
 				 keyMgmtACL->allowedFlags < KEYMGMT_FLAG_MAX );
 
-		if( ( keyMgmtACL->specificKeysetSubTypeA & SUBTYPE_CLASS_B ) || \
-			( keyMgmtACL->specificKeysetSubTypeA & \
-				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
-			keyMgmtACL->specificKeysetSubTypeB != ST_NONE )
+		if( keyMgmtACL->specificKeysetSubTypeA != ST_NONE || \
+			( keyMgmtACL->specificKeysetSubTypeB & ( SUBTYPE_CLASS_A | \
+													 SUBTYPE_CLASS_C ) ) || \
+			( keyMgmtACL->specificKeysetSubTypeB & \
+				~( SUBTYPE_CLASS_B | ST_KEYSET_ANY | ST_DEV_P11 | \
+									 ST_DEV_CAPI ) ) != 0 || \
+			keyMgmtACL->specificKeysetSubTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
 			}
 
-		if( ( keyMgmtACL->specificObjSubTypeA & SUBTYPE_CLASS_B ) || \
+		if( ( keyMgmtACL->specificObjSubTypeA & ( SUBTYPE_CLASS_B | \
+												  SUBTYPE_CLASS_C ) ) || \
 			( keyMgmtACL->specificObjSubTypeA & \
 				~( SUBTYPE_CLASS_A | ST_CERT_ANY ) ) != 0 || \
-			keyMgmtACL->specificObjSubTypeB != ST_NONE )
+			keyMgmtACL->specificObjSubTypeB != ST_NONE || \
+			keyMgmtACL->specificObjSubTypeC != ST_NONE )
 			{
 			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
@@ -379,11 +408,9 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 		ENSURES( idACL->idType > CRYPT_KEYID_NONE && \
 				 idACL->idType < CRYPT_KEYID_LAST );
 
-		if( ( idACL->keysetSubTypeA & SUBTYPE_CLASS_B ) || \
-			( idACL->keysetSubTypeA & \
-				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI | \
-									 ST_DEV_HW ) ) != 0 )
+		if( ( idACL->keysetSubTypeB & \
+				~( SUBTYPE_CLASS_B | ST_KEYSET_ANY | ST_DEV_P11 | \
+									 ST_DEV_CAPI | ST_DEV_HW ) ) != 0 )
 			{
 			DEBUG_DIAG(( "Key management supplementary ACLs inconsistent" ));
 			retIntError();
@@ -462,19 +489,22 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 		{
 		case MESSAGE_KEY_GETKEY:
 			if( !isValidSubtype( keymgmtACL->keysetR_subTypeA, subType ) && \
-				!isValidSubtype( keymgmtACL->keysetR_subTypeB, subType ) )
+				!isValidSubtype( keymgmtACL->keysetR_subTypeB, subType ) && \
+				!isValidSubtype( keymgmtACL->keysetR_subTypeC, subType ) )
 				return( CRYPT_ARGERROR_OBJECT );
 			break;
 
 		case MESSAGE_KEY_SETKEY:
 			if( !isValidSubtype( keymgmtACL->keysetW_subTypeA, subType ) && \
-				!isValidSubtype( keymgmtACL->keysetW_subTypeB, subType ) )
+				!isValidSubtype( keymgmtACL->keysetW_subTypeB, subType ) && \
+				!isValidSubtype( keymgmtACL->keysetW_subTypeC, subType ) )
 				return( CRYPT_ARGERROR_OBJECT );
 			break;
 
 		case MESSAGE_KEY_DELETEKEY:
 			if( !isValidSubtype( keymgmtACL->keysetD_subTypeA, subType ) && \
-				!isValidSubtype( keymgmtACL->keysetD_subTypeB, subType ) )
+				!isValidSubtype( keymgmtACL->keysetD_subTypeB, subType ) && \
+				!isValidSubtype( keymgmtACL->keysetD_subTypeC, subType ) )
 				return( CRYPT_ARGERROR_OBJECT );
 			break;
 
@@ -495,7 +525,8 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 				   nothing wrong with the object, the problem is that
 				   there's no keyID present */
 				if( !isValidSubtype( keymgmtACL->keysetQ_subTypeA, subType ) && \
-					!isValidSubtype( keymgmtACL->keysetQ_subTypeB, subType ) )
+					!isValidSubtype( keymgmtACL->keysetQ_subTypeB, subType ) && \
+					!isValidSubtype( keymgmtACL->keysetQ_subTypeC, subType ) )
 					return( ( mechanismInfo->keyIDtype == CRYPT_KEYID_NONE ) ? \
 							CRYPT_ARGERROR_NUM1 : CRYPT_ARGERROR_STR1 );
 				}
@@ -504,7 +535,8 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 				/* getFirst/next.  We can report an object error here since
 				   this message is only sent internally */
 				if( !isValidSubtype( keymgmtACL->keysetFN_subTypeA, subType ) && \
-					!isValidSubtype( keymgmtACL->keysetFN_subTypeB, subType ) )
+					!isValidSubtype( keymgmtACL->keysetFN_subTypeB, subType ) && \
+					!isValidSubtype( keymgmtACL->keysetFN_subTypeC, subType ) )
 					return( CRYPT_ARGERROR_OBJECT );
 
 				/* Inner precondition: The state information points to an
@@ -578,7 +610,7 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 			}
 		ENSURES( index < FAILSAFE_ARRAYSIZE( idTypeACL, IDTYPE_ACL ) );
 		if( idACL == NULL || \
-			!isValidSubtype( idACL->keysetSubTypeA, subType ) )
+			!isValidSubtype( idACL->keysetSubTypeB, subType ) )
 			{
 			/* As before if we try and retrieve an object by an 
 			   inappropriate ID type then this is a nonfatal programming 
@@ -724,7 +756,8 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 				return( CRYPT_ARGERROR_NUM1 );
 			subType = objectST( paramObjectHandle );
 			if( !isValidSubtype( keymgmtACL->objSubTypeA, subType ) && \
-				!isValidSubtype( keymgmtACL->objSubTypeB, subType ) )
+				!isValidSubtype( keymgmtACL->objSubTypeB, subType ) && \
+				!isValidSubtype( keymgmtACL->objSubTypeC, subType ) )
 				{
 				/* If we're only allowed to add contexts, this could be a
 				   cert object with an associated context, in which case
@@ -754,7 +787,8 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 			   done */
 			subType = objectST( objectHandle );
 			if( !isValidSubtype( keymgmtACL->specificKeysetSubTypeA, subType ) && \
-				!isValidSubtype( keymgmtACL->specificKeysetSubTypeB, subType ) )
+				!isValidSubtype( keymgmtACL->specificKeysetSubTypeB, subType ) && \
+				!isValidSubtype( keymgmtACL->specificKeysetSubTypeC, subType ) )
 				break;
 
 			/* We need a specific cert type for this keyset, make sure that
@@ -766,7 +800,8 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 				return( CRYPT_ARGERROR_NUM1 );
 			subType = objectST( paramObjectHandle );
 			if( !isValidSubtype( keymgmtACL->specificObjSubTypeA, subType ) && \
-				!isValidSubtype( keymgmtACL->specificObjSubTypeB, subType ) )
+				!isValidSubtype( keymgmtACL->specificObjSubTypeB, subType ) && \
+				!isValidSubtype( keymgmtACL->specificObjSubTypeC, subType ) )
 				return( CRYPT_ARGERROR_NUM1 );
 			if( !isInHighState( paramObjectHandle ) )
 				return( CRYPT_ARGERROR_NUM1 );

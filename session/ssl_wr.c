@@ -286,9 +286,9 @@ int wrapPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	int length, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( sessionInfoPtr->flags & SESSION_ISSECURE_WRITE );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
+	REQUIRES( sessionInfoPtr->flags & SESSION_ISSECURE_WRITE );
 	REQUIRES( sStatusOK( stream ) );
 	REQUIRES( offset >= 0 && \
 			  offset <= stell( stream ) - \

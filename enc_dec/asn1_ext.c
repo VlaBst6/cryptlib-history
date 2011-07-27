@@ -23,7 +23,7 @@
    functions which is present here because it's the least inappropriate place
    to put it */
 
-CHECK_RETVAL \
+CHECK_RETVAL_LENGTH \
 int sizeofMessageDigest( IN_ALGO const CRYPT_ALGO_TYPE hashAlgo, 
 						 IN_LENGTH_HASH const int hashSize )
 	{
@@ -110,7 +110,7 @@ int readCMSheader( INOUT STREAM *stream,
 	{
 	const OID_INFO *oidInfoPtr;
 	BOOLEAN isData = FALSE;
-	long savedLength = CRYPT_UNUSED, savedLengthReadPos = DUMMY_INIT;
+	long savedLength = CRYPT_UNUSED, savedLengthDataStart = DUMMY_INIT;
 	long length, value;
 	int tag, status;
 
@@ -140,7 +140,7 @@ int readCMSheader( INOUT STREAM *stream,
 	if( length != CRYPT_UNUSED )
 		{
 		savedLength = length;
-		savedLengthReadPos = stell( stream );
+		savedLengthDataStart = stell( stream );
 		}
 	status = readOIDEx( stream, oidInfo, noOidInfoEntries, &oidInfoPtr );
 	if( cryptStatusError( status ) )
@@ -150,7 +150,8 @@ int readCMSheader( INOUT STREAM *stream,
 	   than a SEQUENCE so we remember the type for later.  Since there
 	   are a pile of CMS OIDs of the same length as OID_CMS_DATA, we check 
 	   for a match on the last byte before we perform a full OID match */
-	assert( sizeofOID( OID_CMS_DATA ) == 11 );
+	static_assert_opt( sizeofOID( OID_CMS_DATA ) == 11, \
+					   "Data OID size" );
 	if( sizeofOID( oidInfoPtr->oid ) == sizeofOID( OID_CMS_DATA ) && \
 		oidInfoPtr->oid[ 10 ] == OID_CMS_DATA[ 10 ] && \
 		!memcmp( oidInfoPtr->oid, OID_CMS_DATA, \
@@ -192,7 +193,7 @@ int readCMSheader( INOUT STREAM *stream,
 	if( length != CRYPT_UNUSED )
 		{
 		savedLength = length;
-		savedLengthReadPos = stell( stream );
+		savedLengthDataStart = stell( stream );
 		}
 	if( flags & READCMS_FLAG_WRAPPERONLY )
 		{
@@ -203,7 +204,7 @@ int readCMSheader( INOUT STREAM *stream,
 							  READCMS_FLAG_DEFINITELENGTH_OPT ) ) );
 		if( dataSize != NULL )
 			*dataSize = length;
-		return( CRYPT_OK );
+		return( oidInfoPtr->selectionID );
 		}
 	tag = peekTag( stream );
 	if( cryptStatusError( tag ) )
@@ -258,17 +259,16 @@ int readCMSheader( INOUT STREAM *stream,
 			{
 			/* The content length is the originally read length minus the
 			   data read since that point */
-			length = savedLength - ( stell( stream ) - savedLengthReadPos );
+			length = savedLength - ( stell( stream ) - savedLengthDataStart );
 			}
 		}
-	if( dataSize != NULL )
-		*dataSize = length;
 
 	/* If it's structured (i.e. not data in an OCTET STRING), check the
 	   version number of the content if required */
 	if( !isData && oidInfoPtr->extraInfo != NULL )
 		{
 		const CMS_CONTENT_INFO *contentInfoPtr = oidInfoPtr->extraInfo;
+		const long startPos = stell( stream );
 
 		status = readShortInteger( stream, &value );
 		if( cryptStatusError( status ) )
@@ -276,8 +276,15 @@ int readCMSheader( INOUT STREAM *stream,
 		if( value < contentInfoPtr->minVersion || \
 			value > contentInfoPtr->maxVersion )
 			return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
+		
+		/* Adjust the length value for the additional content that we've 
+		   read if necessary */
+		if( length != CRYPT_UNUSED )
+			length -= stell( stream ) - startPos;
 		}
 
+	if( dataSize != NULL )
+		*dataSize = length;
 	return( oidInfoPtr->selectionID );
 	}
 
@@ -331,7 +338,7 @@ int writeCMSheader( INOUT STREAM *stream,
 
 		writeSequence( stream, contentOIDlength + ( ( dataSize > 0 ) ? \
 					   ( int ) sizeofObject( sizeofObject( dataSize ) ) : 0 ) );
-		status = writeOID( stream, contentOID );
+		status = swrite( stream, contentOID, contentOIDlength );
 		if( dataSize <= 0 )
 			return( status );	/* No content, exit */
 		writeConstructed( stream, sizeofObject( dataSize ), 0 );
@@ -342,7 +349,7 @@ int writeCMSheader( INOUT STREAM *stream,
 
 	/* No size given, write the indefinite form */
 	writeSequenceIndef( stream );
-	writeOID( stream, contentOID );
+	swrite( stream, contentOID, contentOIDlength );
 	writeCtag0Indef( stream );
 	return( isOctetString ? writeOctetStringIndef( stream ) : \
 							writeSequenceIndef( stream ) );
@@ -351,7 +358,7 @@ int writeCMSheader( INOUT STREAM *stream,
 /* Read and write an encryptedContentInfo header.  The inner content may be
    implicitly or explicitly tagged depending on the exact content type */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_LENGTH STDC_NONNULL_ARG( ( 1 ) ) \
 int sizeofCMSencrHeader( IN_BUFFER( contentOIDlength ) const BYTE *contentOID, 
 						 IN_LENGTH_OID const int contentOIDlength,
 						 IN_LENGTH_INDEF const long dataSize, 
@@ -513,7 +520,7 @@ int writeCMSencrHeader( INOUT STREAM *stream,
 		{
 		writeSequence( stream, contentOIDlength + cryptInfoSize + \
 					   ( int ) sizeofObject( dataSize ) );
-		writeOID( stream, contentOID );
+		swrite( stream, contentOID, contentOIDlength );
 		status = writeCryptContextAlgoID( stream, iCryptContext );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -522,7 +529,7 @@ int writeCMSencrHeader( INOUT STREAM *stream,
 
 	/* No size given, write the indefinite form */
 	writeSequenceIndef( stream );
-	writeOID( stream, contentOID );
+	swrite( stream, contentOID, contentOIDlength );
 	status = writeCryptContextAlgoID( stream, iCryptContext );
 	if( cryptStatusError( status ) )
 		return( status );

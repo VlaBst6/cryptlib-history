@@ -289,11 +289,10 @@ static int createPubkeyAuth( const SESSION_INFO *sessionInfoPtr,
 							 INOUT STREAM *stream,
 							 const ATTRIBUTE_LIST *userNamePtr )
 	{
-	CRYPT_ALGO_TYPE pkcAlgo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	void *sigDataPtr, *packetDataPtr;
 	int sigDataLength, packetDataLength;
-	int sigOffset, sigLength = DUMMY_INIT, status;
+	int sigOffset, sigLength = DUMMY_INIT, pkcAlgo, status;
 
 	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );

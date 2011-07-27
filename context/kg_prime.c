@@ -171,7 +171,7 @@ static void initSieve( IN_ARRAY( sieveSize ) BOOLEAN *sieveArray,
 CHECK_RETVAL \
 static int nextEntry( IN_INT_SHORT int value )
 	{
-	assert( LFSR_MASK == SIEVE_SIZE );
+	static_assert( LFSR_MASK == SIEVE_SIZE, "LFSR size" );
 	
 	REQUIRES( value > 0 && value < SIEVE_SIZE );
 
@@ -728,15 +728,20 @@ int generateBignum( OUT BIGNUM *bn,
 					IN_BYTE const int high, IN_BYTE const int low )
 	{
 	MESSAGE_DATA msgData;
-	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
+	BYTE buffer[ CRYPT_MAX_PKCSIZE + DLP_OVERFLOW_SIZE + 8 ];
 	int noBytes = bitsToBytes( noBits ), status;
 
 	assert( isWritePtr( bn, sizeof( BIGNUM ) ) );
 
-	REQUIRES( noBits >= 120 && noBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+	REQUIRES( noBits >= 120 && \
+			  noBits <= bytesToBits( CRYPT_MAX_PKCSIZE + DLP_OVERFLOW_SIZE ) );
 			  /* The value of 120 doesn't correspond to any key size but is 
 			     the minimal value for a prime that we'd generate using the 
-				 Lim-Lee algorithm */
+				 Lim-Lee algorithm.  The extra 32 bits added to 
+				 CRYPT_MAX_PKCSIZE are for DLP algorithms where we reduce 
+				 the bignum mod p or q and use a few extra bits to avoid the 
+				 resulting value being biased, see the DLP code for 
+				 details */
 	REQUIRES( high > 0 && high <= 0xFF );
 	REQUIRES( low >= 0 && low <= 0xFF );
 			  /* The lower bound may be zero if we're generating e.g. a 
@@ -766,8 +771,19 @@ int generateBignum( OUT BIGNUM *bn,
 		buffer[ 1 ] |= ( high << ( noBits & 7 ) ) & 0xFF;
 
 	/* Turn the contents of the buffer into a bignum */
-	status = importBignum( bn, buffer, noBytes, max( noBytes - 8, 1 ),
-						   CRYPT_MAX_PKCSIZE, NULL, SHORTKEY_CHECK_NONE );
+	if( noBytes > CRYPT_MAX_PKCSIZE )
+		{
+		/* We've created an oversize bignum for use in a DLP algorithm, the 
+		   upper bound is somewhat larger than CRYPT_MAX_PKCSIZE */
+		status = importBignum( bn, buffer, noBytes, max( noBytes - 8, 1 ),
+							   CRYPT_MAX_PKCSIZE + DLP_OVERFLOW_SIZE, NULL, 
+							   KEYSIZE_CHECK_SPECIAL );
+		}
+	else
+		{
+		status = importBignum( bn, buffer, noBytes, max( noBytes - 8, 1 ),
+							   CRYPT_MAX_PKCSIZE, NULL, KEYSIZE_CHECK_NONE );
+		}
 	zeroise( buffer, noBytes );
 	return( status );
 	}

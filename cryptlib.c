@@ -277,16 +277,23 @@ static BOOLEAN buildSanityCheck( void )
   #endif /* DATA_LITTLEENDIAN */
 			{
 			/* We should probably sound klaxons as well at this point */
-			DEBUG_PRINT( "CPU endianness is configured incorrectly, see "
-						 "the cryptlib manual for details" );
+			DEBUG_PRINT(( "CPU endianness is configured incorrectly, see "
+						  "the cryptlib manual for details" ));
 			return( FALSE );
 			}
 #endif /* Big/little-endian override check */
 
-	/* Make sure that the compiler doesn't use variable-size enums (done by, 
-	   for example, the PalmOS SDK for backwards compatibility with 
-	   architectural decisions made for 68K-based PalmPilots) */
-#ifdef __GNUC__
+	/* Make sure that the compiler doesn't use variable-size enums.  This is 
+	   done by, for example, the PalmOS SDK for backwards compatibility with 
+	   architectural decisions made for 68K-based PalmPilots, and at least 
+	   one ARM compiler, as permitted by the ARM AAPCS (section 7.1.3), 
+	   which says that "this ABI delegates a choice of representation of 
+	   enumerated types to a platform ABI", followed by a long discussion of 
+	   all the problems that this causes, after which it's allowed anyway,
+	   but it can also be optionally enabled for compilers like gcc, so just 
+	   to be safe we check all compilers except the ones that we know never 
+	   do this */
+#if !defined( _MSC_VER )
 	if( sizeof( CRYPT_ALGO_TYPE ) != sizeof( int ) || \
 		sizeof( CRYPT_MODE_TYPE ) != sizeof( int ) ||
 		sizeof( CRYPT_ATTRIBUTE_TYPE ) != sizeof( int ) )
@@ -295,7 +302,7 @@ static BOOLEAN buildSanityCheck( void )
 					  "the cryptlib manual for details" ));
 		return( FALSE );
 		}
-#endif /* gcc */
+#endif /* Microsoft compilers */
 
 	return( TRUE );
 	}
@@ -309,11 +316,10 @@ int initCryptlib( void )
 
 	/* Let the user know that we're in the cryptlib startup code if they're in
 	   debug mode */
-	DEBUG_PRINT(( "\n\n" ));
+	DEBUG_PRINT(( "\n" ));
 	DEBUG_PRINT(( "***************************\n" ));
 	DEBUG_PRINT(( "* Beginning cryptlib init *\n" ));
 	DEBUG_PRINT(( "***************************\n" ));
-	DEBUG_PRINT(( "\n\n" ));
 
 	/* Perform any required sanity checks on the build process.  This would
 	   be caught by the self-test but sometimes people don't run this so we
@@ -430,11 +436,11 @@ int initCryptlib( void )
 
 	/* Let the user know that the cryptlib startup has completed 
 	   successfully if they're in debug mode */
-	DEBUG_PRINT(( "\n\n" ));
+	DEBUG_PRINT(( "\n" ));
 	DEBUG_PRINT(( "***************************\n" ));
 	DEBUG_PRINT(( "* cryptlib init completed *\n" ));
 	DEBUG_PRINT(( "***************************\n" ));
-	DEBUG_PRINT(( "\n\n" ));
+	DEBUG_PRINT(( "\n" ));
 
 	return( CRYPT_OK );
 	}

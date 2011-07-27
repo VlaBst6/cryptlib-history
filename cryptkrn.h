@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Kernel Interface Header File 				*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -30,7 +30,12 @@
 /* Sometimes we can't use the preprocessor tricks above because the value 
    being saved isn't a primitive type or the variable value isn't available 
    at the start of the block, in which case we have to use the somewhat less 
-   transaparent macros below */
+   transaparent macros below.
+   
+   In a small number of cases the values declared by these macros are only
+   used in debug builds, leading to unused-variable warnings in release 
+   builds.  This is infrequent enough that there's not much point in adding
+   even further special-casing for them */
 
 #define ORIGINAL_INT_VAR( x, y )	const int orig_##x = ( y )
 #define DECLARE_ORIGINAL_INT( x )	int orig_##x
@@ -127,20 +132,28 @@ typedef enum {
    they're interchangeable for many message types and this simplifies some 
    of the MKACL() macros that only need to initialise one class type.
    
-   The different between SUBTYPE_KEYSET_FILE and SUBTYPE_KEYSET_FILE_PARTIAL 
-   is that the former stores a full index of key ID types and allows 
-   storage of any data type while the latter only handles one or two key 
-   IDs and a restricted set of data types.  The difference between 
-   SUBTYPE_KEYSET_DBMS and SUBTYPE_KEYSET_DBMS_STORE is similar, the former 
-   is a simple certificate-and-CRL store while the latter stores assorted 
-   CA management data items and supports extended operations */
+   The different between SUBTYPE_KEYSET_FILE, SUBTYPE_KEYSET_FILE_PARTIAL,
+   and SUBTYPE_KEYSET_FILE_READONLY is that SUBTYPE_KEYSET_FILE stores a 
+   full index of key ID types and allows storage of any data type, 
+   SUBTYPE_KEYSET_FILE_PARTIAL only handles one or two key IDs and a 
+   restricted set of data types so that only a single private key and 
+   associated public key and certificate can be stored, and 
+   SUBTYPE_KEYSET_FILE_READONLY is even more restricted and can't be 
+   updated in any sensible manner.
+   
+   The difference between SUBTYPE_KEYSET_DBMS and SUBTYPE_KEYSET_DBMS_STORE 
+   is similar, the former is a simple certificate-and-CRL store while the 
+   latter stores assorted CA management data items and supports extended 
+   operations */
 
-#define SUBTYPE_CLASS_MASK			0x60000000L
-#define SUBTYPE_CLASS_A				0x20000000L
-#define SUBTYPE_CLASS_B				0x40000000L
+#define SUBTYPE_CLASS_MASK			0x70000000L
+#define SUBTYPE_CLASS_A				0x10000000L
+#define SUBTYPE_CLASS_B				0x20000000L
+#define SUBTYPE_CLASS_C				0x40000000L
 
 #define MK_SUBTYPE_A( value )		( SUBTYPE_CLASS_A | ( 1L << ( value - 1 ) ) )
 #define MK_SUBTYPE_B( value )		( SUBTYPE_CLASS_B | ( 1L << ( value - 1 ) ) )
+#define MK_SUBTYPE_C( value )		( SUBTYPE_CLASS_C | ( 1L << ( value - 1 ) ) )
 
 #define SUBTYPE_NONE				0x00000000L
 
@@ -164,47 +177,42 @@ typedef enum {
 #define SUBTYPE_CERT_OCSP_RESP		MK_SUBTYPE_A( 17 )
 #define SUBTYPE_CERT_PKIUSER		MK_SUBTYPE_A( 18 )
 
-#define SUBTYPE_KEYSET_FILE			MK_SUBTYPE_A( 19 )
-#define SUBTYPE_KEYSET_FILE_PARTIAL	MK_SUBTYPE_A( 20 )
-#define SUBTYPE_KEYSET_DBMS			MK_SUBTYPE_A( 21 )
-#define SUBTYPE_KEYSET_DBMS_STORE	MK_SUBTYPE_A( 22 )
-#define SUBTYPE_KEYSET_HTTP			MK_SUBTYPE_A( 23 )
-#define SUBTYPE_KEYSET_LDAP			MK_SUBTYPE_A( 24 )
-
-#define SUBTYPE_DEV_SYSTEM			MK_SUBTYPE_A( 25 )
-#define SUBTYPE_DEV_FORTEZZA		MK_SUBTYPE_A( 26 )
-#define SUBTYPE_DEV_PKCS11			MK_SUBTYPE_A( 27 )
-#define SUBTYPE_DEV_CRYPTOAPI		SUBTYPE_DEV_FORTEZZA
-#define SUBTYPE_DEV_HARDWARE		MK_SUBTYPE_A( 28 )
-	/* SUBTYPE_DEV_CRYPTOAPI is an experimental class which we have to lump 
-	   in with Fortezza for now because we've run out of flags in the 
-	   class-A field, since no-one is likely to use CryptoAPI as the 
-	   implementation isn't complete and no-one is still likely to be using 
-	   Fortezza this slight cheat is unlikely to be noticed */
-
 #define SUBTYPE_ENV_ENV				MK_SUBTYPE_B( 1 )
 #define SUBTYPE_ENV_ENV_PGP			MK_SUBTYPE_B( 2 )
 #define SUBTYPE_ENV_DEENV			MK_SUBTYPE_B( 3 )
 
-#define SUBTYPE_SESSION_SSH			MK_SUBTYPE_B( 4 )
-#define SUBTYPE_SESSION_SSH_SVR		MK_SUBTYPE_B( 5 )
-#define SUBTYPE_SESSION_SSL			MK_SUBTYPE_B( 6 )
-#define SUBTYPE_SESSION_SSL_SVR		MK_SUBTYPE_B( 7 )
-#define SUBTYPE_SESSION_RTCS		MK_SUBTYPE_B( 8 )
-#define SUBTYPE_SESSION_RTCS_SVR	MK_SUBTYPE_B( 9 )
-#define SUBTYPE_SESSION_OCSP		MK_SUBTYPE_B( 10 )
-#define SUBTYPE_SESSION_OCSP_SVR	MK_SUBTYPE_B( 11 )
-#define SUBTYPE_SESSION_TSP			MK_SUBTYPE_B( 12 )
-#define SUBTYPE_SESSION_TSP_SVR		MK_SUBTYPE_B( 13 )
-#define SUBTYPE_SESSION_CMP			MK_SUBTYPE_B( 14 )
-#define SUBTYPE_SESSION_CMP_SVR		MK_SUBTYPE_B( 15 )
-#define SUBTYPE_SESSION_SCEP		MK_SUBTYPE_B( 16 )
-#define SUBTYPE_SESSION_SCEP_SVR	MK_SUBTYPE_B( 17 )
-#define SUBTYPE_SESSION_CERT_SVR	MK_SUBTYPE_B( 18 )
+#define SUBTYPE_KEYSET_FILE			MK_SUBTYPE_B( 4 )
+#define SUBTYPE_KEYSET_FILE_PARTIAL	MK_SUBTYPE_B( 5 )
+#define SUBTYPE_KEYSET_FILE_READONLY MK_SUBTYPE_B( 6 )
+#define SUBTYPE_KEYSET_DBMS			MK_SUBTYPE_B( 7 )
+#define SUBTYPE_KEYSET_DBMS_STORE	MK_SUBTYPE_B( 8 )
+#define SUBTYPE_KEYSET_HTTP			MK_SUBTYPE_B( 9 )
+#define SUBTYPE_KEYSET_LDAP			MK_SUBTYPE_B( 10 )
 
-#define SUBTYPE_USER_SO				MK_SUBTYPE_B( 19 )
-#define SUBTYPE_USER_NORMAL			MK_SUBTYPE_B( 20 )
-#define SUBTYPE_USER_CA				MK_SUBTYPE_B( 21 )
+#define SUBTYPE_DEV_SYSTEM			MK_SUBTYPE_B( 11 )
+#define SUBTYPE_DEV_PKCS11			MK_SUBTYPE_B( 12 )
+#define SUBTYPE_DEV_CRYPTOAPI		MK_SUBTYPE_B( 13 )
+#define SUBTYPE_DEV_HARDWARE		MK_SUBTYPE_B( 14 )
+
+#define SUBTYPE_SESSION_SSH			MK_SUBTYPE_C( 1 )
+#define SUBTYPE_SESSION_SSH_SVR		MK_SUBTYPE_C( 2 )
+#define SUBTYPE_SESSION_SSL			MK_SUBTYPE_C( 3 )
+#define SUBTYPE_SESSION_SSL_SVR		MK_SUBTYPE_C( 4 )
+#define SUBTYPE_SESSION_RTCS		MK_SUBTYPE_C( 5 )
+#define SUBTYPE_SESSION_RTCS_SVR	MK_SUBTYPE_C( 6 )
+#define SUBTYPE_SESSION_OCSP		MK_SUBTYPE_C( 7 )
+#define SUBTYPE_SESSION_OCSP_SVR	MK_SUBTYPE_C( 8 )
+#define SUBTYPE_SESSION_TSP			MK_SUBTYPE_C( 9 )
+#define SUBTYPE_SESSION_TSP_SVR		MK_SUBTYPE_C( 10 )
+#define SUBTYPE_SESSION_CMP			MK_SUBTYPE_C( 11 )
+#define SUBTYPE_SESSION_CMP_SVR		MK_SUBTYPE_C( 12 )
+#define SUBTYPE_SESSION_SCEP		MK_SUBTYPE_C( 13 )
+#define SUBTYPE_SESSION_SCEP_SVR	MK_SUBTYPE_C( 14 )
+#define SUBTYPE_SESSION_CERT_SVR	MK_SUBTYPE_C( 15 )
+
+#define SUBTYPE_USER_SO				MK_SUBTYPE_C( 16 )
+#define SUBTYPE_USER_NORMAL			MK_SUBTYPE_C( 17 )
+#define SUBTYPE_USER_CA				MK_SUBTYPE_C( 18 )
 
 /* The data type used to store subtype values */
 
@@ -690,7 +698,6 @@ typedef enum {
 	MECHANISM_ENC_PKCS1_RAW,	/* PKCS #1 returning uninterpreted data */
 	MECHANISM_ENC_OAEP,			/* OAEP en/decrypt */
 	MECHANISM_ENC_CMS,			/* CMS key wrap */
-	MECHANISM_ENC_KEA,			/* KEA key agreement */
 	MECHANISM_SIG_PKCS1,		/* PKCS #1 sign */
 	MECHANISM_SIG_SSL,			/* SSL sign with dual hashes */
 	MECHANISM_DERIVE_PKCS5,		/* PKCS #5 derive */
@@ -736,12 +743,6 @@ typedef enum {
 				keyContext = context containing key
 				wrapContext = wrap/unwrap conventional context
 				auxContext = CRYPT_UNUSED
-				auxInfo = CRYPT_UNUSED
-	KEA			wrappedData = len + TEK( MEK ), len + UKM
-				keyData = -
-				keyContext = MEK
-				wrapContext = recipient KEA public key
-				auxContext = originator KEA private key
 				auxInfo = CRYPT_UNUSED
 	Private		wrappedData = padded encrypted private key components
 	key wrap	keyData = -
@@ -1242,8 +1243,8 @@ void krnlExitMutex( IN_ENUM( MUTEX ) const MUTEX_TYPE mutex );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer, 
 				  IN_LENGTH int size );
-STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( INOUT_PTR void **pointer );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemfree( INOUT_PTR void **pointer );
 
 #ifdef NEED_ENUMFIX
   #undef OBJECT_TYPE_LAST

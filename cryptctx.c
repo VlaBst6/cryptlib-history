@@ -25,6 +25,18 @@
 
 #define ENCRYPT_CHECKSIZE	16
 
+/* When we're allocating subtype-specific data to be stored alongside the
+   main CONTEXT_INFO, we align it to a certain block size both for efficient
+   access and to ensure that the pointer to it from the main CONTEXT_INFO
+   doesn't result in a segfault.  The following works for all current 
+   processor types */
+
+#define STORAGE_ALIGN_SIZE	8
+#define CONTEXT_INFO_ALIGN_SIZE	\
+		roundUp( sizeof( CONTEXT_INFO ), STORAGE_ALIGN_SIZE )
+#define ALIGN_CONTEXT_PTR( basePtr, type ) \
+		( type * ) ( ( BYTE * ) ( basePtr ) + CONTEXT_INFO_ALIGN_SIZE )
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -34,40 +46,101 @@
 /* Initialise pointers to context-specific storage areas */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initContextConvStorage( INOUT CONTEXT_INFO *contextInfoPtr, 
+								   IN_LENGTH_SHORT const int storageAlignSize )
+	{
+	BOOLEAN isClonedContext = ( contextInfoPtr->ctxConv != NULL ) ? \
+							  TRUE : FALSE;
+	int diff = DUMMY_INIT, newDiff, stateStorageSize, status;
+
+	/* If this is a cloned context then the cloning operation may have moved 
+	   the relative position of the key data around in memory, since the 
+	   granularity of its allocation differs from that of the memory 
+	   allocator.  In order to determine whether we have to correct things, 
+	   we remember the old offset of the keying data from the context 
+	   storage and compare it to the new offset */
+	if( isClonedContext )
+		diff = ptr_diff( contextInfoPtr->ctxConv->key, 
+						 contextInfoPtr->ctxConv );
+
+	/* Calculate the offsets of the context storage and keying data */
+	contextInfoPtr->ctxConv = ALIGN_CONTEXT_PTR( contextInfoPtr, CONV_INFO );
+	contextInfoPtr->ctxConv->key = \
+		ptr_align( ( BYTE * ) contextInfoPtr->ctxConv + sizeof( CONV_INFO ), 
+				   storageAlignSize );
+
+	/* If this is a newly-initialised context then we're done */
+	if( !isClonedContext )
+		return( CRYPT_OK );
+
+	/* Check whether the keying data offset has changed from the original to
+	   the cloned context */
+	newDiff = ptr_diff( contextInfoPtr->ctxConv->key, 
+						contextInfoPtr->ctxConv );
+	if( newDiff == diff )
+		return( CRYPT_OK );
+
+	/* The start of the actual keying data within the keying data memory 
+	   block has changed due to the cloned memory block starting at a 
+	   different offset, we need to move the keying data do its new 
+	   location */
+	status = contextInfoPtr->capabilityInfo->getInfoFunction( CAPABILITY_INFO_STATESIZE,
+										NULL, &stateStorageSize, 0 );
+	if( cryptStatusError( status ) )
+		return( status );
+	memmove( ( BYTE * ) contextInfoPtr->ctxConv + newDiff, 
+			 ( BYTE * ) contextInfoPtr->ctxConv + diff, stateStorageSize );
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int initContextStorage( INOUT CONTEXT_INFO *contextInfoPtr, 
-							   IN_LENGTH_SHORT_Z const int storageSize )
+							   IN_LENGTH_SHORT const int storageAlignSize )
 	{
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	REQUIRES( ( contextInfoPtr->type == CONTEXT_PKC && \
-				storageSize == sizeof( PKC_INFO ) ) || \
+				storageAlignSize == 0 ) || \
 			  ( contextInfoPtr->type != CONTEXT_PKC && \
-				storageSize >= 16 && storageSize < MAX_INTLENGTH_SHORT ) );
+				storageAlignSize >= 4 && storageAlignSize <= 128 ) );
 
 	switch( contextInfoPtr->type )
 		{
 		case CONTEXT_CONV:
-			contextInfoPtr->ctxConv = ( CONV_INFO * ) contextInfoPtr->storage;
-			contextInfoPtr->ctxConv->key = contextInfoPtr->storage + storageSize;
-			break;
+			/* Handling storage for conventional contexts is sufficiently 
+			   complicated in the presence of context cloning that we do it 
+			   in a separate function */
+			return( initContextConvStorage( contextInfoPtr, storageAlignSize ) );
 
 		case CONTEXT_HASH:
-			contextInfoPtr->ctxHash = ( HASH_INFO * ) contextInfoPtr->storage;
-			contextInfoPtr->ctxHash->hashInfo = contextInfoPtr->storage + storageSize;
+			contextInfoPtr->ctxHash = \
+					ALIGN_CONTEXT_PTR( contextInfoPtr, HASH_INFO );
+			contextInfoPtr->ctxHash->hashInfo = \
+					ptr_align( ( BYTE * ) contextInfoPtr->ctxConv + sizeof( HASH_INFO ), 
+							   storageAlignSize );
 			break;
 
 		case CONTEXT_MAC:
-			contextInfoPtr->ctxMAC = ( MAC_INFO * ) contextInfoPtr->storage;
-			contextInfoPtr->ctxMAC->macInfo = contextInfoPtr->storage + storageSize;
+			contextInfoPtr->ctxMAC = \
+					ALIGN_CONTEXT_PTR( contextInfoPtr, MAC_INFO );
+			contextInfoPtr->ctxMAC->macInfo = \
+					ptr_align( ( BYTE * ) contextInfoPtr->ctxConv + sizeof( MAC_INFO ), 
+							   storageAlignSize );
 			break;
 
 		case CONTEXT_PKC:
-			contextInfoPtr->ctxPKC = ( PKC_INFO * ) contextInfoPtr->storage;
+			contextInfoPtr->ctxPKC = \
+					ALIGN_CONTEXT_PTR( contextInfoPtr, PKC_INFO );
 			break;
 
 		case CONTEXT_GENERIC:
-			contextInfoPtr->ctxGeneric = ( GENERIC_INFO * ) contextInfoPtr->storage;
+			contextInfoPtr->ctxGeneric = \
+					ALIGN_CONTEXT_PTR( contextInfoPtr, GENERIC_INFO );
 			break;
+
+		default:
+			retIntError();
 		}
 
 	return( CRYPT_OK );
@@ -196,8 +269,6 @@ static int encryptDataConv( INOUT CONTEXT_INFO *contextInfoPtr,
 	REQUIRES( isStreamCipher( capabilityInfoPtr->cryptAlgo ) || \
 			  !needsIV( contextInfoPtr->ctxConv->mode ) ||
 			  ( contextInfoPtr->flags & CONTEXT_FLAG_IV_SET ) );
-	REQUIRES( contextInfoPtr->ctxConv->key == \
-			  contextInfoPtr->storage + sizeof( CONV_INFO ) );
 
 	memcpy( savedData, data, savedDataLength );
 	status = contextInfoPtr->encryptFunction( contextInfoPtr, data, 
@@ -411,7 +482,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 				else
 					status = encryptDataConv( contextInfoPtr, messageDataPtr, 
 											  messageValue );
-				assert( cryptStatusOK( status ) );
+				assert( cryptStatusOK( status ) );	/* Debug warning only */
 				break;
 
 			case MESSAGE_CTX_DECRYPT:
@@ -426,7 +497,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 				if( contextInfoPtr->type == CONTEXT_PKC && \
 					!( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) )
 					clearTempBignums( contextInfoPtr->ctxPKC );
-				assert( cryptStatusOK( status ) );
+				assert( cryptStatusOK( status ) );	/* Debug warning only */
 				break;
 
 			case MESSAGE_CTX_SIGN:
@@ -434,7 +505,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 											messageDataPtr, messageValue );
 				if( !( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) )
 					clearTempBignums( contextInfoPtr->ctxPKC );
-				assert( cryptStatusOK( status ) );
+				assert( cryptStatusOK( status ) );	/* Debug warning only */
 				break;
 
 			case MESSAGE_CTX_SIGCHECK:
@@ -445,12 +516,8 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 				break;
 
 			case MESSAGE_CTX_HASH:
-				REQUIRES( ( contextInfoPtr->type == CONTEXT_HASH && \
-							contextInfoPtr->ctxHash->hashInfo == \
-								contextInfoPtr->storage + sizeof( HASH_INFO ) ) || \
-						  ( contextInfoPtr->type == CONTEXT_MAC && \
-							contextInfoPtr->ctxMAC->macInfo == \
-								contextInfoPtr->storage + sizeof( MAC_INFO ) ) );
+				REQUIRES( contextInfoPtr->type == CONTEXT_HASH || \
+						  contextInfoPtr->type == CONTEXT_MAC );
 
 				/* If we've already completed the hashing/MACing we can't
 				   continue */
@@ -477,7 +544,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 					contextInfoPtr->flags |= CONTEXT_FLAG_HASH_DONE | \
 											 CONTEXT_FLAG_HASH_INITED;
 					}
-				assert( cryptStatusOK( status ) );
+				assert( cryptStatusOK( status ) );	/* Debug warning only */
 				break;
 
 			default:
@@ -597,22 +664,21 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 			case MESSAGE_CHANGENOTIFY_OBJHANDLE:
 				{
 				const CRYPT_HANDLE iCryptHandle = *( ( int * ) messageDataPtr );
+				int storageAlignSize;
 
 				REQUIRES( contextInfoPtr->type == CONTEXT_CONV || \
 						  contextInfoPtr->type == CONTEXT_HASH || \
 						  contextInfoPtr->type == CONTEXT_MAC );
 				REQUIRES( contextInfoPtr->objectHandle != iCryptHandle );
-				REQUIRES( contextInfoPtr->ctxConv != \
-						  ( CONV_INFO * ) contextInfoPtr->storage );
 
 				/* We've been cloned, update the object handle and internal 
 				   state pointers */
 				contextInfoPtr->objectHandle = iCryptHandle;
-				status = initContextStorage( contextInfoPtr, 
-							( contextInfoPtr->type == CONTEXT_CONV ) ? \
-								sizeof( CONV_INFO ) : \
-							( contextInfoPtr->type == CONTEXT_HASH ) ? \
-								sizeof( HASH_INFO ) : sizeof( MAC_INFO ) );
+				status = capabilityInfo->getInfoFunction( CAPABILITY_INFO_STATEALIGNTYPE,
+											NULL, &storageAlignSize, 0 );
+				if( cryptStatusError( status ) )
+					return( status );
+				status = initContextStorage( contextInfoPtr, storageAlignSize );
 				if( cryptStatusError( status ) )
 					return( status );
 				break;
@@ -718,9 +784,9 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	const int createFlags = objectFlags | \
 							( needsSecureMemory( contextType ) ? \
 							CREATEOBJECT_FLAG_SECUREMALLOC : 0 );
-	int sideChannelProtectionLevel, storageSize, stateStorageSize = 0;
-	int actionFlags = 0, actionPerms = ACTION_PERM_ALL;
-	int status;
+	int sideChannelProtectionLevel, storageSize;
+	int stateStorageSize = 0, stateStorageAlignSize = 0;
+	int actionFlags = 0, actionPerms = ACTION_PERM_ALL, status;
 
 	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
 	assert( isReadPtr( capabilityInfoPtr, sizeof( CAPABILITY_INFO ) ) );
@@ -746,6 +812,9 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 		{
 		status = capabilityInfoPtr->getInfoFunction( CAPABILITY_INFO_STATESIZE,
 												NULL, &stateStorageSize, 0 );
+		if( cryptStatusOK( status ) )
+			status = capabilityInfoPtr->getInfoFunction( CAPABILITY_INFO_STATEALIGNTYPE,
+												NULL, &stateStorageAlignSize, 0 );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -829,9 +898,45 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
 
-	/* Create the context and initialise the variables in it */
+	/* Create the context and initialise the variables in it.  The storage is
+	   allocated as follows:
+
+		+-----------+					  --+
+		|			|						|
+		| CTX_INFO	| --- ctxConv --+		|
+		|			|				|		| CONTEXT_INFO_ALIGN_SIZE
+		+-----------+				|		|
+		|###########| Pad to 8-byte boundary|
+		+-----------+ <-------------+	  --+
+		|			|						|
+		| CONV_INFO	| ---- key -----+		| storageSize
+		|			|				|		|
+		+-----------+				|	  --+
+		|###########| Pad to ALIGNSIZE boundary
+		+-----------+ <-------------+	  --- Aligned by initContextStorage()
+		|			|
+		|	Key		|
+		|			|
+		+-----------+ 
+
+	   Since we don't know at this point what the alignment requirements for
+	   the key storage will be because we don't know what contextInfoPtr 
+	   will by until it's allocated, we over-allocate the state storage by
+	   ALIGNSIZE bytes to allow the key data to be aligned with an ALIGNSIZE 
+	   block.
+
+	   The aligned-alloc for the key storage can get quite complex, some 
+	   Unix systems have posix_memalign(), and VC++ 2005 and newer have 
+	   _aligned_malloc(), but these are too non-portable to rely on.  What we
+	   have to do instead is allocate enough spare space at the end of the key
+	   data for alignment.  Since the address for the start of the key data
+	   has to be be a multiple of ALIGNSIZE, adding ALIGNSIZE extra bytes to
+	   the allocation guarantees that we have enough space, with the key data
+	   being starting somewhere in the first 16 bytes of the allocated 
+	   block.  The rest is done by initContextStorage() */
 	status = krnlCreateObject( iCryptContext, ( void ** ) &contextInfoPtr,
-							   sizeof( CONTEXT_INFO ) + storageSize + stateStorageSize, 
+							   CONTEXT_INFO_ALIGN_SIZE + storageSize + \
+									( stateStorageSize + stateStorageAlignSize ), 
 							   OBJECT_TYPE_CONTEXT, subType, createFlags, 
 							   iCryptOwner, actionFlags, 
 							   contextMessageFunction );
@@ -846,7 +951,7 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	contextInfoPtr->deviceObject = \
 		contextInfoPtr->altDeviceObject = CRYPT_ERROR;
 #endif /* USE_DEVICES */
-	status = initContextStorage( contextInfoPtr, storageSize );
+	status = initContextStorage( contextInfoPtr, stateStorageAlignSize );
 	if( cryptStatusError( status ) )
 		{
 		/* Enqueue a destroy message for the context and tell the kernel 
@@ -856,7 +961,6 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 						 MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS );
 		return( status );
 		}
-	contextInfoPtr->storageSize = storageSize + stateStorageSize;
 	if( sideChannelProtectionLevel > 0 )
 		contextInfoPtr->flags |= CONTEXT_FLAG_SIDECHANNELPROTECTION;
 	if( contextInfoPtr->type == CONTEXT_PKC && \

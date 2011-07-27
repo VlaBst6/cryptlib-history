@@ -492,22 +492,38 @@ static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 #else
 
 static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
+	{ EACCES, CRYPT_ERROR_PERMISSION, TRUE,
+		"EACCES: Permission denied", 25 },
+	{ EADDRINUSE, CRYPT_OK, TRUE,
+		"EADDRINUSE: Address in use", 26 },
 	{ EADDRNOTAVAIL, CRYPT_ERROR_NOTFOUND, TRUE,
 		"EADDRNOTAVAIL: Specified address is not available from the local "
 		"machine", 72 },
-	{ ECONNREFUSED, CRYPT_ERROR_PERMISSION, TRUE,
-		"ECONNREFUSED: Attempt to connect was rejected", 45 },
-	{ EINTR, CRYPT_OK, FALSE,
-		"EINTR: Function was interrupted by a signal", 43 },
-	{ EMFILE, CRYPT_OK, FALSE,
-		"EMFILE: Per-process descriptor table is full", 44 },
+	{ EAFNOSUPPORT, CRYPT_ERROR_NOTAVAIL, TRUE,
+		"EAFNOSUPPORT: Address family not supported", 42 },
+	{ EALREADY, CRYPT_OK, FALSE,
+		"EALREADY: Connection already in progress", 41 },
+	{ EBADF, CRYPT_OK, FALSE,
+		"EBADF: Bad file descriptor", 26 },
 #if !( defined( __PALMOS__ ) || defined( __SYMBIAN32__ ) )
 	{ ECONNABORTED, CRYPT_OK, TRUE,
 		"ECONNABORTED: Software caused connection abort", 46 },
-#endif /* PalmOS || Symbian OS */
-#ifndef __SYMBIAN32__
 	{ ECONNRESET, CRYPT_OK, TRUE,
 		"ECONNRESET: Connection was forcibly closed by remote host", 57 },
+#endif /* PalmOS || Symbian OS */
+	{ ECONNREFUSED, CRYPT_ERROR_PERMISSION, TRUE,
+		"ECONNREFUSED: Attempt to connect was rejected", 45 },
+	{ EINPROGRESS, CRYPT_OK, FALSE,
+		"EINPROGRESS: Operation in progress", 34 },
+	{ EINTR, CRYPT_OK, FALSE,
+		"EINTR: Function was interrupted by a signal", 43 },
+	{ EIO, CRYPT_OK, TRUE,
+		"EIO: Input/output error", 24 },
+	{ EISCONN, CRYPT_OK, FALSE,
+		"EISCONN: Socket is connected", 28 },
+	{ EMFILE, CRYPT_OK, FALSE,
+		"EMFILE: Per-process descriptor table is full", 44 },
+#ifndef __SYMBIAN32__
 	{ EMSGSIZE, CRYPT_ERROR_OVERFLOW, FALSE,
 		"EMSGSIZE: Message is too large to be sent all at once", 53 },
 	{ ENETUNREACH, CRYPT_OK, FALSE,
@@ -515,9 +531,19 @@ static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 	{ ENOBUFS, CRYPT_ERROR_MEMORY, FALSE,
 		"ENOBUFS: Insufficient system resources available to complete the "
 		"call", 69 },
+	{ ENODEV, CRYPT_OK, TRUE,
+		"ENODEV: No such device", 22 },
+	{ ENOPROTOOPT, CRYPT_OK, TRUE,
+		"ENOPROTOOPT: Protocol not available", 35 },
 	{ ENOTCONN, CRYPT_OK, TRUE,
 		"ENOTCONN: Socket is not connected", 33 },
+	{ ENOTSOCK, CRYPT_OK, TRUE,
+		"ENOTSOCK: Not a socket", 22 },
 #endif /* Symbian OS */
+	{ EPERM, CRYPT_ERROR_PERMISSION, TRUE,
+		"EPERM: Operation not permitted", 30 },
+	{ EPROTOTYPE, CRYPT_ERROR_NOTAVAIL, TRUE,
+		"EPROTOTYPE: Protocol wrong type for socket", 42 },
 	{ ETIMEDOUT, CRYPT_ERROR_TIMEOUT, FALSE,
 		"ETIMEDOUT: Function timed out before completion", 47 },
 	{ HOST_NOT_FOUND, CRYPT_ERROR_NOTFOUND, TRUE,
@@ -653,7 +679,7 @@ int setSocketError( INOUT NET_STREAM_INFO *netStream,
 					IN_ERROR const int status, const BOOLEAN isFatal )
 	{
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
-	assert( errorMessage != NULL );
+	assert( isReadPtr( errorMessage, 16 ) );
 
 	REQUIRES( errorMessageLength > 16 && \
 			  errorMessageLength < MAX_INTLENGTH );
@@ -826,7 +852,6 @@ static int my_getsockopt( int socket, int level, int option,
 						  void *data, uint *size )
 	{
 	BYTE buffer[ 8 + 8 ];
-	int count;
 
 	if( option != SO_ERROR )
 		return( 0 );
@@ -837,6 +862,8 @@ static int my_getsockopt( int socket, int level, int option,
 #if 1
 	return( setsockopt( socket, level, option, data, *size ) );
 #else
+	int count;
+
 	count = recv( socket, buffer, 0, 0 );
 	printf( "recv( 0 ) = %d, errno = %d.\n", count, errno );
 	if( count < 0 )
@@ -1417,30 +1444,6 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 								CRYPT_ERROR_TIMEOUT, FALSE ) );
 		}
 
-#if 0	/* 12/6/04 Shouldn't be necessary any more since to get to this
-		   point the socket has to be either readable or writeable or
-		   subject to an exception condition, which is handled below */
-	/* If we encountered an error condition on a connect (the socket is
-	   neither readable nor writeable), exit */
-	if( ( type == IOWAIT_CONNECT ) && \
-		!( FD_ISSET( netStream->netSocket, &readfds ) || \
-		   FD_ISSET( netStream->netSocket, &writefds ) ) )
-		{
-		REQUIRES_S( FD_ISSET( netStream->netSocket, &exceptfds ) );
-
-		status = getSocketError( stream, CRYPT_ERROR_OPEN );
-		if( netStream->errorCode == 0 )
-			{
-			/* Some implementations don't treat a soft timeout as an error,
-			   and at least one (Tandem) returns EINPROGRESS rather than
-			   ETIMEDOUT, so we insert a timeout error code ourselves */
-			netStream->errorCode = TIMEOUT_ERROR;
-			mapError( stream, FALSE, CRYPT_ERROR );
-			}
-		return( status );
-		}
-#endif /* 0 */
-
 	/* If there's an exception condition on a socket, exit.  This is
 	   implementation-specific, traditionally under Unix this only indicates
 	   the arrival of out-of-band data rather than any real error condition,
@@ -1473,9 +1476,29 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 			   Since we're merely updating the extended internal error 
 			   information (we already know what the actual error status
 			   is) we don't need to do anything with the mapError() return 
-			   value */
-			( void ) mapError( netStream, TIMEOUT_ERROR, FALSE, 
-							   CRYPT_ERROR_TIMEOUT );
+			   value.
+
+			   There is one special-case exception for this and that's when
+			   we're waiting on a nonblocking connect, in which case a 
+			   failure to connect due to e.g. an ECONNREFUSED will be 
+			   reported as a select() error (this can happen under Winsock 
+			   in some cases).  Since we can't be sure what the actual 
+			   problem is without adding our own timer handling (a fast
+			   reject would be due to an explicit notification like 
+			   ECONNREFUSED while a slow reject might be an ENETUNREACH
+			   or something similar) we can't report much more than a 
+			   generic open error.  A genuine timeout error should have
+			   been caught by the "wait timed out" code above */
+			if( type == IOWAIT_CONNECT )
+				{
+				( void ) mapError( netStream, 0, FALSE, 
+								   CRYPT_ERROR_OPEN );
+				}
+			else
+				{
+				( void ) mapError( netStream, TIMEOUT_ERROR, FALSE, 
+								   CRYPT_ERROR_TIMEOUT );
+				}
 			}
 		return( status );
 		}
@@ -1696,7 +1719,7 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 	static const int falseValue = 0;
 	SIZE_TYPE clientAddrLen = sizeof( SOCKADDR_STORAGE );
 	char hostNameBuffer[ MAX_DNS_SIZE + 1 + 8 ];
-	int addressCount, status = CRYPT_ERROR_OPEN;
+	int addressCount, errorCode = 0, status;
 
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 	assert( ( host == NULL && hostNameLen == 0 ) || \
@@ -1799,7 +1822,6 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 			   another interface */
 			continue;
 			}
-		status = CRYPT_OK;
 
 		/* At this point we still have the socket pool locked while we 
 		   complete initialisation so we need to call newSocketDone()
@@ -1840,14 +1862,23 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 				  addrInfoCursor->ai_addrlen ) || \
 			listen( listenSocket, 5 ) )
 			{
+			/* Remember the error code now in case there's a later error
+			   in the cleanup functions that overwrites it */
+			errorCode = getErrorCode();
+
+			/* Clean up so that we can try again, making sure that we have 
+			   an appropriate error status set when we continue in case this 
+			   was our last iteration through the loop */
 			deleteSocket( listenSocket );
 			newSocketDone();
+			status = CRYPT_ERROR_OPEN;
 			continue;
 			}
 
 		/* We've finished initialising the socket, tell the socket pool
 		   manager that it's safe to let others access the pool */
 		newSocketDone();
+		status = CRYPT_OK;
 		break;
 		}
 	freeAddressInfo( addrInfoPtr );
@@ -1865,8 +1896,9 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 		{
 		/* There was an error setting up the socket, don't try anything
 		   further */
-		return( mapError( netStream, getErrorCode(), FALSE, 
-						  CRYPT_ERROR_OPEN ) );
+		return( mapError( netStream, 
+						  ( errorCode == 0 ) ? getErrorCode() : errorCode, 
+						  FALSE, CRYPT_ERROR_OPEN ) );
 		}
 
 	/* Wait for a connection.  At the moment this always waits forever

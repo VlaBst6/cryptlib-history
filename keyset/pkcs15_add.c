@@ -35,17 +35,15 @@ int getKeyTypeTag( IN_HANDLE_OPT const CRYPT_CONTEXT cryptContext,
 				   IN_ALGO_OPT const CRYPT_ALGO_TYPE cryptAlgo,
 				   OUT int *tag )
 	{
-	CRYPT_ALGO_TYPE keyCryptAlgo = cryptAlgo;
 	static const MAP_TABLE tagMapTbl[] = {
 		{ CRYPT_ALGO_RSA, 100 },
 		{ CRYPT_ALGO_DH, CTAG_PK_DH },
 		{ CRYPT_ALGO_ELGAMAL, CTAG_PK_DH },
 		{ CRYPT_ALGO_DSA, CTAG_PK_DSA },
-		{ CRYPT_ALGO_KEA, CTAG_PK_KEA },
 		{ CRYPT_ALGO_ECDSA, CTAG_PK_ECC },
 		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
 		};
-	int value, status;
+	int keyCryptAlgo, value, status;
 
 	REQUIRES( ( isHandleRangeValid( cryptContext ) && \
 				cryptAlgo == CRYPT_ALGO_NONE ) || \
@@ -57,7 +55,9 @@ int getKeyTypeTag( IN_HANDLE_OPT const CRYPT_CONTEXT cryptContext,
 
 	/* If the caller hasn't already supplied the algorithm details, get them
 	   from the context */
-	if( cryptAlgo == CRYPT_ALGO_NONE )
+	if( cryptAlgo != CRYPT_ALGO_NONE )
+		keyCryptAlgo = cryptAlgo;
+	else
 		{
 		status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE,
 								  &keyCryptAlgo, CRYPT_CTXINFO_ALGO );
@@ -306,11 +306,10 @@ int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 				  const BOOLEAN isStorageObject, 
 				  INOUT ERROR_INFO *errorInfo )
 	{
-	CRYPT_ALGO_TYPE pkcCryptAlgo;
 	BYTE pubKeyAttributes[ KEYATTR_BUFFER_SIZE + 8 ];
 	BYTE privKeyAttributes[ KEYATTR_BUFFER_SIZE + 8 ];
 	int pubKeyAttributeSize = 0, privKeyAttributeSize = 0;
-	int modulusSize = DUMMY_INIT, status;
+	int modulusSize = DUMMY_INIT, pkcCryptAlgo, status;
 
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	assert( ( privkeyPresent && isReadPtr( password, passwordLength ) ) || \

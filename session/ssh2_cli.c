@@ -911,7 +911,7 @@ static int completeClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	{
 	STREAM stream;
 	BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
-	int stringLength, length, packetOffset, status;
+	int stringLength, packetOffset, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );
@@ -1029,6 +1029,8 @@ static int completeClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 	else
 		{
+		int length;
+
 		/* Check the service-accept packet:
 
 			byte	type = SSH_MSG_SERVICE_ACCEPT

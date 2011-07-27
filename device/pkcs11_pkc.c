@@ -88,6 +88,9 @@ static int genericSign( PKCS11_INFO *pkcs11Info,
 	assert( isReadPtr( inBuffer, inLength ) );
 	assert( isWritePtr( outBuffer, outLength ) );
 
+	REQUIRES( inLength > 0 && inLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( outLength > 0 && outLength < MAX_INTLENGTH_SHORT );
+
 	/* If we're currently in the middle of a multi-stage sign operation we
 	   can't start a new one.  We have to perform this tracking explicitly 
 	   since PKCS #11 only allows one multi-stage operation per session */
@@ -119,6 +122,9 @@ static int genericVerify( PKCS11_INFO *pkcs11Info,
 	assert( isReadPtr( pMechanism, sizeof( CK_MECHANISM ) ) );
 	assert( isReadPtr( inBuffer, inLength ) );
 	assert( isWritePtr( outBuffer, outLength ) );
+
+	REQUIRES( inLength > 0 && inLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( outLength > 0 && outLength < MAX_INTLENGTH_SHORT );
 
 	/* If we're currently in the middle of a multi-stage sign operation we
 	   can't start a new one.  We have to perform this tracking explicitly 
@@ -153,6 +159,9 @@ static int genericEncrypt( PKCS11_INFO *pkcs11Info,
 	assert( isReadPtr( pMechanism, sizeof( CK_MECHANISM ) ) );
 	assert( isWritePtr( buffer, length ) );
 	assert( isWritePtr( buffer, outLength ) );
+
+	REQUIRES( length > 0 && length < MAX_INTLENGTH_SHORT );
+	REQUIRES( outLength > 0 && outLength < MAX_INTLENGTH_SHORT );
 
 	status = C_EncryptInit( pkcs11Info->hSession,
 							( CK_MECHANISM_PTR ) pMechanism,
@@ -192,6 +201,8 @@ static int genericDecrypt( PKCS11_INFO *pkcs11Info,
 	assert( isReadPtr( pMechanism, sizeof( CK_MECHANISM ) ) );
 	assert( isWritePtr( buffer, length ) );
 	assert( isWritePtr( resultLength, sizeof( int ) ) );
+
+	REQUIRES( length > 0 && length < MAX_INTLENGTH_SHORT );
 
 	status = C_DecryptInit( pkcs11Info->hSession,
 							( CK_MECHANISM_PTR ) pMechanism,
@@ -295,8 +306,10 @@ int dhSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	int pLen, gLen = DUMMY_INIT, yLen = DUMMY_INIT, keyDataSize, cryptStatus;
 
 	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
-	assert( isHandleRangeValid( iCryptContext ) );
 	assert( isReadPtr( q, qLen ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( qLen > 0 && qLen <= CRYPT_MAX_PKCSIZE );
 
 	/* Get the public key components from the device */
 	cryptStatus = readAttributeValue( pkcs11Info, hDhKey, CKA_PRIME, 
@@ -355,7 +368,8 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isReadPtr( key, keyLength ) );
-	assert( keyLength == sizeof( CRYPT_PKCINFO_DLP ) );
+
+	REQUIRES( keyLength == sizeof( CRYPT_PKCINFO_DLP ) );
 
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
@@ -414,8 +428,9 @@ static int dhGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	int length, cryptStatus;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
-			keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+	
+	REQUIRES( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* CKM_DH_KEY_PAIR_GEN is really a Clayton's key generation mechanism 
 	   since it doesn't actually generate the p, g values.  Because of this 
@@ -495,7 +510,8 @@ static int dhEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length == sizeof( KEYAGREE_PARAMS ) );
+	
+	REQUIRES( length == sizeof( KEYAGREE_PARAMS ) );
 
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
@@ -546,9 +562,11 @@ static int dhDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length == sizeof( KEYAGREE_PARAMS ) );
-	assert( keyAgreeParams->publicValue != NULL && \
-			keyAgreeParams->publicValueLen >= MIN_PKCSIZE );
+
+	REQUIRES( length == sizeof( KEYAGREE_PARAMS ) );
+	REQUIRES( keyAgreeParams->publicValue != NULL && \
+			  keyAgreeParams->publicValueLen >= MIN_PKCSIZE && \
+			  keyAgreeParams->publicValueLen < MAX_INTLENGTH_SHORT );
 
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
@@ -607,7 +625,8 @@ int rsaSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	int nLen, eLen = DUMMY_INIT, keyDataSize, cryptStatus;
 
 	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
-	assert( isHandleRangeValid( iCryptContext ) );
+	
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
 
 	/* Get the public key components from the device */
 	cryptStatus = readAttributeValue( pkcs11Info, hRsaKey, CKA_MODULUS, 
@@ -715,7 +734,8 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isReadPtr( key, keyLength ) );
-	assert( keyLength == sizeof( CRYPT_PKCINFO_RSA ) );
+	
+	REQUIRES( keyLength == sizeof( CRYPT_PKCINFO_RSA ) );
 
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
@@ -820,8 +840,9 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	int cryptStatus;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
-			keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+
+	REQUIRES( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
@@ -875,7 +896,8 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length == keySize );
+	
+	REQUIRES( length == keySize );
 
 	/* Undo the PKCS #1 padding to make CKM_RSA_PKCS look like 
 	   CKM_RSA_X_509 */
@@ -914,7 +936,8 @@ static int rsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length == keySize );
+	
+	REQUIRES( length == keySize );
 
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
@@ -944,7 +967,8 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length == keySize );
+	
+	REQUIRES( length == keySize );
 
 	/* Undo the PKCS #1 padding to make CKM_RSA_PKCS look like 
 	   CKM_RSA_X_509 */
@@ -980,7 +1004,8 @@ static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length == keySize );
+	
+	REQUIRES( length == keySize );
 
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
@@ -1033,7 +1058,7 @@ static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 			}
 		}
 	bufPtr[ keySize - resultLen - 1 ] = 0;
-	assert( 2 + ( keySize - resultLen - 3 ) + 1 + resultLen == keySize );
+	ENSURES( 2 + ( keySize - resultLen - 3 ) + 1 + resultLen == keySize );
 
 	return( cryptStatus );
 	}
@@ -1062,11 +1087,12 @@ static int dsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 	int keyDataSize, cryptStatus;
 
 	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
-	assert( isHandleRangeValid( iCryptContext ) );
 	assert( isReadPtr( p, pLen ) );
 	assert( isReadPtr( q, qLen ) );
 	assert( isReadPtr( g, gLen ) );
 	assert( isReadPtr( y, yLen ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
 
 	/* Send the public key data to the context.  We send the keying 
 	   information as CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
@@ -1128,7 +1154,8 @@ int dsaSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	int cryptStatus;
 
 	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
-	assert( isHandleRangeValid( iCryptContext ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
 
 	/* Get the public key components from the device */
 	cryptStatus = readAttributeValue( pkcs11Info, hDsaKey, CKA_PRIME, 
@@ -1182,7 +1209,8 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isReadPtr( key, keyLength ) );
-	assert( keyLength == sizeof( CRYPT_PKCINFO_DLP ) );
+
+	REQUIRES( keyLength == sizeof( CRYPT_PKCINFO_DLP ) );
 
 	/* Creating a private-key object is somewhat problematic since the 
 	   PKCS #11 interpretation of DSA reuses CKA_VALUE for x in the private
@@ -1361,8 +1389,9 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	int length, cryptStatus;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
-			keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+
+	REQUIRES( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* CKM_DSA_KEY_PAIR_GEN is really a Clayton's key generation mechanism 
 	   since it doesn't actually generate the p, q, or g values (presumably 
@@ -1501,12 +1530,14 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length == sizeof( DLP_PARAMS ) );
-	assert( dlpParams->inParam1 != NULL && \
-			dlpParams->inLen1 == 20 );
-	assert( dlpParams->inParam2 == NULL && dlpParams->inLen2 == 0 );
-	assert( dlpParams->outParam != NULL && \
-			dlpParams->outLen >= ( 2 + 20 ) * 2 );
+
+	REQUIRES( length == sizeof( DLP_PARAMS ) );
+	REQUIRES( dlpParams->inParam1 != NULL && \
+			  dlpParams->inLen1 == 20 );
+	REQUIRES( dlpParams->inParam2 == NULL && dlpParams->inLen2 == 0 );
+	REQUIRES( dlpParams->outParam != NULL && \
+			  dlpParams->outLen >= ( 2 + 20 ) * 2 && \
+			  dlpParams->outLen < MAX_INTLENGTH_SHORT );
 
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
@@ -1534,11 +1565,11 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 		}
 	cryptStatus = importBignum( r, signature, 20, 
 							    bitsToBytes( 160 - 32 ), 20, NULL, 
-								SHORTKEY_CHECK_NONE );
+								KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = importBignum( r, signature + 20, 20,
 								    bitsToBytes( 160 - 32 ), 20, NULL, 
-									SHORTKEY_CHECK_NONE );
+									KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( cryptStatus ) )
 		{
 		cryptStatus = \
@@ -1568,16 +1599,17 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length == sizeof( DLP_PARAMS ) );
-	assert( dlpParams->inParam1 != NULL && dlpParams->inLen1 == 20 );
-	assert( dlpParams->inParam2 != NULL && \
-			( ( dlpParams->formatType == CRYPT_FORMAT_CRYPTLIB && \
-				dlpParams->inLen2 >= 46 ) || \
-			  ( dlpParams->formatType == CRYPT_FORMAT_PGP && \
-				dlpParams->inLen2 == 44 ) || \
+	
+	REQUIRES( length == sizeof( DLP_PARAMS ) );
+	REQUIRES( dlpParams->inParam1 != NULL && dlpParams->inLen1 == 20 );
+	REQUIRES( dlpParams->inParam2 != NULL && \
+			  ( ( dlpParams->formatType == CRYPT_FORMAT_CRYPTLIB && \
+				  dlpParams->inLen2 >= 46 ) || \
+				( dlpParams->formatType == CRYPT_FORMAT_PGP && \
+				  dlpParams->inLen2 == 44 ) || \
 				( dlpParams->formatType == CRYPT_IFORMAT_SSH && \
-				dlpParams->inLen2 == 40 ) ) );
-	assert( dlpParams->outParam == NULL && dlpParams->outLen == 0 );
+				  dlpParams->inLen2 == 40 ) ) );
+	REQUIRES( dlpParams->outParam == NULL && dlpParams->outLen == 0 );
 
 	/* Decode the values from a DL data block and make sure r and s are
 	   valid */

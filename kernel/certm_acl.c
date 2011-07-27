@@ -204,7 +204,8 @@ int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 				( paramInfo( certMgmtACL, 1 ).subTypeA & \
 					~( ST_CERT_CERTREQ | ST_CERT_REQ_CERT | \
 					   ST_CERT_REQ_REV | ST_CERT_CERT ) ) || \
-				paramInfo( certMgmtACL, 1 ).subTypeB != ST_NONE )
+				paramInfo( certMgmtACL, 1 ).subTypeB != ST_NONE || \
+				paramInfo( certMgmtACL, 1 ).subTypeC != ST_NONE )
 				{
 				DEBUG_DIAG(( "Certificate management ACLs inconsistent" ));
 				retIntError();
@@ -217,10 +218,12 @@ int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 			{
 			ENSURES( paramInfo( certMgmtACL, 0 ).subTypeA == ST_CTX_PKC && \
 					 paramInfo( certMgmtACL, 0 ).subTypeB == ST_NONE && \
+					 paramInfo( certMgmtACL, 0 ).subTypeC == ST_NONE && \
 					 paramInfo( certMgmtACL, 0 ).flags == ACL_FLAG_HIGH_STATE );
 			if( ( secParamInfo( certMgmtACL, 0 ).subTypeA & \
 					~( ST_CERT_CERT | ST_CERT_CERTCHAIN ) ) || \
 				secParamInfo( certMgmtACL, 0 ).subTypeB != ST_NONE || \
+				secParamInfo( certMgmtACL, 0 ).subTypeC != ST_NONE || \
 				secParamInfo( certMgmtACL, 0 ).flags != ACL_FLAG_HIGH_STATE )
 				{
 				DEBUG_DIAG(( "Certificate management ACLs inconsistent" ));

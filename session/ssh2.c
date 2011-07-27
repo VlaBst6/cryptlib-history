@@ -20,9 +20,7 @@
 #ifdef USE_SSH
 
 /* Tables mapping SSHv2 algorithm names to cryptlib algorithm IDs, in
-   preferred algorithm order.  See the comment in ssh2_svr.c for the reason
-   behind the difference in encryption algorithm tables for client and
-   server */
+   preferred algorithm order */
 
 static const ALGO_STRING_INFO FAR_BSS algoStringKeyexTbl[] = {
 #ifdef PREFER_ECC_SUITES
@@ -60,29 +58,69 @@ static const ALGO_STRING_INFO FAR_BSS algoStringPubkeyTbl[] = {
 	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
 	};
 
-static const ALGO_STRING_INFO FAR_BSS algoStringEncrTblClient[] = {
+static const ALGO_STRING_INFO FAR_BSS algoStringEncrTbl[] = {
 	{ "3des-cbc", 8, CRYPT_ALGO_3DES },
 	{ "aes128-cbc", 10, CRYPT_ALGO_AES },
 	{ "blowfish-cbc", 12, CRYPT_ALGO_BLOWFISH },
-	{ "cast128-cbc", 11, CRYPT_ALGO_CAST },
-	{ "idea-cbc", 8, CRYPT_ALGO_IDEA },
-	{ "arcfour", 7, CRYPT_ALGO_RC4 },
-	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
-	};
-static const ALGO_STRING_INFO FAR_BSS algoStringEncrTblServer[] = {
-	{ "3des-cbc", 8, CRYPT_ALGO_3DES },
-	{ "blowfish-cbc", 12, CRYPT_ALGO_BLOWFISH },
-	{ "cast128-cbc", 11, CRYPT_ALGO_CAST },
-	{ "idea-cbc", 8, CRYPT_ALGO_IDEA },
-	{ "arcfour", 7, CRYPT_ALGO_RC4 },
 	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
 	};
 
 static const ALGO_STRING_INFO FAR_BSS algoStringMACTbl[] = {
-	{ "hmac-sha1", 9, CRYPT_ALGO_HMAC_SHA },
+	{ "hmac-sha2-256", 13, CRYPT_ALGO_HMAC_SHA2 },
+	{ "hmac-sha1", 9, CRYPT_ALGO_HMAC_SHA1 },
 	{ "hmac-md5", 8, CRYPT_ALGO_HMAC_MD5 },
 	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
 	};
+
+/* A grand unified version of the above */
+
+static const ALGO_STRING_INFO FAR_BSS algoStringMapTbl[] = {
+	/* Signature algorithms */
+	{ "ssh-rsa", 7, CRYPT_ALGO_RSA },
+	{ "ssh-dss", 7, CRYPT_ALGO_DSA },
+	{ "ecdsa-sha2-nistp256", 19, CRYPT_ALGO_ECDSA,
+	  CRYPT_ALGO_ECDH, CRYPT_ALGO_SHA2 },
+
+	/* Encryption algorithms */
+	{ "3des-cbc", 8, CRYPT_ALGO_3DES },
+	{ "aes128-cbc", 10, CRYPT_ALGO_AES },
+	{ "blowfish-cbc", 12, CRYPT_ALGO_BLOWFISH },
+
+	/* Keyex algorithms */
+	{ "diffie-hellman-group-exchange-sha256", 36, CRYPT_PSEUDOALGO_DHE_ALT, 
+	  CRYPT_ALGO_DH, CRYPT_ALGO_SHA2 },
+	{ "diffie-hellman-group-exchange-sha1", 34, CRYPT_PSEUDOALGO_DHE, 
+	  CRYPT_ALGO_DH },
+	{ "diffie-hellman-group1-sha1", 26, CRYPT_ALGO_DH },
+	{ "ecdh-sha2-nistp256", 18, CRYPT_ALGO_ECDH,
+	  CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2 },
+
+	/* MAC algorithms */
+	{ "hmac-sha2-256", 13, CRYPT_ALGO_HMAC_SHA2 },
+	{ "hmac-sha1", 9, CRYPT_ALGO_HMAC_SHA1 },
+	{ "hmac-md5", 8, CRYPT_ALGO_HMAC_MD5 },
+	{ "password", 8, CRYPT_PSEUDOALGO_PASSWORD },
+
+	/* Miscellaneous */
+	{ "none", 4, CRYPT_PSEUDOALGO_COPR },
+	{ "none", 4, CRYPT_ALGO_LAST },	/* Catch-all */
+
+	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
+	};
+
+CHECK_RETVAL \
+int getAlgoStringInfo( OUT const ALGO_STRING_INFO **algoStringInfoPtrPtr,
+					   OUT_INT_Z int *noInfoEntries )
+	{
+	assert( isReadPtr( algoStringInfoPtrPtr, \
+					   sizeof( ALGO_STRING_INFO * ) ) );
+	assert( isWritePtr( noInfoEntries, sizeof( int ) ) );
+
+	*algoStringInfoPtrPtr = algoStringMapTbl;
+	*noInfoEntries = FAILSAFE_ARRAYSIZE( algoStringMapTbl, ALGO_STRING_INFO );
+
+	return( CRYPT_OK );
+	}
 
 /****************************************************************************
 *																			*
@@ -238,40 +276,42 @@ static int readAlgoStringEx( INOUT STREAM *stream,
 				currentAlgoIndex < FAILSAFE_ITERATIONS_MED;
 			 currentAlgoIndex++ )
 			{
-			matchedAlgoInfo = &algoIDInfo->algoInfo[ currentAlgoIndex ];
-			if( substringLen == matchedAlgoInfo->nameLen && \
-				!memcmp( matchedAlgoInfo->name, stringPtr + stringPos, 
-						 substringLen ) )
+			if( substringLen == algoIDInfo->algoInfo[ currentAlgoIndex ].nameLen && \
+				!memcmp( algoIDInfo->algoInfo[ currentAlgoIndex ].name, 
+						 stringPtr + stringPos, substringLen ) )
+				{
+				matchedAlgoInfo = &algoIDInfo->algoInfo[ currentAlgoIndex ];
 				break;
+				}
 			}
 		ENSURES( currentAlgoIndex < FAILSAFE_ITERATIONS_MED );
-		ENSURES( currentAlgoIndex < algoIDInfo->noAlgoInfoEntries && \
-				 matchedAlgoInfo != NULL );
-		if( matchedAlgoInfo->name == NULL )
+		ENSURES( currentAlgoIndex < algoIDInfo->noAlgoInfoEntries );
+		if( matchedAlgoInfo == NULL )
 			{
-			/* Unrecognised algorithm name, we can't do anything with it */
-			algoMatched = FALSE;
+			/* Unrecognised algorithm name, remember to warn the caller if 
+			   we have to match the first algorithm on the list, then move 
+			   on to the next name */
+			if( algoIDInfo->getAlgoType == GETALGO_FIRST_MATCH_WARN )
+				algoIDInfo->prefAlgoMismatch = TRUE;
+			continue;
+			}
+
+		/* If it's a cipher suite, make sure that the algorithms that it's 
+		   made up of are available */
+		if( isPseudoAlgo( matchedAlgoInfo->algo ) )
+			{
+			if( matchedAlgoInfo->checkCryptAlgo != CRYPT_ALGO_NONE && \
+				!algoAvailable( matchedAlgoInfo->checkCryptAlgo ) )
+				algoMatched = FALSE;
+			if( matchedAlgoInfo->checkHashAlgo != CRYPT_ALGO_NONE && \
+				!algoAvailable( matchedAlgoInfo->checkHashAlgo ) )
+				algoMatched = FALSE;
 			}
 		else
 			{
-			/* If it's a cipher suite, make sure that the algorithms that 
-			   it's made up of are available */
-			if( isPseudoAlgo( matchedAlgoInfo->algo ) )
-				{
-				if( matchedAlgoInfo->checkCryptAlgo != CRYPT_ALGO_NONE && \
-					!algoAvailable( matchedAlgoInfo->checkCryptAlgo ) )
-					algoMatched = FALSE;
-				if( matchedAlgoInfo->checkHashAlgo != CRYPT_ALGO_NONE && \
-					!algoAvailable( matchedAlgoInfo->checkHashAlgo ) )
-					algoMatched = FALSE;
-				}
-			else
-				{
-				/* It's a straight algorithm, make sure that it's 
-				   available */
-				if( !algoAvailable( matchedAlgoInfo->algo ) )
-					algoMatched = FALSE;
-				}
+			/* It's a straight algorithm, make sure that it's available */
+			if( !algoAvailable( matchedAlgoInfo->algo ) )
+				algoMatched = FALSE;
 			}
 
 		/* If this is an ECC algorithm and the use of ECC algorithms has 
@@ -284,9 +324,9 @@ static int readAlgoStringEx( INOUT STREAM *stream,
 			!algoIDInfo->allowECC )
 			algoMatched = FALSE;
 
-		/* If there's no match or the matched algorithm isn't available in 
-		   this build, remember to warn the caller if we have to match the 
-		   first algorithm on the list, then move on to the next name */
+		/* If the matched algorithm isn't available, remember to warn the 
+		   caller if we have to match the first algorithm on the list, then 
+		   move on to the next name */
 		if( !algoMatched )
 			{
 			if( algoIDInfo->getAlgoType == GETALGO_FIRST_MATCH_WARN )
@@ -459,30 +499,6 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeAlgoString( INOUT STREAM *stream, 
 					 IN_ALGO const CRYPT_ALGO_TYPE algo )
 	{
-	static const ALGO_STRING_INFO FAR_BSS algoStringMapTbl[] = {
-		{ "ssh-rsa", 7, CRYPT_ALGO_RSA },
-		{ "ssh-dss", 7, CRYPT_ALGO_DSA },
-#ifdef USE_ECDSA
-		{ "ecdsa-sha2-nistp256", 19, CRYPT_ALGO_ECDSA },
-#endif /* USE_ECDSA */
-		{ "3des-cbc", 8, CRYPT_ALGO_3DES },
-		{ "aes128-cbc", 10, CRYPT_ALGO_AES },
-		{ "blowfish-cbc", 12, CRYPT_ALGO_BLOWFISH },
-		{ "cast128-cbc", 11, CRYPT_ALGO_CAST },
-		{ "idea-cbc", 8, CRYPT_ALGO_IDEA },
-		{ "arcfour", 7, CRYPT_ALGO_RC4 },
-		{ "diffie-hellman-group-exchange-sha1", 34, CRYPT_PSEUDOALGO_DHE },
-		{ "diffie-hellman-group-exchange-sha256", 36, CRYPT_PSEUDOALGO_DHE_ALT },
-		{ "diffie-hellman-group1-sha1", 26, CRYPT_ALGO_DH },
-#ifdef USE_ECDH
-		{ "ecdh-sha2-nistp256", 18, CRYPT_ALGO_ECDH },
-#endif /* USE_ECDH */
-		{ "hmac-sha1", 9, CRYPT_ALGO_HMAC_SHA },
-		{ "hmac-md5", 8, CRYPT_ALGO_HMAC_MD5 },
-		{ "none", 4, CRYPT_PSEUDOALGO_COPR },
-		{ "none", 4, CRYPT_ALGO_LAST },	/* Catch-all */
-		{ NULL, 0, CRYPT_ALGO_LAST }, { NULL, 0, CRYPT_ALGO_LAST }
-		};
 	int i;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -557,7 +573,7 @@ int processHelloSSH( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Read the keyex algorithm information */
 	if( isServer )
 		{
-		int value;
+		int pkcAlgo;
 
 		setAlgoIDInfo( &algoIDInfo, algoStringKeyexTbl, 
 					   FAILSAFE_ARRAYSIZE( algoStringKeyexTbl, \
@@ -570,9 +586,9 @@ int processHelloSSH( INOUT SESSION_INFO *sessionInfoPtr,
 		   disable it (technically it is possible to mix ECDH with RSA but
 		   this is more likely an error than anything deliberate) */
 		status = krnlSendMessage( sessionInfoPtr->privateKey, 
-								  IMESSAGE_GETATTRIBUTE, &value,
+								  IMESSAGE_GETATTRIBUTE, &pkcAlgo,
 								  CRYPT_CTXINFO_ALGO );
-		if( cryptStatusError( status ) || !isEccAlgo( value ) )
+		if( cryptStatusError( status ) || !isEccAlgo( pkcAlgo ) )
 			algoIDInfo.allowECC = FALSE;
 		}
 	else
@@ -646,22 +662,11 @@ int processHelloSSH( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* Read the encryption and MAC algorithm information */
-	if( isServer )
-		{
-		status = readAlgoStringPair( &stream, algoStringEncrTblServer,
-							FAILSAFE_ARRAYSIZE( algoStringEncrTblServer, \
+	status = readAlgoStringPair( &stream, algoStringEncrTbl,
+							FAILSAFE_ARRAYSIZE( algoStringEncrTbl, \
 												ALGO_STRING_INFO ),
 							&sessionInfoPtr->cryptAlgo, isServer, FALSE, 
 							SESSION_ERRINFO );
-		}
-	else
-		{
-		status = readAlgoStringPair( &stream, algoStringEncrTblClient,
-							FAILSAFE_ARRAYSIZE( algoStringEncrTblClient, \
-												ALGO_STRING_INFO ),
-							&sessionInfoPtr->cryptAlgo, isServer, FALSE, 
-							SESSION_ERRINFO );
-		}
 	if( cryptStatusOK( status ) )
 		{
 		status = readAlgoStringPair( &stream, algoStringMACTbl,

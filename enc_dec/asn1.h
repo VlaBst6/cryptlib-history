@@ -189,6 +189,7 @@ enum { BER_ID_RESERVED, BER_ID_BOOLEAN, BER_ID_INTEGER, BER_ID_BITSTRING,
 #define writeCtag0Indef( stream )		swrite( stream, BER_CTAG0_INDEF, 2 )
 #define writeEndIndef( stream )			swrite( stream, BER_END_INDEF, 2 )
 
+#define sizeofEOC()						2
 RETVAL_RANGE( MAX_ERROR, TRUE ) STDC_NONNULL_ARG( ( 1 ) ) \
 int checkEOC( INOUT STREAM *stream );
 
@@ -561,14 +562,23 @@ int readGenericHoleI( INOUT STREAM *stream,
 					  IN_LENGTH_SHORT const int minLength, 
 					  IN_TAG const int tag );
 
-/* Read a generic object header, used by other ASN.1 routines like 
-   getXXXObjectLength() to find the length of an object being read as a 
-   blob */
+/* Read a generic object header, used to find the length of an object being
+   read as a blob */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readGenericObjectHeader( INOUT STREAM *stream, 
 							 OUT_LENGTH_INDEF long *length, 
 							 const BOOLEAN isLongObject );
+
+/* Read an arbitrary-length constructed object's data into a memory buffer.  
+   This is the arbitrary-length form of readRawObject() */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int readRawObjectAlloc( INOUT STREAM *stream, 
+						OUT_BUFFER_ALLOC_OPT( *length ) void **objectPtrPtr, 
+						OUT_LENGTH_Z int *objectLengthPtr,
+						IN_LENGTH_SHORT_MIN( 16 ) const int minLength, 
+						IN_LENGTH_SHORT const int maxLength );
 
 /* Determine the length of an ASN.1-encoded object (this just reads the
    outer length if present, but will burrow down into the object if necessary

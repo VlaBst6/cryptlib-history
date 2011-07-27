@@ -54,28 +54,27 @@
 
 #define ST_KEYSET_FILE			SUBTYPE_KEYSET_FILE
 #define ST_KEYSET_FILE_PARTIAL	SUBTYPE_KEYSET_FILE_PARTIAL
+#define ST_KEYSET_FILE_RO		SUBTYPE_KEYSET_FILE_READONLY
 #define ST_KEYSET_DBMS			SUBTYPE_KEYSET_DBMS
 #define ST_KEYSET_DBMS_STORE	SUBTYPE_KEYSET_DBMS_STORE
 #define ST_KEYSET_HTTP			SUBTYPE_KEYSET_HTTP
 #define ST_KEYSET_LDAP			SUBTYPE_KEYSET_LDAP
-#define ST_KEYSET_ANY			( ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | \
-								  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | \
-								  ST_KEYSET_HTTP | ST_KEYSET_LDAP )
+#define ST_KEYSET_ANY			( ST_KEYSET_FILE | SUBTYPE_KEYSET_FILE_PARTIAL | \
+								  ST_KEYSET_FILE_RO | ST_KEYSET_DBMS | \
+								  ST_KEYSET_DBMS_STORE | ST_KEYSET_HTTP | \
+								  ST_KEYSET_LDAP )
 
 #define ST_ENV_ENV				SUBTYPE_ENV_ENV
 #define ST_ENV_ENV_PGP			SUBTYPE_ENV_ENV_PGP
 #define ST_ENV_DEENV			SUBTYPE_ENV_DEENV
-#define ST_ENV_ANY				( SUBTYPE_ENV_ENV | SUBTYPE_ENV_ENV_PGP | \
-								  SUBTYPE_ENV_DEENV )
+#define ST_ENV_ANY				( ST_ENV_ENV | ST_ENV_ENV_PGP | ST_ENV_DEENV )
 
 #define ST_DEV_SYSTEM			SUBTYPE_DEV_SYSTEM
-#define ST_DEV_FORT				SUBTYPE_DEV_FORTEZZA
 #define ST_DEV_P11				SUBTYPE_DEV_PKCS11
 #define ST_DEV_CAPI				SUBTYPE_DEV_CRYPTOAPI
 #define ST_DEV_HW				SUBTYPE_DEV_HARDWARE
-#define ST_DEV_ANY_STD			( SUBTYPE_DEV_FORTEZZA | SUBTYPE_DEV_PKCS11 | \
-								  SUBTYPE_DEV_CRYPTOAPI | SUBTYPE_DEV_HARDWARE )
-#define ST_DEV_ANY				( ST_DEV_ANY_STD | SUBTYPE_DEV_SYSTEM )
+#define ST_DEV_ANY_STD			( ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW )
+#define ST_DEV_ANY				( ST_DEV_ANY_STD | ST_DEV_SYSTEM )
 
 #define ST_SESS_SSH				SUBTYPE_SESSION_SSH
 #define ST_SESS_SSH_SVR			SUBTYPE_SESSION_SSH_SVR
@@ -114,15 +113,14 @@
 #define ST_USER_NORMAL			SUBTYPE_USER_NORMAL
 #define ST_USER_SO				SUBTYPE_USER_SO
 #define ST_USER_CA				SUBTYPE_USER_CA
-#define ST_USER_ANY				( SUBTYPE_USER_NORMAL | SUBTYPE_USER_SO | \
-								  SUBTYPE_USER_CA )
+#define ST_USER_ANY				( ST_USER_NORMAL | ST_USER_SO | ST_USER_CA )
 
 /* Subtype values that allow access for any object subtype and for no
    object subtypes */
 
-#define ST_ANY_A				( ST_CTX_ANY | ST_CERT_ANY | \
-								  ST_KEYSET_ANY | ST_DEV_ANY )
-#define ST_ANY_B				( ST_ENV_ANY | ST_SESS_ANY | ST_USER_ANY )
+#define ST_ANY_A				( ST_CTX_ANY | ST_CERT_ANY )
+#define ST_ANY_B				( ST_ENV_ANY | ST_KEYSET_ANY | ST_DEV_ANY )
+#define ST_ANY_C				( ST_SESS_ANY | ST_USER_ANY )
 #define ST_NONE					0
 
 /****************************************************************************
@@ -355,7 +353,7 @@ typedef struct {
 	/* Attribute type checking information: The attribute value type and
 	   object subtypes for which the attribute is valid */
 	const ATTRIBUTE_VALUE_TYPE valueType;/* Attribute value type */
-	const OBJECT_SUBTYPE subTypeA, subTypeB;
+	const OBJECT_SUBTYPE subTypeA, subTypeB, subTypeC;
 									/* Object subtypes for which attr.valid */
 
 	/* Access information: The type of access and object states that are
@@ -384,119 +382,119 @@ typedef struct {
 
 #ifndef NDEBUG
   /* Standard ACL entries */
-  #define MKACL_B( attribute, subTypeA, subTypeB, access, routing ) \
-			{ attribute, ATTRIBUTE_VALUE_BOOLEAN, subTypeA, subTypeB, access, \
+  #define MKACL_B( attribute, subTypeA, subTypeB, subTypeC, access, routing ) \
+			{ attribute, ATTRIBUTE_VALUE_BOOLEAN, subTypeA, subTypeB, subTypeC, access, \
 			  0, routing, FALSE, TRUE, NULL }
-  #define MKACL_N( attribute, subTypeA, subTypeB, access, routing, range ) \
-			{ attribute, ATTRIBUTE_VALUE_NUMERIC, subTypeA, subTypeB, access, \
+  #define MKACL_N( attribute, subTypeA, subTypeB, subTypeC, access, routing, range ) \
+			{ attribute, ATTRIBUTE_VALUE_NUMERIC, subTypeA, subTypeB, subTypeC, access, \
 			  0, routing, range, NULL }
-  #define MKACL_S( attribute, subTypeA, subTypeB, access, routing, range ) \
-			{ attribute, ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, access, \
+  #define MKACL_S( attribute, subTypeA, subTypeB, subTypeC, access, routing, range ) \
+			{ attribute, ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, subTypeC, access, \
 			  0, routing, range, NULL }
-  #define MKACL_WCS( attribute, subTypeA, subTypeB, access, routing, range ) \
-			{ attribute, ATTRIBUTE_VALUE_WCSTRING, subTypeA, subTypeB, access, \
+  #define MKACL_WCS( attribute, subTypeA, subTypeB, subTypeC, access, routing, range ) \
+			{ attribute, ATTRIBUTE_VALUE_WCSTRING, subTypeA, subTypeB, subTypeC, access, \
 			  0, routing, range, NULL }
-  #define MKACL_O( attribute, subTypeA, subTypeB, access, routing, type ) \
-			{ attribute, ATTRIBUTE_VALUE_OBJECT, subTypeA, subTypeB, access, \
+  #define MKACL_O( attribute, subTypeA, subTypeB, subTypeC, access, routing, type ) \
+			{ attribute, ATTRIBUTE_VALUE_OBJECT, subTypeA, subTypeB, subTypeC, access, \
 			  0, routing, 0, 0, type }
-  #define MKACL_T( attribute, subTypeA, subTypeB, access, routing ) \
-			{ attribute, ATTRIBUTE_VALUE_TIME, subTypeA, subTypeB, access, \
+  #define MKACL_T( attribute, subTypeA, subTypeB, subTypeC, access, routing ) \
+			{ attribute, ATTRIBUTE_VALUE_TIME, subTypeA, subTypeB, subTypeC, access, \
 			  0, routing, 0, 0, NULL }
-  #define MKACL_X( attribute, subTypeA, subTypeB, access, routing, subACL ) \
-			{ attribute, ATTRIBUTE_VALUE_SPECIAL, subTypeA, subTypeB, access, \
+  #define MKACL_X( attribute, subTypeA, subTypeB, subTypeC, access, routing, subACL ) \
+			{ attribute, ATTRIBUTE_VALUE_SPECIAL, subTypeA, subTypeB, subTypeC, access, \
 			  0, routing, RANGE_SUBTYPED, subACL }
 
   /* Extended types */
-  #define MKACL_B_EX( attribute, subTypeA, subTypeB, access, flags, routing ) \
-			{ attribute, ATTRIBUTE_VALUE_BOOLEAN, subTypeA, subTypeB, access, \
+  #define MKACL_B_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing ) \
+			{ attribute, ATTRIBUTE_VALUE_BOOLEAN, subTypeA, subTypeB, subTypeC, access, \
 			  flags, routing, FALSE, TRUE, NULL }
-  #define MKACL_N_EX( attribute, subTypeA, subTypeB, access, flags, routing, range ) \
-			{ attribute, ATTRIBUTE_VALUE_NUMERIC, subTypeA, subTypeB, access, \
+  #define MKACL_N_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing, range ) \
+			{ attribute, ATTRIBUTE_VALUE_NUMERIC, subTypeA, subTypeB, subTypeC, access, \
 			  flags, routing, range, NULL }
-  #define MKACL_S_EX( attribute, subTypeA, subTypeB, access, flags, routing, range ) \
-			{ attribute, ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, access, \
+  #define MKACL_S_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing, range ) \
+			{ attribute, ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, subTypeC, access, \
 			  flags, routing, range, NULL }
-  #define MKACL_O_EX( attribute, subTypeA, subTypeB, access, flags, routing, type ) \
-			{ attribute, ATTRIBUTE_VALUE_OBJECT, subTypeA, subTypeB, access, \
+  #define MKACL_O_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing, type ) \
+			{ attribute, ATTRIBUTE_VALUE_OBJECT, subTypeA, subTypeB, subTypeC, access, \
 			  flags, routing, 0, 0, type }
-  #define MKACL_X_EX( attribute, subTypeA, subTypeB, access, flags, routing, subACL ) \
-			{ attribute, ATTRIBUTE_VALUE_SPECIAL, subTypeA, subTypeB, access, \
+  #define MKACL_X_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing, subACL ) \
+			{ attribute, ATTRIBUTE_VALUE_SPECIAL, subTypeA, subTypeB, subTypeC, access, \
 			  flags, routing, RANGE_SUBTYPED, subACL }
 
   /* General-purpose ACL macros */
-  #define MKACL( attribute, valueType, subTypeA, subTypeB, access, flags, routing, range ) \
-			{ attribute, valueType, subTypeA, subTypeB, access, flags, \
+  #define MKACL( attribute, valueType, subTypeA, subTypeB, subTypeC, access, flags, routing, range ) \
+			{ attribute, valueType, subTypeA, subTypeB, subTypeC, access, flags, \
 			  routing, range, NULL }
-  #define MKACL_EX( attribute, valueType, subTypeA, subTypeB, access, flags, routing, range, allowed ) \
-			{ attribute, valueType, subTypeA, subTypeB, access, flags, \
+  #define MKACL_EX( attribute, valueType, subTypeA, subTypeB, subTypeC, access, flags, routing, range, allowed ) \
+			{ attribute, valueType, subTypeA, subTypeB, subTypeC, access, flags, \
 			  routing, range, allowed }
 
   /* End-of-ACL canary */
   #define MKACL_END() \
-			{ CRYPT_ERROR, ATTRIBUTE_VALUE_NONE, 0, 0, ACCESS_xxx_xxx, \
+			{ CRYPT_ERROR, ATTRIBUTE_VALUE_NONE, 0, 0, 0, ACCESS_xxx_xxx, \
 			  0, 0, NULL, 0, 0, NULL }
 
   /* End-of-ACL marker, used to terminate variable-length sub-ACL lists.  The
-     ST_ANY_A/B match ensures that it matches any object types */
+     ST_ANY_A/B/C match ensures that it matches any object types */
   #define MKACL_END_SUBACL() \
-			{ CRYPT_ERROR, ATTRIBUTE_VALUE_NONE, ST_ANY_A, ST_ANY_B, ACCESS_xxx_xxx, \
+			{ CRYPT_ERROR, ATTRIBUTE_VALUE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, ACCESS_xxx_xxx, \
 			  0, 0, NULL, 0, 0, NULL }
 #else
   /* Standard ACL entries */
-  #define MKACL_B( attribute, subTypeA, subTypeB, access, routing ) \
-			{ ATTRIBUTE_VALUE_BOOLEAN, subTypeA, subTypeB, access, 0, \
+  #define MKACL_B( attribute, subTypeA, subTypeB, subTypeC, access, routing ) \
+			{ ATTRIBUTE_VALUE_BOOLEAN, subTypeA, subTypeB, subTypeC, access, 0, \
 			  routing, FALSE, TRUE, NULL }
-  #define MKACL_N( attribute, subTypeA, subTypeB, access, routing, range ) \
-			{ ATTRIBUTE_VALUE_NUMERIC, subTypeA, subTypeB, access, 0, \
+  #define MKACL_N( attribute, subTypeA, subTypeB, subTypeC, access, routing, range ) \
+			{ ATTRIBUTE_VALUE_NUMERIC, subTypeA, subTypeB, subTypeC, access, 0, \
 			  routing, range, NULL }
-  #define MKACL_S( attribute, subTypeA, subTypeB, access, routing, range ) \
-			{ ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, access, 0, \
+  #define MKACL_S( attribute, subTypeA, subTypeB, subTypeC, access, routing, range ) \
+			{ ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, subTypeC, access, 0, \
 			  routing, range, NULL }
-  #define MKACL_WCS( attribute, subTypeA, subTypeB, access, routing, range ) \
-			{ ATTRIBUTE_VALUE_WCSTRING, subTypeA, subTypeB, access, 0, \
+  #define MKACL_WCS( attribute, subTypeA, subTypeB, subTypeC, access, routing, range ) \
+			{ ATTRIBUTE_VALUE_WCSTRING, subTypeA, subTypeB, subTypeC, access, 0, \
 			  routing, range, NULL }
-  #define MKACL_O( attribute, subTypeA, subTypeB, access, routing, type ) \
-			{ ATTRIBUTE_VALUE_OBJECT, subTypeA, subTypeB, access, 0, \
+  #define MKACL_O( attribute, subTypeA, subTypeB, subTypeC, access, routing, type ) \
+			{ ATTRIBUTE_VALUE_OBJECT, subTypeA, subTypeB, subTypeC, access, 0, \
 			  routing, 0, 0, type }
-  #define MKACL_T( attribute, subTypeA, subTypeB, access, routing ) \
-			{ ATTRIBUTE_VALUE_TIME, subTypeA, subTypeB, access, 0, \
+  #define MKACL_T( attribute, subTypeA, subTypeB, subTypeC, access, routing ) \
+			{ ATTRIBUTE_VALUE_TIME, subTypeA, subTypeB, subTypeC, access, 0, \
 			  routing, 0, 0, NULL }
-  #define MKACL_X( attribute, subTypeA, subTypeB, access, routing, subACL ) \
-			{ ATTRIBUTE_VALUE_SPECIAL, subTypeA, subTypeB, access, 0, \
+  #define MKACL_X( attribute, subTypeA, subTypeB, subTypeC, access, routing, subACL ) \
+			{ ATTRIBUTE_VALUE_SPECIAL, subTypeA, subTypeB, subTypeC, access, 0, \
 			  routing, RANGE_SUBTYPED, subACL }
 
   /* Extended types */
-  #define MKACL_B_EX( attribute, subTypeA, subTypeB, access, flags, routing ) \
-			{ ATTRIBUTE_VALUE_BOOLEAN, subTypeA, subTypeB, access, flags, \
+  #define MKACL_B_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing ) \
+			{ ATTRIBUTE_VALUE_BOOLEAN, subTypeA, subTypeB, subTypeC, access, flags, \
 			  routing, FALSE, TRUE, NULL }
-  #define MKACL_N_EX( attribute, subTypeA, subTypeB, access, flags, routing, range ) \
-			{ ATTRIBUTE_VALUE_NUMERIC, subTypeA, subTypeB, access, flags, \
+  #define MKACL_N_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing, range ) \
+			{ ATTRIBUTE_VALUE_NUMERIC, subTypeA, subTypeB, subTypeC, access, flags, \
 			  routing, range, NULL }
-  #define MKACL_S_EX( attribute, subTypeA, subTypeB, access, flags, routing, range ) \
-			{ ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, access, flags, \
+  #define MKACL_S_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing, range ) \
+			{ ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, subTypeC, access, flags, \
 			  routing, range, NULL }
-  #define MKACL_O_EX( attribute, subTypeA, subTypeB, access, flags, routing, type ) \
-			{ ATTRIBUTE_VALUE_OBJECT, subTypeA, subTypeB, access, flags, \
+  #define MKACL_O_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing, type ) \
+			{ ATTRIBUTE_VALUE_OBJECT, subTypeA, subTypeB, subTypeC, access, flags, \
 			  routing, 0, 0, type }
-  #define MKACL_X_EX( attribute, subTypeA, subTypeB, access, flags, routing, subACL ) \
-			{ ATTRIBUTE_VALUE_SPECIAL, subTypeA, subTypeB, access, flags, \
+  #define MKACL_X_EX( attribute, subTypeA, subTypeB, subTypeC, access, flags, routing, subACL ) \
+			{ ATTRIBUTE_VALUE_SPECIAL, subTypeA, subTypeB, subTypeC, access, flags, \
 			  routing, RANGE_SUBTYPED, subACL }
 
   /* General-purpose ACL macros */
-  #define MKACL( attribute, valueType, subTypeA, subTypeB, access, flags, routing, range ) \
-			{ valueType, subTypeA, subTypeB, access, flags, routing, range, NULL }
-  #define MKACL_EX( attribute, valueType, subTypeA, subTypeB, access, flags, routing, range, allowed ) \
-			{ valueType, subTypeA, subTypeB, access, flags, routing, range, allowed }
+  #define MKACL( attribute, valueType, subTypeA, subTypeB, subTypeC, access, flags, routing, range ) \
+			{ valueType, subTypeA, subTypeB, subTypeC, access, flags, routing, range, NULL }
+  #define MKACL_EX( attribute, valueType, subTypeA, subTypeB, subTypeC, access, flags, routing, range, allowed ) \
+			{ valueType, subTypeA, subTypeB, subTypeC, access, flags, routing, range, allowed }
 
   /* End-of-ACL canary */
   #define MKACL_END() \
-			{ ATTRIBUTE_VALUE_NONE, 0, 0, ACCESS_xxx_xxx, \
+			{ ATTRIBUTE_VALUE_NONE, 0, 0, 0, ACCESS_xxx_xxx, \
 			  0, 0, NULL, 0, 0, NULL }
 
   /* End-of-ACL marker, used to terminate variable-length sub-ACL lists.  The
-     ST_ANY_A/B match ensures that it matches any object types */
+     ST_ANY_A/B/C match ensures that it matches any object types */
   #define MKACL_END_SUBACL() \
-			{ ATTRIBUTE_VALUE_NONE, ST_ANY_A, ST_ANY_B, ACCESS_xxx_xxx, \
+			{ ATTRIBUTE_VALUE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, ACCESS_xxx_xxx, \
 			  0, 0, NULL, 0, 0, NULL }
 #endif /* NDEBUG */
 
@@ -519,7 +517,7 @@ typedef struct {
 	const CRYPT_ATTRIBUTE_TYPE attribute;/* Attribute */
 #endif /* !NDEBUG */
 	const ATTRIBUTE_VALUE_TYPE valueType;/* Attribute value type */
-	const OBJECT_SUBTYPE subTypeA, subTypeB;
+	const OBJECT_SUBTYPE subTypeA, subTypeB, subTypeC;
 	const int access;				/* Permitted access type */
 	const int flags;				/* Attribute flags */
 	const long routingTarget;		/* Target type if routable */
@@ -533,12 +531,12 @@ typedef struct {
 	} ATTRIBUTE_ACL_ALT;
 
 #ifndef NDEBUG
-  #define MKACL_S_ALT( attribute, subTypeA, subTypeB, access, routing, range ) \
-			{ attribute, ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, access, \
+  #define MKACL_S_ALT( attribute, subTypeA, subTypeB, subTypeC, access, routing, range ) \
+			{ attribute, ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, subTypeC, access, \
 			  0, routing, range, NULL }
 #else
-  #define MKACL_S_ALT( attribute, subTypeA, subTypeB, access, routing, range ) \
-			{ ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, access, 0, \
+  #define MKACL_S_ALT( attribute, subTypeA, subTypeB, subTypeC, access, routing, range ) \
+			{ ATTRIBUTE_VALUE_STRING, subTypeA, subTypeB, subTypeC, access, 0, \
 			  routing, range, NULL, attribute }
 #endif /* !NDEBUG */
 
@@ -554,18 +552,18 @@ typedef struct {
 	/* The item type */
 	const KEYMGMT_ITEM_TYPE itemType;/* Key management item type */
 
-	/* Valid keyset types and access types for this item type.  This is a
-	   matrix giving keyset types for which read/write/delete (R/W/D),
+	/* Valid keyset types and access types for this item type.  This is a 
+	   matrix giving keyset types for which read/write/delete (R/W/D), 
 	   getFirst/Next (FN), and query (Q) access are valid */
-	const OBJECT_SUBTYPE keysetR_subTypeA, keysetR_subTypeB;
-	const OBJECT_SUBTYPE keysetW_subTypeA, keysetW_subTypeB;
-	const OBJECT_SUBTYPE keysetD_subTypeA, keysetD_subTypeB;
-	const OBJECT_SUBTYPE keysetFN_subTypeA, keysetFN_subTypeB;
-	const OBJECT_SUBTYPE keysetQ_subTypeA, keysetQ_subTypeB;
+	const OBJECT_SUBTYPE keysetR_subTypeA, keysetR_subTypeB, keysetR_subTypeC;
+	const OBJECT_SUBTYPE keysetW_subTypeA, keysetW_subTypeB, keysetW_subTypeC;
+	const OBJECT_SUBTYPE keysetD_subTypeA, keysetD_subTypeB, keysetD_subTypeC;
+	const OBJECT_SUBTYPE keysetFN_subTypeA, keysetFN_subTypeB, keysetFN_subTypeC;
+	const OBJECT_SUBTYPE keysetQ_subTypeA, keysetQ_subTypeB, keysetQ_subTypeC;
 
 	/* Permitted object types, key IDs, and key management flags for this 
 	   item type */
-	const OBJECT_SUBTYPE objSubTypeA, objSubTypeB;
+	const OBJECT_SUBTYPE objSubTypeA, objSubTypeB, objSubTypeC;
 									/* Permitted object types for item */
 	const CRYPT_KEYID_TYPE *allowedKeyIDs;	/* Permitted key IDs */
 	const int allowedFlags;			/* Permitted key management flags */
@@ -586,8 +584,10 @@ typedef struct {
 	   public key but does matter if we want a specific type of cert.  If we
 	   want a specific cert type, we specify the subset of keysets that this
 	   applies to and the cert type(s) here */
-	const OBJECT_SUBTYPE specificKeysetSubTypeA, specificKeysetSubTypeB;
-	const OBJECT_SUBTYPE specificObjSubTypeA, specificObjSubTypeB;
+	const OBJECT_SUBTYPE specificKeysetSubTypeA, specificKeysetSubTypeB, \
+						 specificKeysetSubTypeC;
+	const OBJECT_SUBTYPE specificObjSubTypeA, specificObjSubTypeB, \
+						 specificObjSubTypeC;
 	} KEYMGMT_ACL;
 
 /* Macros to set up key management ACLs.  The basic form treats the RWD and
@@ -597,26 +597,38 @@ typedef struct {
 
 #define MK_KEYACL( itemType, keysetRWDSubType, keysetFNQSubType, \
 				   objectSubType, keyIDs, flags, idUseFlags, pwUseFlags ) \
-			{ itemType, keysetRWDSubType, ST_NONE, keysetRWDSubType, ST_NONE, \
-			  keysetRWDSubType, ST_NONE, keysetFNQSubType, ST_NONE, \
-			  keysetFNQSubType, ST_NONE, objectSubType, ST_NONE, \
-			  keyIDs, flags, idUseFlags, pwUseFlags, ST_NONE, ST_NONE }
+			{ itemType, ST_NONE, keysetRWDSubType, ST_NONE, \
+			  ST_NONE, keysetRWDSubType, ST_NONE, \
+			  ST_NONE, keysetRWDSubType, ST_NONE, \
+			  ST_NONE, keysetFNQSubType, ST_NONE, \
+			  ST_NONE, keysetFNQSubType, ST_NONE, \
+			  objectSubType, ST_NONE, ST_NONE, \
+			  keyIDs, flags, idUseFlags, pwUseFlags, \
+			  ST_NONE, ST_NONE, ST_NONE, ST_NONE, ST_NONE, ST_NONE }
 #define MK_KEYACL_RWD( itemType, keysetR_SubType, keysetW_SubType, keysetD_SubType, \
   					   keysetFN_SubType, keysetQ_SubType, objectSubType, keyIDs, \
 					   flags, idUseFlags, pwUseFlags ) \
-			{ itemType, keysetR_SubType, ST_NONE, keysetW_SubType, ST_NONE, \
-			  keysetD_SubType, ST_NONE, keysetFN_SubType, ST_NONE, \
-			  keysetQ_SubType, ST_NONE, objectSubType, ST_NONE, \
-			  keyIDs, flags, idUseFlags, pwUseFlags, ST_NONE, ST_NONE }
+			{ itemType, ST_NONE, keysetR_SubType, ST_NONE, \
+			  ST_NONE, keysetW_SubType, ST_NONE, \
+			  ST_NONE, keysetD_SubType, ST_NONE, \
+			  ST_NONE, keysetFN_SubType, ST_NONE, \
+			  ST_NONE, keysetQ_SubType, ST_NONE, \
+			  objectSubType, ST_NONE, ST_NONE, \
+			  keyIDs, flags, idUseFlags, pwUseFlags, \
+			  ST_NONE, ST_NONE, ST_NONE, ST_NONE, ST_NONE, ST_NONE }
 #define MK_KEYACL_EX( itemType, keysetR_SubType, keysetW_SubType, keysetD_SubType, \
   					  keysetFN_SubType, keysetQ_SubType, objectSubType, keyIDs, \
 					  flags, idUseFlags, pwUseFlags, specificKeysetType, \
 					  specificObjectType ) \
-			{ itemType, keysetR_SubType, ST_NONE, keysetW_SubType, ST_NONE, \
-			  keysetD_SubType, ST_NONE, keysetFN_SubType, ST_NONE, \
-			  keysetQ_SubType, ST_NONE, objectSubType, ST_NONE, \
-			  keyIDs, flags, idUseFlags, pwUseFlags, specificKeysetType, ST_NONE, \
-			  specificObjectType, ST_NONE }
+			{ itemType, ST_NONE, keysetR_SubType, ST_NONE, \
+			  ST_NONE, keysetW_SubType, ST_NONE, \
+			  ST_NONE, keysetD_SubType, ST_NONE, \
+			  ST_NONE, keysetFN_SubType, ST_NONE, \
+			  ST_NONE, keysetQ_SubType, ST_NONE, \
+			  objectSubType, ST_NONE, ST_NONE, \
+			  keyIDs, flags, idUseFlags, pwUseFlags, \
+			  ST_NONE, specificKeysetType, ST_NONE, \
+			  specificObjectType, ST_NONE, ST_NONE }
 
 /****************************************************************************
 *																			*
@@ -647,7 +659,7 @@ typedef enum {
 typedef struct {
 	const PARAM_VALUE_TYPE valueType;/* Parameter value type */
 	const int lowRange, highRange;	/* Min/max value or length */
-	const OBJECT_SUBTYPE subTypeA, subTypeB;
+	const OBJECT_SUBTYPE subTypeA, subTypeB, subTypeC;
 									/* Object subtypes for which param.valid */
 	const int flags;				/* ACL flags */
 	} PARAM_ACL;
@@ -655,24 +667,24 @@ typedef struct {
 /* Macros to set up parameter ACLs */
 
 #define MKACP_B() \
-			{ PARAM_VALUE_BOOLEAN, 0, 0, 0, 0, 0 }
+			{ PARAM_VALUE_BOOLEAN, 0, 0, 0, 0, 0, 0 }
 #define MKACP_N( min, max ) \
-			{ PARAM_VALUE_NUMERIC, min, max, 0, 0, 0 }
+			{ PARAM_VALUE_NUMERIC, min, max, 0, 0, 0, 0 }
 #define MKACP_S( minLen, maxLen ) \
-			{ PARAM_VALUE_STRING, minLen, maxLen, 0, 0, 0 }
+			{ PARAM_VALUE_STRING, minLen, maxLen, 0, 0, 0, 0 }
 #define MKACP_S_OPT( minLen, maxLen ) \
-			{ PARAM_VALUE_STRING_OPT, minLen, maxLen, 0, 0, 0 }
+			{ PARAM_VALUE_STRING_OPT, minLen, maxLen, 0, 0, 0, 0 }
 #define MKACP_S_NONE() \
-			{ PARAM_VALUE_STRING_NONE, 0, 0, 0, 0, 0 }
+			{ PARAM_VALUE_STRING_NONE, 0, 0, 0, 0, 0, 0 }
 #define MKACP_O( subTypeA, flags ) \
-			{ PARAM_VALUE_OBJECT, 0, 0, subTypeA, ST_NONE, flags }
+			{ PARAM_VALUE_OBJECT, 0, 0, subTypeA, ST_NONE, ST_NONE, flags }
 #define MKACP_UNUSED() \
-			{ PARAM_VALUE_UNUSED, 0, 0, 0, 0, 0 }
+			{ PARAM_VALUE_UNUSED, 0, 0, 0, 0, 0, 0 }
 
 /* End-of-mechanism-ACL marker */
 
 #define MKACP_END() \
-			{ PARAM_VALUE_NONE, 0, 0, 0, 0 }
+			{ PARAM_VALUE_NONE, 0, 0, 0, 0, 0 }
 
 /* Macro to access the parameter ACL information for a given parameter in a
    list of parameter ACLs */
@@ -710,6 +722,8 @@ typedef struct {
 			( ( paramACL.subTypeA & objectST( objectHandle ) ) == \
 									objectST( objectHandle ) || \
 			  ( paramACL.subTypeB & objectST( objectHandle ) ) == \
+									objectST( objectHandle ) || \
+			  ( paramACL.subTypeC & objectST( objectHandle ) ) == \
 									objectST( objectHandle ) ) && \
 			checkObjectState( paramACL.flags, objectHandle ) ) )
 
@@ -723,7 +737,7 @@ typedef struct {
    composite entry in various ACLs that apply to objects */
 
 typedef struct {
-	const OBJECT_SUBTYPE subTypeA, subTypeB;
+	const OBJECT_SUBTYPE subTypeA, subTypeB, subTypeC;
 									/* Object subtypes for which attr.valid */
 	const int flags;				/* ACL flags */
 	} OBJECT_ACL;
@@ -777,13 +791,13 @@ typedef struct {
 /* Macros to set up compare ACLs */
 
 #define MK_CMPACL_S( objSTA, lowRange, highRange ) \
-			{ objSTA, ST_NONE, ACL_FLAG_HIGH_STATE }, \
+			{ objSTA, ST_NONE, ST_NONE, ACL_FLAG_HIGH_STATE }, \
 			{ MKACP_S( lowRange, highRange ) }
 #define MK_CMPACL_O( objSTA, pObjSTA ) \
-			{ objSTA, ST_NONE, ACL_FLAG_HIGH_STATE }, \
+			{ objSTA, ST_NONE, ST_NONE, ACL_FLAG_HIGH_STATE }, \
 			{ MKACP_O( pObjSTA, ACL_FLAG_HIGH_STATE ) }
 #define MK_CMPACL_END() \
-			{ ST_NONE, ST_NONE, ACL_FLAG_NONE }, \
+			{ ST_NONE, ST_NONE, ST_NONE, ACL_FLAG_NONE }, \
 			{ MKACP_END() }
 
 /* Check-message ACL entry.  Most checks are for the same capability in a
@@ -819,39 +833,39 @@ typedef struct CAA {
    the macro */
 
 #define MK_CHKACL( action, objSTA ) \
-			action, { objSTA, ST_NONE, ACL_FLAG_HIGH_STATE }, NULL
-#define MK_CHKACL_EX( action, objSTA, flags ) \
-			action, { objSTA, ST_NONE, flags }
+			action, { objSTA, ST_NONE, ST_NONE, ACL_FLAG_HIGH_STATE }, NULL
+#define MK_CHKACL_EX( action, objSTA, objSTB, flags ) \
+			action, { objSTA, objSTB, ST_NONE, flags }
 #define MK_CHKACL_EXT( action, objSTA, extACL ) \
-			action, { objSTA, ST_NONE, ACL_FLAG_HIGH_STATE }, extACL
+			action, { objSTA, ST_NONE, ST_NONE, ACL_FLAG_HIGH_STATE }, extACL
 #define MK_CHKACL_END() \
-			MESSAGE_NONE, { ST_NONE, ST_NONE, ACL_FLAG_NONE }
+			MESSAGE_NONE, { ST_NONE, ST_NONE, ST_NONE, ACL_FLAG_NONE }
 
 #define MK_CHKACL_ALT( depObj, depObjSTA, fdCheck ) \
-			depObj, { depObjSTA, ST_NONE, ACL_FLAG_HIGH_STATE }, fdCheck
+			depObj, { depObjSTA, ST_NONE, ST_NONE, ACL_FLAG_HIGH_STATE }, fdCheck
 #define MK_CHKACL_ALT_END() \
 			MESSAGE_NONE, \
-			OBJECT_TYPE_NONE, { ST_NONE, ST_NONE, ACL_FLAG_NONE }, MESSAGE_NONE, 
+			OBJECT_TYPE_NONE, { ST_NONE, ST_NONE, ST_NONE, ACL_FLAG_NONE }, MESSAGE_NONE, 
 
 /* Object dependency ACL entry, used when making one object dependent on
    another */
 
 typedef struct {
 	const OBJECT_TYPE type;			/* Object type and subtype */
-	const OBJECT_SUBTYPE subTypeA, subTypeB;
+	const OBJECT_SUBTYPE subTypeA, subTypeB, subTypeC;
 	const OBJECT_TYPE dType;		/* Dependent object type and subtype */
-	const OBJECT_SUBTYPE dSubTypeA, dSubTypeB;
+	const OBJECT_SUBTYPE dSubTypeA, dSubTypeB, dSubTypeC;
 	const int flags;				/* Dependency flags */
 	} DEPENDENCY_ACL;
 
 /* Macros to set up dependency ACLs */
 
-#define MK_DEPACL( objType, objSTA, objSTB, dObjType, dObjSTA, dObjSTB ) \
-			{ objType, objSTA, objSTB, dObjType, dObjSTA, dObjSTB, DEP_FLAG_NONE }
-#define MK_DEPACL_EX( objType, objSTA, objSTB, dObjType, dObjSTA, dObjSTB, flags ) \
-			{ objType, objSTA, objSTB, dObjType, dObjSTA, dObjSTB, flags }
+#define MK_DEPACL( objType, objSTA, objSTB, objSTC, dObjType, dObjSTA, dObjSTB, dObjSTC ) \
+			{ objType, objSTA, objSTB, objSTC, dObjType, dObjSTA, dObjSTB, dObjSTC, DEP_FLAG_NONE }
+#define MK_DEPACL_EX( objType, objSTA, objSTB, objSTC, dObjType, dObjSTA, dObjSTB, dObjSTC, flags ) \
+			{ objType, objSTA, objSTB, objSTC, dObjType, dObjSTA, dObjSTB, dObjSTC, flags }
 #define MK_DEPACL_END() \
-			{ OBJECT_TYPE_NONE, 0, 0, OBJECT_TYPE_NONE, 0, 0, DEP_FLAG_NONE }
+			{ OBJECT_TYPE_NONE, 0, 0, 0, OBJECT_TYPE_NONE, 0, 0, 0, DEP_FLAG_NONE }
 
 /* Flags for the dependency ACLs */
 

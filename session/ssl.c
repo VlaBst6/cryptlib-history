@@ -131,6 +131,97 @@ int readEcdhValue( INOUT STREAM *stream,
 	return( sread( stream, value, length ) );
 	}
 
+#ifdef CONFIG_SUITEB
+
+/* Check that a private key is valid for Suite B use */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkSuiteBKey( INOUT SESSION_INFO *sessionInfoPtr,
+						   IN_HANDLE const CRYPT_CONTEXT cryptContext,
+						   IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
+	{
+	int keySize, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
+
+	/* Suite B only allows P256 and P384 keys so we need to make sure that
+	   the server key is of the appropriate type and size */
+	if( cryptAlgo != CRYPT_ALGO_ECDSA )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_CTXINFO_ALGO, 
+					  CRYPT_ERRTYPE_ATTR_VALUE );
+		return( CRYPT_ARGERROR_NUM1 );
+		}
+	status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE, &keySize,
+							  CRYPT_CTXINFO_KEYSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+#ifdef CONFIG_SUITEB_TESTS 
+	if( suiteBTestValue == SUITEB_TEST_SVRINVALIDCURVE && \
+		keySize == bitsToBytes( 521 ) )
+		return( CRYPT_OK );
+#endif /* CONFIG_SUITEB_TESTS */
+	if( keySize != bitsToBytes( 256 ) && keySize != bitsToBytes( 384 ) )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_CTXINFO_KEYSIZE, 
+					  CRYPT_ERRTYPE_ATTR_VALUE );
+		return( CRYPT_ARGERROR_NUM1 );
+		}
+
+	/* In addition if a specific crypto strength has been configured then 
+	   the key size has to correspond to that strength.  At 128 bits we can
+	   use both P256 and P384, but at 256 bits we have to use P384 */
+	if( ( ( sessionInfoPtr->protocolFlags & \
+						SSL_PFLAG_SUITEB ) == SSL_PFLAG_SUITEB_256 ) && \
+		keySize != bitsToBytes( 384 ) )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_CTXINFO_KEYSIZE, 
+					  CRYPT_ERRTYPE_ATTR_VALUE );
+		return( CRYPT_ARGERROR_NUM1 );
+		}
+
+	return( CRYPT_OK );
+	}
+
+#ifdef CONFIG_SUITEB_TESTS 
+
+/* Special kludge function used to enable nonstandard behaviour for Suite
+   B tests.  The magic value is used in appropriate locations to enable
+   nonstandard behaviour for testing purposes.  The values are listed in
+   ssl.h */
+
+SUITEB_TEST_VALUE suiteBTestValue = SUITEB_TEST_NONE;
+BOOLEAN suiteBTestClientCert = FALSE;
+
+int sslSuiteBTestConfig( const int magicValue )
+	{
+	REQUIRES( ( magicValue >= SUITEB_TEST_NONE && \
+				magicValue < SUITEB_TEST_LAST ) || \
+			  magicValue == 1000 );
+
+	/* If it's the client-cert test indicator, set the flag and exit */
+	if( magicValue == 1000 )
+		{
+		suiteBTestClientCert = TRUE;
+
+		return( CRYPT_OK );
+		}
+
+	suiteBTestValue = magicValue;
+	if( magicValue == 0 )
+		{
+		/* If we're doing a reset, clear the client-cert test indicator as
+		   well */
+		suiteBTestClientCert = FALSE;
+		}
+
+	return( CRYPT_OK );
+	}
+#endif /* CONFIG_SUITEB_TESTS  */
+#endif /* CONFIG_SUITEB */
+
 /****************************************************************************
 *																			*
 *						Read/Write SSL/TLS Certificate Chains				*
@@ -152,7 +243,6 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 					  OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertChain, 
 					  const BOOLEAN isServer )
 	{
-	CRYPT_ALGO_TYPE algorithm;
 	CRYPT_CERTIFICATE iLocalCertChain;
 	const ATTRIBUTE_LIST *fingerprintPtr = \
 				findSessionInfo( sessionInfoPtr->attributeList,
@@ -165,7 +255,7 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 #ifdef CONFIG_SUITEB
 	const char *requiredLengthString = NULL;
 #endif /* CONFIG_SUITEB */
-	int certFingerprintLength, chainLength, length, status;
+	int certAlgo, certFingerprintLength, chainLength, length, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
@@ -245,7 +335,7 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Get information on the chain */
 	status = krnlSendMessage( iLocalCertChain, IMESSAGE_GETATTRIBUTE,
-							  &algorithm, CRYPT_CTXINFO_ALGO );
+							  &certAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( iLocalCertChain, IMESSAGE_DECREFCOUNT );
@@ -279,13 +369,13 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 		}
 	certFingerprintLength = msgData.length;
-	if( !isServer && algorithm != handshakeInfo->authAlgo )
+	if( !isServer && certAlgo != handshakeInfo->authAlgo )
 		{
 		krnlSendNotifier( iLocalCertChain, IMESSAGE_DECREFCOUNT );
 		retExt( CRYPT_ERROR_WRONGKEY,
 				( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
 				  "Server key algorithm %d doesn't match negotiated "
-				  "algorithm %d", algorithm, handshakeInfo->authAlgo ) );
+				  "algorithm %d", certAlgo, handshakeInfo->authAlgo ) );
 		}
 
 	/* Either compare the certificate fingerprint to a supplied one or save 
@@ -336,12 +426,12 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 				  "%s provided a key incapable of being used for %s",
 				  peerTypeName,
 				  isServer ? "client authentication" : \
-				  isKeyxAlgo( algorithm ) ? "key exchange authentication" : \
+				  isKeyxAlgo( certAlgo ) ? "key exchange authentication" : \
 										    "encryption" ) );
 		}
 
 	/* For ECC with Suite B there are additional constraints on the key
-	   size to ensure that fashion dictums aren't violated */
+	   size */
 #ifdef CONFIG_SUITEB
 	status = krnlSendMessage( iLocalCertChain, IMESSAGE_GETATTRIBUTE,
 							  &length, CRYPT_CTXINFO_KEYSIZE );
@@ -350,18 +440,19 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 	switch( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB )
 		{
 		case 0:
-		case SSL_PFLAG_SUITEB:
+			/* If we're not configured for Suite B mode then there's
+			   nothing to check */
+			break;
+
+		case SSL_PFLAG_SUITEB_128:
+			/* 128-bit level can be P256 or P384 */
 			if( length != bitsToBytes( 256 ) && \
 				length != bitsToBytes( 384 ) )
 				requiredLengthString = "256- or 384";
 			break;
 
-		case SSL_PFLAG_SUITEB_128:
-			if( length != bitsToBytes( 256 ) )
-				requiredLengthString = "256";
-			break;
-
 		case SSL_PFLAG_SUITEB_256:
+			/* 256-bit level only allows P384 */
 			if( length != bitsToBytes( 384 ) )
 				requiredLengthString = "384";
 			break;
@@ -595,16 +686,40 @@ static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 	{
 	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
 	const int value = *( ( int * ) data );
+#ifdef CONFIG_SUITEB
+	const int suiteBvalue = value & ( CRYPT_SSLOPTION_SUITEB_128 | \
+									  CRYPT_SSLOPTION_SUITEB_256 );
+#endif /* CONFIG_SUITEB */
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	REQUIRES( type == CRYPT_SESSINFO_SSL_OPTIONS );
 
 	/* Set SSL/TLS protocol options based on the user-supplied flags */
-	if( value & CRYPT_SSLOPTION_SUITEB_128 )
-		sessionInfoPtr->protocolFlags |= SSL_PFLAG_SUITEB_128;
-	if( value & CRYPT_SSLOPTION_SUITEB_256 )
-		sessionInfoPtr->protocolFlags |= SSL_PFLAG_SUITEB_256;
+#ifdef CONFIG_SUITEB
+	if( suiteBvalue )
+		{
+		if( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB )
+			{
+			/* If a Suite B configuration option is already set then we 
+			   can't set another one on top of it */
+			setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_SSL_OPTIONS, 
+						  CRYPT_ERRTYPE_ATTR_PRESENT );
+			return( CRYPT_ERROR_INITED );
+			}
+		if( suiteBvalue == ( CRYPT_SSLOPTION_SUITEB_128 | \
+							 CRYPT_SSLOPTION_SUITEB_256 ) )
+			{
+			/* We can't set both the 128-bit and 256-bit security levels at 
+			   the same time */
+			return( CRYPT_ARGERROR_NUM1 );
+			}
+		if( suiteBvalue == CRYPT_SSLOPTION_SUITEB_128 )
+			sessionInfoPtr->protocolFlags |= SSL_PFLAG_SUITEB_128;
+		else
+			sessionInfoPtr->protocolFlags |= SSL_PFLAG_SUITEB_256;
+		}
+#endif /* CONFIG_SUITEB */
 	if( value & ( CRYPT_SSLOPTION_MINVER_TLS10 | \
 				  CRYPT_SSLOPTION_MINVER_TLS11 | \
 				  CRYPT_SSLOPTION_MINVER_TLS12 ) )
@@ -626,10 +741,7 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	const CRYPT_CONTEXT cryptContext = *( ( CRYPT_CONTEXT * ) data );
-#ifdef CONFIG_SUITEB
-	int keySize;
-#endif /* CONFIG_SUITEB */
-	int cryptAlgo, status;
+	int pkcAlgo, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( data, sizeof( int ) ) );
@@ -644,10 +756,10 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 	   DH keyex) or both, for a DSA or ECDSA key we need signing (for DH/ECDH 
 	   keyex) */
 	status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &pkcAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	switch( cryptAlgo )
+	switch( pkcAlgo )
 		{
 		case CRYPT_ALGO_RSA:
 			status = krnlSendMessage( cryptContext, IMESSAGE_CHECK, NULL,
@@ -674,34 +786,15 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 							  CRYPT_ERRTYPE_ATTR_VALUE );
 				return( CRYPT_ARGERROR_NUM1 );
 				}
-
+#ifdef CONFIG_SUITEB
+			return( checkSuiteBKey( sessionInfoPtr, cryptContext, pkcAlgo ) );
+#else
 			return( CRYPT_OK );
+#endif /* CONFIG_SUITEB */
 
 		default:
 			return( CRYPT_ARGERROR_NUM1 );
 		}
-
-	/* Suite B only allows P256 and P384 keys so we need to make sure that
-	   the server key is of the appropriate type and size */
-#ifdef CONFIG_SUITEB
-	if( cryptAlgo != CRYPT_ALGO_ECDSA )
-		{
-		setErrorInfo( sessionInfoPtr, CRYPT_CTXINFO_ALGO, 
-					  CRYPT_ERRTYPE_ATTR_VALUE );
-		return( CRYPT_ARGERROR_NUM1 );
-		}
-	status = krnlSendMessage( sessionInfoPtr->privateKey, 
-							  IMESSAGE_GETATTRIBUTE, &keySize,
-							  CRYPT_CTXINFO_KEYSIZE );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( keySize != bitsToBytes( 256 ) && keySize != bitsToBytes( 384 ) )
-		{
-		setErrorInfo( sessionInfoPtr, CRYPT_CTXINFO_KEYSIZE, 
-					  CRYPT_ERRTYPE_ATTR_VALUE );
-		return( CRYPT_ARGERROR_NUM1 );
-		}
-#endif /* CONFIG_SUITEB */
 
 	retIntError();
 	}

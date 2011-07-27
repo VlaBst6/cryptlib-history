@@ -52,7 +52,6 @@ void fastPoll( void )
 	system_info info;
 	bigtime_t idleTime;
 	uint32 value;
-	int bufIndex = 0;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 
@@ -94,9 +93,8 @@ void slowPoll( void )
 	sem_info semi;
 	image_info imagei;
 	double temperature;
-	long n;
 	int32 devID, cookie;
-	int fd, value, bufIndex = 0;
+	int fd, value;
 
 	if( ( fd = open( "/dev/urandom", O_RDONLY ) ) >= 0 )
 		{

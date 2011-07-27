@@ -617,10 +617,16 @@ int testDeriveKey( void )
 									  CRYPT_CTXINFO_KEYING_VALUE,
 									  userKey, userKeyLength ); */
 
+typedef enum { AES_NONE, AES_128_128, AES_128_256, 
+			   AES_256_128, AES_256_256 } AES_KEYSIZE_OPT;
+			   /* First parameter = session key, second 
+			      parameter = wrap key */
+
 static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 									 const CRYPT_CONTEXT sessionKeyContext1,
 									 const CRYPT_CONTEXT sessionKeyContext2,
-									 BOOLEAN useAltAlgo )
+									 const BOOLEAN useAltAlgo,
+									 const AES_KEYSIZE_OPT aesKeysizeOpt )
 	{
 	CRYPT_OBJECT_INFO cryptObjectInfo;
 	CRYPT_CONTEXT decryptContext;
@@ -683,8 +689,18 @@ static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 	printf( "cryptQueryObject() reports object type %d, algorithm %d, mode "
 			"%d.\n", cryptObjectInfo.objectType, cryptObjectInfo.cryptAlgo,
 			cryptObjectInfo.cryptMode );
-	debugDump( ( cryptObjectInfo.cryptAlgo == CRYPT_ALGO_AES ) ? \
-			   "kek_aes" : "kek", buffer, length );
+	if( aesKeysizeOpt == AES_NONE )
+		debugDump( "kek", buffer, length );
+	else
+		{
+		const char *fileName = ( aesKeysizeOpt == AES_128_128 ) ? \
+								 "kek_aes128_128" : \
+							   ( aesKeysizeOpt == AES_128_256 ) ? \
+								 "kek_aes128_256" : \
+							   ( aesKeysizeOpt == AES_256_128 ) ? \
+								 "kek_aes256_128" : "kek_aes256_256";
+		debugDump( fileName, buffer, length );
+		}
 	if( useAltAlgo && cryptObjectInfo.hashAlgo != CRYPT_ALGO_HMAC_SHA2 )
 		{
 		printf( "Key wrap with algorithm CRYPT_ALGO_HMAC_SHA2 reported "
@@ -713,6 +729,18 @@ static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 		status = cryptSetAttribute( decryptContext,
 									CRYPT_CTXINFO_KEYING_ALGO,
 									cryptObjectInfo.hashAlgo  );
+	if( cryptStatusOK( status ) && \
+		( aesKeysizeOpt == AES_128_256 || aesKeysizeOpt == AES_256_256 ) )
+		{
+		/* The CRYPT_OBJECT_INFO structure doesn't contain an entry for the
+		   key size because it hadn't been needed previously and it can't be 
+		   changed now without breaking the ABI, so we have to explicitly 
+		   set the non-default key size via an externally-supplied parameter 
+		   until there's a rev.of the minor version and we can modify the 
+		   ABI */
+		status = cryptSetAttribute( decryptContext, 
+									CRYPT_CTXINFO_KEYSIZE, 32 );
+		}
 	if( cryptStatusOK( status ) )
 		status = cryptSetAttributeString( decryptContext,
 										  CRYPT_CTXINFO_KEYING_VALUE,
@@ -737,19 +765,49 @@ static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 	if( !compareSessionKeys( sessionKeyContext1, sessionKeyContext2 ) )
 		return( FALSE );
 
+	/* If we're using variable-length keys, make sure that the lengths are 
+	   right.  We only need to check one of the two contexts since the fact 
+	   that the key sizes are the same has already been confirmed */
+	if( aesKeysizeOpt != AES_NONE )
+		{
+		const int sessionKeySize = ( aesKeysizeOpt == AES_128_128 || \
+									 aesKeysizeOpt == AES_128_256 ) ? \
+									 16 : 32;
+		const int wrapKeySize = ( aesKeysizeOpt == AES_128_128 || \
+								  aesKeysizeOpt == AES_256_128 ) ? \
+								  16 : 32;
+
+		status = cryptGetAttribute( sessionKeyContext1, 
+									CRYPT_CTXINFO_KEYSIZE, &length );
+		if( cryptStatusError( status ) || length != sessionKeySize )
+			{
+			printf( "AES session key size is incorrect, line %d.\n", 
+					__LINE__ );
+			return( FALSE );
+			}
+		status = cryptGetAttribute( decryptContext, 
+									CRYPT_CTXINFO_KEYSIZE, &length );
+		if( cryptStatusError( status ) || length != wrapKeySize )
+			{
+			printf( "AES wrap key size is incorrect, line %d.\n", 
+					__LINE__ );
+			return( FALSE );
+			}
+		}
+
 	/* Clean up */
 	cryptDestroyContext( decryptContext );
 	free( buffer );
 	return( TRUE );
 	}
 
-int testConventionalExportImport( void )
+static int testConv3DES( void )
 	{
 	CRYPT_CONTEXT cryptContext;
 	CRYPT_CONTEXT sessionKeyContext1, sessionKeyContext2;
 	int status;
 
-	puts( "Testing conventional key export/import..." );
+	puts( "Testing 3DES conventional key export/import via Blowfish..." );
 
 	/* Create triple-DES contexts for the session key */
 	status = cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED, 
@@ -784,12 +842,30 @@ int testConventionalExportImport( void )
 
 	/* Export the key */
 	if( !conventionalExportImport( cryptContext, sessionKeyContext1,
-								   sessionKeyContext2, FALSE ) )
+								   sessionKeyContext2, FALSE, AES_NONE ) )
 		return( FALSE );
 	cryptDestroyContext( cryptContext );
 	destroyContexts( CRYPT_UNUSED, sessionKeyContext1, sessionKeyContext2 );
-	puts( "Export/import of Blowfish key via user-key-based triple DES "
+	puts( "Export/import of 3DES key via user-key-based Blowfish "
 		  "conventional\n  encryption succeeded." );
+
+	return( TRUE );
+	}
+
+static int testConvAES( const AES_KEYSIZE_OPT aesKeysizeOpt )
+	{
+	CRYPT_CONTEXT cryptContext;
+	CRYPT_CONTEXT sessionKeyContext1, sessionKeyContext2;
+	const char *aesKey1Name = ( aesKeysizeOpt == AES_128_128 || \
+								aesKeysizeOpt == AES_128_256 ) ? \
+							   "AES-128" : "AES-256";
+	const char *aesKey2Name = ( aesKeysizeOpt == AES_128_128 || \
+								aesKeysizeOpt == AES_256_128 ) ? \
+							   "AES-128" : "AES-256";
+	int status;
+
+	printf( "Testing %s conventional key export/import via %s...\n",
+			aesKey1Name, aesKey2Name );
 
 	/* Create AES contexts for the session key and another AES context to
 	   export the session key.  In addition to using AES we use a non-
@@ -799,6 +875,10 @@ int testConventionalExportImport( void )
 	if( cryptStatusOK( status ) )
 		status = cryptSetAttribute( sessionKeyContext1, CRYPT_CTXINFO_MODE, 
 									CRYPT_MODE_CFB );
+	if( cryptStatusOK( status ) && \
+		( aesKeysizeOpt == AES_256_128 || aesKeysizeOpt == AES_256_256 ) )
+		status = cryptSetAttribute( sessionKeyContext1, 
+									CRYPT_CTXINFO_KEYSIZE, 32 );
 	if( cryptStatusOK( status ) )
 		status = cryptGenerateKey( sessionKeyContext1 );
 	if( cryptStatusOK( status ) )
@@ -816,6 +896,10 @@ int testConventionalExportImport( void )
 		}
 	status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, 
 								 selectCipher( CRYPT_ALGO_AES ) );
+	if( cryptStatusOK( status ) && \
+		( aesKeysizeOpt == AES_128_256 || aesKeysizeOpt == AES_256_256 ) )
+		status = cryptSetAttribute( cryptContext, 
+									CRYPT_CTXINFO_KEYSIZE, 32 );
 	if( cryptStatusError( status ) )
 		{
 		printf( "Export key context setup failed with error code %d, line "
@@ -825,12 +909,30 @@ int testConventionalExportImport( void )
 
 	/* Export the key */
 	if( !conventionalExportImport( cryptContext, sessionKeyContext1,
-								   sessionKeyContext2, TRUE ) )
+								   sessionKeyContext2, TRUE, 
+								   aesKeysizeOpt ) )
 		return( FALSE );
 	cryptDestroyContext( cryptContext );
 	destroyContexts( CRYPT_UNUSED, sessionKeyContext1, sessionKeyContext2 );
-	puts( "Export/import of AES key via user-key-based AES conventional "
-		  "encryption\n  succeeded.\n" );
+	printf( "Export/import of %s key via user-key-based %s conventional "
+			"encryption\n  succeeded.\n", aesKey1Name, aesKey2Name );
+
+	return( TRUE );
+	}
+
+int testConventionalExportImport( void )
+	{
+	if( !testConv3DES() )
+		return( FALSE );
+	if( !testConvAES( AES_128_128 ) )
+		return( FALSE );
+	if( !testConvAES( AES_128_256 ) )
+		return( FALSE );
+	if( !testConvAES( AES_256_128 ) )
+		return( FALSE );
+	if( !testConvAES( AES_256_256 ) )
+		return( FALSE );
+	putchar( '\n' );
 
 	return( TRUE );
 	}

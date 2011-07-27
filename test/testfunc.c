@@ -108,13 +108,10 @@ static BOOLEAN createDatabase( const char *driverName,
 #ifdef UNICODE_STRINGS
 	wchar_t wcAttrBuffer[ 1024 ];
 #endif /* UNICODE_STRINGS */
-	int length, status;
+	int status;
 
-	if( !( length = GetTempPath( 512, tempPathBuffer ) ) )
-		{
+	if( !GetTempPath( 512, tempPathBuffer ) )
 		strcpy( tempPathBuffer, "C:\\Temp\\" );
-		length = 8;
-		}
 
 	/* Try and create the DSN.  For the default Access driver his is a two-
 	   step process, first we create the DSN and then the underlying file 
@@ -783,22 +780,17 @@ BOOLEAN testCertMgmt( void )
 
 #ifdef TEST_KEYSET
 
-/* Test the keyset read routines */
+/* Test the file and database keyset read routines */
 
-BOOLEAN testKeyset( void )
+BOOLEAN testKeysetFile( void )
 	{
-	int status;
-
-  #ifdef DATABASE_AUTOCONFIG
-	checkCreateDatabaseKeysets();
-  #endif /* DATABASE_AUTOCONFIG */
 	if( !testGetPGPPublicKey() )
 		return( FALSE );
 	if( !testGetPGPPrivateKey() )
 		return( FALSE );
-	if( !testGetBorkenKey() )
-		return( FALSE );
 	if( !testReadWriteFileKey() )
+		return( FALSE );
+	if( !testReadWriteAltFileKey() )
 		return( FALSE );
 	if( !testImportFileKey() )
 		return( FALSE );
@@ -826,12 +818,26 @@ BOOLEAN testKeyset( void )
 		return( FALSE );
 	if( !testSingleStepFileCert() )
 		return( FALSE );
+	if( !testSingleStepAltFileCert() )
+		return( FALSE );
 	if( !testDoubleCertFile() )
 		return( FALSE );
 	if( !testRenewedCertFile() )
 		return( FALSE );
+	if( !testReadAltFileKey() )
+		return( FALSE );
 	if( !testReadMiscFile() )
 		return( FALSE );
+	return( TRUE );
+	}
+
+BOOLEAN testKeysetDatabase( void )
+	{
+	int status;
+
+  #ifdef DATABASE_AUTOCONFIG
+	checkCreateDatabaseKeysets();
+  #endif /* DATABASE_AUTOCONFIG */
 	status = testWriteCert();
 	if( status == CRYPT_ERROR_NOTAVAIL )
 		{
@@ -891,9 +897,15 @@ BOOLEAN testKeyset( void )
 	}
 #else
 
-BOOLEAN testKeyset( void )
+BOOLEAN testKeysetFile( void )
 	{
-	puts( "Skipping test of keyset read routines...\n" );
+	puts( "Skipping test of file keyset read routines...\n" );
+	return( TRUE );
+	}
+
+BOOLEAN testKeysetDatabase( void )
+	{
+	puts( "Skipping test of database keyset read routines...\n" );
 	return( TRUE );
 	}
 #endif /* TEST_KEYSET */

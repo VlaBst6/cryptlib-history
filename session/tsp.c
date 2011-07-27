@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib TSP Session Management					*
-*						Copyright Peter Gutmann 1999-2008					*
+*						Copyright Peter Gutmann 1999-2011					*
 *																			*
 ****************************************************************************/
 
@@ -22,7 +22,7 @@
 /* TSP constants */
 
 #define TSP_VERSION					1	/* Version number */
-#define MIN_MSGIMPRINT_SIZE			20	/* Min.and max.size for message imprint */
+#define MIN_MSGIMPRINT_SIZE			( 2 + 10 + 16 )	/* SEQ + MD5 OID + MD5 hash */
 #define MAX_MSGIMPRINT_SIZE			( 32 + CRYPT_MAX_HASHSIZE )
 
 /* TSP HTTP content types */
@@ -57,13 +57,21 @@ enum { TSP_MESSAGE_REQUEST, TSP_MESSAGE_POLLREP, TSP_MESSAGE_POLLREQ,
    subfunctions that handle individual parts of the protocol */
 
 typedef struct {
+	/* TSP protocol control information.  The hashAlgo is usually unset (so 
+	   it has a value of CRYPT_ALGO_NONE) but may be set if the client has
+	   indicated that they want to use a stronger hash algorithm than the 
+	   default one */
+	CRYPT_ALGO_TYPE hashAlgo;			/* Optional hash algorithm for TSA resp.*/
+	BOOLEAN includeSigCerts;			/* Whether to include signer certificates */
+
+	/* TSP request/response data */
 	BUFFER( MAX_MSGIMPRINT_SIZE, msgImprintSize ) \
 	BYTE msgImprint[ MAX_MSGIMPRINT_SIZE + 8 ];
 	int msgImprintSize;					/* Message imprint */
 	BUFFER( CRYPT_MAX_HASHSIZE, nonceSize ) \
 	BYTE nonce[ CRYPT_MAX_HASHSIZE + 8 ];
 	int nonceSize;						/* Nonce (if present) */
-	BOOLEAN includeSigCerts;			/* Whether to include signer certificates */
+
 	} TSP_PROTOCOL_INFO;
 
 /* Prototypes for functions in cmp_rd.c.  This code is shared due to TSP's use
@@ -82,11 +90,14 @@ int readPkiStatusInfo( INOUT STREAM *stream,
 
 /* Read a TSP request */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int readTSPRequest( INOUT STREAM *stream, 
 						   INOUT TSP_PROTOCOL_INFO *protocolInfo,
+						   IN_HANDLE const CRYPT_USER iOwnerHandle, 
 						   INOUT ERROR_INFO *errorInfo )
 	{
+	CRYPT_ALGO_TYPE defaultHashAlgo, msgImprintHashAlgo;
+	STREAM msgImprintStream;
 	void *dataPtr = DUMMY_INIT_PTR;
 	long value;
 	int length, status;
@@ -94,6 +105,9 @@ static int readTSPRequest( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( TSP_PROTOCOL_INFO ) ) );
 	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	REQUIRES( iOwnerHandle == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( iOwnerHandle ) );
 
 	/* Read the request header and make sure everything is in order */
 	readSequence( stream, NULL );
@@ -126,6 +140,38 @@ static int readTSPRequest( INOUT STREAM *stream,
 	ANALYSER_HINT( dataPtr != NULL );
 	memcpy( protocolInfo->msgImprint, dataPtr, length );
 	protocolInfo->msgImprintSize = length;
+
+	/* Pick apart the msgImprint:
+
+		msgImprint			SEQUENCE {
+			algorithm		AlgorithmIdentifier,
+			hash			OCTET STRING
+			}
+
+	   to see whether we can use a stronger hash in our response than the 
+	   default SHA-1.  This is done on the basis that if the client sends us
+	   a message imprint with a stronger hash then they should be able to
+	   process a response with a stronger hash as well */
+	sMemConnect( &msgImprintStream, protocolInfo->msgImprint, 
+				 protocolInfo->msgImprintSize );
+	readSequence( &msgImprintStream, NULL );
+	status = readAlgoID( &msgImprintStream, &msgImprintHashAlgo, 
+						 ALGOID_CLASS_HASH );
+	if( cryptStatusOK( status ) )
+		status = readOctetStringHole( &msgImprintStream, NULL, 16, 
+									  DEFAULT_TAG );
+	sMemDisconnect( &msgImprintStream );
+	if( cryptStatusError( status ) )
+		{
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, errorInfo, 
+				  "Invalid TSP message imprint content" ) );
+		}
+	status = krnlSendMessage( iOwnerHandle, IMESSAGE_GETATTRIBUTE, 
+							  &defaultHashAlgo, CRYPT_OPTION_ENCR_HASH );
+	if( cryptStatusOK( status ) && \
+		isStrongerHash( msgImprintHashAlgo, defaultHashAlgo ) )
+		protocolInfo->hashAlgo = msgImprintHashAlgo;
 
 	/* Check for the presence of the assorted optional fields */
 	if( peekTag( stream ) == BER_OBJECT_IDENTIFIER )
@@ -175,18 +221,21 @@ static int readTSPRequest( INOUT STREAM *stream,
 		status = readUniversal( stream );
 		}
 	if( cryptStatusError( status ) )
+		{
 		retExt( CRYPT_ERROR_BADDATA, 
 				( CRYPT_ERROR_BADDATA, errorInfo, 
 				  "Invalid TSP request additional information fields" ) );
+		}
 	return( CRYPT_OK );
 	}
 
 /* Sign a timestamp token */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 static int signTSToken( OUT_BUFFER( tsaRespMaxLength, *tsaRespLength ) BYTE *tsaResp, 
 						IN_LENGTH_SHORT_MIN( 64 ) const int tsaRespMaxLength, 
 						OUT_LENGTH_SHORT_Z int *tsaRespLength,
+						IN_ALGO_OPT const CRYPT_ALGO_TYPE tsaRespHashAlgo,
 						IN_BUFFER( tstInfoLength ) const BYTE *tstInfo, 
 						IN_LENGTH_SHORT const int tstInfoLength,
 						IN_HANDLE const CRYPT_CONTEXT privateKey,
@@ -206,6 +255,9 @@ static int signTSToken( OUT_BUFFER( tsaRespMaxLength, *tsaRespLength ) BYTE *tsa
 
 	REQUIRES( tsaRespMaxLength >= 64 && \
 			  tsaRespMaxLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( tsaRespHashAlgo == CRYPT_ALGO_NONE || \
+			  ( tsaRespHashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+				tsaRespHashAlgo <= CRYPT_ALGO_LAST_HASH ) );
 	REQUIRES( tstInfoLength > 0 && tstInfoLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( isHandleRangeValid( privateKey ) );
 
@@ -240,9 +292,11 @@ static int signTSToken( OUT_BUFFER( tsaRespMaxLength, *tsaRespLength ) BYTE *tsa
 	/* Create a cryptlib envelope to sign the data.  If we're not being
 	   asked to include signer certificates we have to explicitly disable 
 	   the inclusion of certificates in the signature since S/MIME includes 
-	   them by default.  Unfortunately this special-case operation means 
-	   that we can't use envelopeSign() to process the data, but have to
-	   perform the whole process ourselves */
+	   them by default.  In addition the caller may have asked us to use a
+	   non-default hash algorithm, which we specify for the envelope if it's
+	   been set.  Unfortunately these special-case operations mean that we 
+	   can't use envelopeSign() to process the data, but have to perform the 
+	   whole process ourselves */
 	setMessageCreateObjectInfo( &createInfo, CRYPT_FORMAT_CMS );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_ENVELOPE );
@@ -254,6 +308,11 @@ static int signTSToken( OUT_BUFFER( tsaRespMaxLength, *tsaRespLength ) BYTE *tsa
 	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
 							  ( MESSAGE_CAST ) &minBufferSize,
 							  CRYPT_ATTRIBUTE_BUFFERSIZE );
+	if( cryptStatusOK( status ) && tsaRespHashAlgo != CRYPT_ALGO_NONE )
+		status = krnlSendMessage( createInfo.cryptHandle,
+							IMESSAGE_SETATTRIBUTE, 
+							( MESSAGE_CAST ) &tsaRespHashAlgo,
+							CRYPT_OPTION_ENCR_HASH );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( createInfo.cryptHandle,
 							IMESSAGE_SETATTRIBUTE, ( MESSAGE_CAST ) &tstInfoLength,
@@ -682,7 +741,8 @@ static int readClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 		return( sendErrorResponse( sessionInfoPtr, respBadGeneric, status ) );
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
 				 sessionInfoPtr->receiveBufEnd );
-	status = readTSPRequest( &stream, protocolInfo, SESSION_ERRINFO );
+	status = readTSPRequest( &stream, protocolInfo, 
+							 sessionInfoPtr->ownerHandle, SESSION_ERRINFO );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
@@ -752,7 +812,8 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	status = signTSToken( sessionInfoPtr->receiveBuffer + headerOfs + 9,
 						  min( sessionInfoPtr->receiveBufSize, \
 							   MAX_INTLENGTH_SHORT - 1 ), &responseLength, 
-						  tstBuffer, tstLength, sessionInfoPtr->privateKey, 
+						  protocolInfo->hashAlgo, tstBuffer, tstLength, 
+						  sessionInfoPtr->privateKey, 
 						  protocolInfo->includeSigCerts );
 	if( cryptStatusError( status ) )
 		return( sendErrorResponse( sessionInfoPtr, respBadGeneric, status ) );
@@ -926,7 +987,7 @@ static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 	{
 	CRYPT_CONTEXT hashContext = *( ( CRYPT_CONTEXT * ) data );
 	TSP_INFO *tspInfo = sessionInfoPtr->sessionTSP;
-	int status;
+	int imprintAlgo, status;	/* int vs.enum */
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( data, sizeof( int ) ) );
@@ -938,11 +999,12 @@ static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Get the message imprint from the hash context */
 	status = krnlSendMessage( hashContext, IMESSAGE_GETATTRIBUTE,
-							  &tspInfo->imprintAlgo, CRYPT_CTXINFO_ALGO );
+							  &imprintAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) )
 		{
 		MESSAGE_DATA msgData;
 
+		tspInfo->imprintAlgo = imprintAlgo;	/* int vs.enum */
 		setMessageData( &msgData, tspInfo->imprint, CRYPT_MAX_HASHSIZE );
 		status = krnlSendMessage( hashContext, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_CTXINFO_HASHVALUE );

@@ -453,7 +453,6 @@ typedef struct {
    examples of use are:
 
 	PKCS #3: publicValue = y
-	Fortezza: publicValue = y, ukm = Ra, wrappedKey = TEK-wrapped MEK
 	S/MIME: publicValue = y, ukm = 512-bit nonce, wrappedKey = g^x mod p
 	SSH, SSL: publicValue = y, wrappedKey = x */
 
@@ -461,12 +460,6 @@ typedef struct {
 	BUFFER( CRYPT_MAX_PKCSIZE, publicValueLen ) \
 	BYTE publicValue[ CRYPT_MAX_PKCSIZE + 8 ];
 	int publicValueLen;				/* Public key value */
-#ifdef USE_FORTEZZA
-	BUFFER( CRYPT_MAX_PKCSIZE, ukmLen ) \
-	BYTE ukm[ CRYPT_MAX_PKCSIZE + 8 ];
-	int ukmLen;						/* User keying material */
-	CRYPT_CONTEXT sessionKeyContext;/* Context for derived key */
-#endif /* USE_FORTEZZA */
 	BUFFER( CRYPT_MAX_PKCSIZE, wrappedKeyLen ) \
 	BYTE wrappedKey[ CRYPT_MAX_PKCSIZE + 8 ];
 	int wrappedKeyLen;				/* Wrapped key */
@@ -566,11 +559,8 @@ typedef struct {
 
 #define isWeakCryptAlgo( algorithm )	( ( algorithm ) == CRYPT_ALGO_DES || \
 										  ( algorithm ) == CRYPT_ALGO_RC2 || \
-										  ( algorithm ) == CRYPT_ALGO_RC4 || \
-										  ( algorithm ) == CRYPT_ALGO_SKIPJACK )
-#define isWeakHashAlgo( algorithm )		( ( algorithm ) == CRYPT_ALGO_MD2 || \
-										  ( algorithm ) == CRYPT_ALGO_MD4 || \
-										  ( algorithm ) == CRYPT_ALGO_MD5 )
+										  ( algorithm ) == CRYPT_ALGO_RC4 )
+#define isWeakHashAlgo( algorithm )		( ( algorithm ) == CRYPT_ALGO_MD5 )
 #define isWeakMacAlgo( algorithm )		( ( algorithm ) == CRYPT_ALGO_HMAC_MD5 )
 											/* Technically not weak, but somewhat
 											   tainted */
@@ -607,13 +597,42 @@ typedef struct {
 #define isCryptAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_RSA || ( algorithm ) == CRYPT_ALGO_ELGAMAL )
 #define isKeyxAlgo( algorithm ) \
-	( ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA || \
-	  ( algorithm ) == CRYPT_ALGO_ECDH )
+	( ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_ECDH )
 #define isDlpAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_DSA || ( algorithm ) == CRYPT_ALGO_ELGAMAL || \
-	  ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA )
+	  ( algorithm ) == CRYPT_ALGO_DH )
 #define isEccAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_ECDSA || ( algorithm ) == CRYPT_ALGO_ECDH )
+
+/* Macros to check whether an algorithm has additional parameters that need 
+   to be handled explicitly */
+
+#define isParameterisedConvAlgo( algorithm ) \
+	( ( algorithm ) == CRYPT_ALGO_AES )
+#define isParameterisedHashAlgo( algorithm ) \
+	( ( algorithm ) == CRYPT_ALGO_SHA2 || ( algorithm ) == CRYPT_ALGO_SHAng )
+#define isParameterisedMacAlgo( algorithm ) \
+	( ( algorithm ) == CRYPT_ALGO_HMAC_SHA2 || \
+	  ( algorithm ) == CRYPT_ALGO_HMAC_SHAng )
+
+/* A macro to check whether an error status is related to a data-formatting
+   problem or some other problem.  This is used to provide extended string-
+   format error information, if it's a data error then the message being
+   processed was (probably) invalid, if it's not a data error then it may be
+   due to an invalid decryption key being used or something similar that's
+   unrelated to the message itself.
+   
+   The exact definition of what constitutes a "data error" is a bit vague 
+   but since it's only used to control what additional error information is
+   returned a certain level of fuzziness is permitted */
+
+#define isDataError( status ) \
+		( ( ( status ) >= CRYPT_ERROR_OVERFLOW && \
+			( status ) <= CRYPT_ERROR_SIGNATURE ) ) || \
+		  ( ( status ) == CRYPT_ERROR_NOTAVAIL || \
+		    ( status ) == CRYPT_ERROR_INCOMPLETE || \
+			( status ) == CRYPT_ERROR_COMPLETE || \
+			( status ) == CRYPT_ERROR_INVALID )
 
 /* A macro to check whether a public key is too short to be secure.  This
    is a bit more complex than just a range check because any length below 
@@ -706,8 +725,7 @@ typedef struct {
    In a number of cases the code is called as 
    isXXXPtr( ptr, sizeof( ptrObject ) ), which causes warnings about 
    constant expressions, to avoid this we define a separate version 
-   that takes as argument the object type that's pointed to and that
-   avoids the size check.
+   that avoids the size check.
    
    Under Unix we could in theory check against _etext but this is too 
    unreliable to use, with shared libraries the single shared image can be 
@@ -725,12 +743,12 @@ typedef struct {
 									  !IsBadReadPtr( ( ptr ), ( size ) ) )
   #define isWritePtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 && \
 									  !IsBadWritePtr( ( ptr ), ( size ) ) )
-  #define isReadPtrConst( ptr, type ) \
+  #define isReadPtrConst( ptr, size ) \
 									( ( ptr ) != NULL && \
-									  !IsBadReadPtr( ( ptr ), sizeof( type ) ) )
-  #define isWritePtrConst( ptr, type ) \
+									  !IsBadReadPtr( ( ptr ), ( size ) ) )
+  #define isWritePtrConst( ptr, size ) \
 									( ( ptr ) != NULL && \
-									  !IsBadWritePtr( ( ptr ), sizeof( type ) ) )
+									  !IsBadWritePtr( ( ptr ), ( size ) ) )
 #elif defined( __UNIX__ ) && 0		/* See comment above */
   extern int _etext;
 
@@ -740,10 +758,10 @@ typedef struct {
   #define isWritePtr( ptr, size )	( ( ptr ) != NULL && \
 									  ( void * ) ( ptr ) > ( void * ) &_etext && \
 									  ( size ) > 0 )
-  #define isReadPtrConst( ptr, type ) \
+  #define isReadPtrConst( ptr, size ) \
 									( ( ptr ) != NULL && \
 									  ( void * ) ( ptr ) > ( void * ) &_etext )
-  #define isWritePtrConst( ptr, type ) \
+  #define isWritePtrConst( ptr, size ) \
 									( ( ptr ) != NULL && \
 									  ( void * ) ( ptr ) > ( void * ) &_etext )
 #else

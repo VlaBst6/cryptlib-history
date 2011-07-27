@@ -168,7 +168,7 @@ static int convertToSrv( OUT_BUFFER_FIXED( srvNameMaxLen ) char *srvName,
 	int i;						/* For trailing '\0' */
 
 	assert( isReadPtr( srvName, srvNameMaxLen ) );
-	assert( hostName != NULL );
+	assert( isReadPtr( hostName, MIN_DNS_SIZE ) );
 
 	REQUIRES( srvNameMaxLen > 0 && srvNameMaxLen <= MAX_DNS_SIZE );
 	REQUIRES( srvName != hostName );
@@ -305,7 +305,7 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 	assert( isWritePtr( hostName, hostNameMaxLen ) );
 	assert( isWritePtr( hostPort, sizeof( int ) ) );
-	assert( name != NULL );
+	assert( isReadPtr( name, MIN_DNS_SIZE ) );
 
 	REQUIRES( hostNameMaxLen > 0 && hostNameMaxLen <= MAX_DNS_SIZE );
 	REQUIRES( nameLen > 0 && nameLen < MAX_DNS_SIZE );
@@ -500,7 +500,7 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 	assert( isWritePtr( hostName, hostNameMaxLen ) );
 	assert( isWritePtr( hostPort, sizeof( int ) ) );
-	assert( name != NULL );
+	assert( isReadPtr( name, MIN_DNS_SIZE ) );
 
 	REQUIRES( hostNameMaxLen > 0 && hostNameMaxLen <= MAX_DNS_SIZE );
 	REQUIRES( nameLen > 0 && nameLen < MAX_DNS_SIZE );

@@ -140,34 +140,8 @@ static int calculateKeyIDFromEncoded( INOUT CONTEXT_INFO *contextInfoPtr,
 	/* At this point we're (technically) done, however a few special-case
 	   situations require further processing.  These are explained in the
 	   code blocks that handle them below */
-	if( !( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) && \
-		!isPgpAlgo && !( cryptAlgo == CRYPT_ALGO_KEA ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) && !isPgpAlgo )
 		return( CRYPT_OK );
-
-#ifdef USE_KEA
-	/* If it's a KEA context we also need to remember the start and length 
-	   of the domain parameters and key agreement public value in the 
-	   encoded key data */
-	if( cryptAlgo == CRYPT_ALGO_KEA )
-		{
-		STREAM stream;
-
-		sMemConnect( &stream, publicKey->publicKeyInfo, 
-					 publicKey->publicKeyInfoSize );
-		readSequence( &stream, NULL );
-		readSequence( &stream, NULL );
-		readUniversal( &stream );
-		readOctetStringHole( &stream, &length, MIN_PKCSIZE, DEFAULT_TAG );
-		publicKey->domainParamPtr = sMemBufPtr( &stream );
-		publicKey->domainParamSize = ( int ) length;
-		sSkip( &stream, length );
-		readBitStringHole( &stream, &length, MIN_PKCSIZE, DEFAULT_TAG );
-		publicKey->publicValuePtr = sMemBufPtr( &stream );
-		publicKey->publicValueSize = ( int ) length - 1;
-		assert( sSkip( &stream, length ) == CRYPT_OK );
-		sMemDisconnect( &stream );
-		}
-#endif /* USE_KEA */
 
 	/* If the keys are held externally (e.g. in a crypto device) then 
 	   there's no way to tell what the nominal keysize for the context 
@@ -359,7 +333,7 @@ static int writePKCS3Key( INOUT STREAM *stream,
 	totalSize = sizeofAlgoIDex( cryptAlgo, CRYPT_ALGO_NONE, parameterSize ) + \
 				( int ) sizeofObject( componentSize + 1 );
 	writeSequence( stream, totalSize );
-	writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, parameterSize );
+	writeAlgoIDparam( stream, cryptAlgo, parameterSize );
 	writeBignum( stream, &dlpKey->dlpParam_p );
 	swrite( stream, "\x02\x01\x00", 3 );	/* Integer value 0 */
 	writeBignum( stream, &dlpKey->dlpParam_g );

@@ -962,8 +962,7 @@
    and do actually get things right, we don't disable them if we're using
    clang */
 
-#if ( __GNUC__ >= 4 ) && \
-	!( defined( USE_GCC_ATTRIBUTES ) || defined( __clang_analyzer__ ) )
+#if !( defined( USE_GCC_ATTRIBUTES ) || defined( __clang_analyzer__ ) )
   #undef STDC_NONNULL_ARG
   #define STDC_NONNULL_ARG( argIndex )
   #undef CHECK_RETVAL
@@ -1009,6 +1008,38 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 #define ANALYSER_HINT( expr )	ENSURES( expr )
 
 #endif /* clang/LLVM */
+
+/* gcc can also provide approximate guessing at buffer overflows.  This is 
+   sufficiently hit-and-miss, and subject to platform-specific false 
+   positives and other glitches, that we only enable it for the test build 
+   in case it catches something there.  clang does a much better job at 
+   finding issues without all of the accompanying problems */
+
+#ifdef USE_GCC_ATTRIBUTES
+
+#define bos( x ) __builtin_object_size( x, 0 )
+
+#undef memcpy
+#define memcpy( dest, src, count ) \
+		__builtin___memcpy_chk( dest, src, count, bos( dest ) )
+#undef memmove
+#define memmove( dest, src, count ) \
+		__builtin___memmove_chk( dest, src, count, bos( dest ) )
+#undef memset
+#define memset( ptr, value, count ) \
+		__builtin___memset_chk( ptr, value, count, bos( ptr ) )
+#undef strcpy
+#define strcpy( dest, src ) \
+		__builtin___strcpy_chk( dest, src, bos( dest ) )
+#undef strncpy
+#define strncpy( dest, src, size ) \
+		__builtin___strncpy_chk( dest, src, size, bos( dest ) )
+#undef strcat
+#define strcat( dest, src ) \
+		__builtin___strcat_chk( dest, src, bos( dest ) )
+
+#endif /* gcc on the test platform */
+
 #endif /* gcc/C'0x */
 
 /****************************************************************************

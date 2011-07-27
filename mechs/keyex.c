@@ -122,8 +122,7 @@ static int checkWrapKey( IN_HANDLE int importKey,
 						 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
 						 const BOOLEAN isImport )
 	{
-	CRYPT_ALGO_TYPE localCryptAlgo;
-	int status;
+	int localCryptAlgo, status;
 
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 
@@ -176,11 +175,9 @@ static int checkContextsEncodable( IN_HANDLE const CRYPT_HANDLE exportKey,
 								   IN_ENUM( CRYPT_FORMAT ) \
 									const CRYPT_FORMAT_TYPE formatType )
 	{
-	CRYPT_ALGO_TYPE sessionKeyAlgo;
-	CRYPT_MODE_TYPE sessionKeyMode = DUMMY_INIT, exportMode;
 	const BOOLEAN exportIsPKC = isPkcAlgo( exportAlgo ) ? TRUE : FALSE;
 	BOOLEAN sessionIsMAC = FALSE;
-	int status;
+	int sessionKeyAlgo, sessionKeyMode = DUMMY_INIT, status;
 
 	REQUIRES( isHandleRangeValid( exportKey ) );
 	REQUIRES( exportAlgo > CRYPT_ALGO_NONE && exportAlgo < CRYPT_ALGO_LAST );
@@ -216,6 +213,8 @@ static int checkContextsEncodable( IN_HANDLE const CRYPT_HANDLE exportKey,
 				}
 			else
 				{
+				int exportMode;	/* int vs.enum */
+
 				/* If it's a conventional key export, the key wrap mechanism 
 				   requires the use of CBC mode for the wrapping */
 				status = krnlSendMessage( exportKey, MESSAGE_GETATTRIBUTE, 
@@ -259,6 +258,8 @@ static int checkContextsEncodable( IN_HANDLE const CRYPT_HANDLE exportKey,
 				}
 			else
 				{
+				int exportMode;	/* int vs.enum */
+
 				/* If it's a conventional key export there's no key wrap as 
 				   in CMS (the session-key context isn't used), so the 
 				   "export context" mode must be CFB */
@@ -331,7 +332,7 @@ C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 		}
 	else
 		{
-		CRYPT_ALGO_TYPE sessionKeyAlgo;
+		int sessionKeyAlgo;	/* int vs.enum */
 
 		status = krnlSendMessage( sessionKeyContext, MESSAGE_GETATTRIBUTE,
 								  &sessionKeyAlgo, CRYPT_CTXINFO_ALGO );
@@ -460,8 +461,8 @@ C_RET cryptExportKeyEx( C_OUT_OPT void C_PTR encryptedKey,
 						C_IN CRYPT_HANDLE exportKey,
 						C_IN CRYPT_CONTEXT sessionKeyContext )
 	{
-	CRYPT_ALGO_TYPE exportAlgo, sessionKeyAlgo;
-	int status;
+	CRYPT_ALGO_TYPE exportAlgo;
+	int sessionKeyAlgo, status;	/* int vs.enum */
 
 	/* Perform basic error checking */
 	if( encryptedKey != NULL )
@@ -563,12 +564,11 @@ int iCryptImportKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey,
 					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
 					 OUT_OPT_HANDLE_OPT CRYPT_CONTEXT *iReturnedContext )
 	{
-	CRYPT_ALGO_TYPE importAlgo;
 	const KEYEX_TYPE keyexType = \
 			( formatType == CRYPT_FORMAT_AUTO || \
 			  formatType == CRYPT_FORMAT_CRYPTLIB ) ? KEYEX_CRYPTLIB : \
 			( formatType == CRYPT_FORMAT_PGP ) ? KEYEX_PGP : KEYEX_CMS;
-	int status;
+	int importAlgo,	status;	/* int vs.enum */
 
 	assert( isReadPtr( encryptedKey, encryptedKeyLength ) );
 	assert( ( formatType == CRYPT_FORMAT_PGP && \
@@ -617,14 +617,13 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
 					 IN_HANDLE const CRYPT_CONTEXT iExportKey )
 	{
-	CRYPT_ALGO_TYPE exportAlgo;
 	const KEYEX_TYPE keyexType = \
 			( formatType == CRYPT_FORMAT_CRYPTLIB ) ? KEYEX_CRYPTLIB : \
 			( formatType == CRYPT_FORMAT_PGP ) ? KEYEX_PGP : KEYEX_CMS;
 	DYNBUF auxDB;
 	const int encKeyMaxLength = ( encryptedKey == NULL ) ? \
 								0 : encryptedKeyMaxLength;
-	int status;
+	int exportAlgo, status;	/* int vs.enum */
 
 	assert( ( encryptedKey == NULL && encryptedKeyMaxLength == 0 ) || \
 			( encryptedKeyMaxLength >= MIN_CRYPT_OBJECTSIZE && \
@@ -697,9 +696,7 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 	/* Next we get the recipient information from the certificate into a 
 	   dynbuf */
 	status = dynCreate( &auxDB, iExportKey,
-						( exportAlgo == CRYPT_ALGO_KEA ) ? \
-							CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER : \
-							CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
+						CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
 	if( cryptStatusError( status ) )
 		{
 		( void ) krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE,

@@ -1315,6 +1315,21 @@ int checkCertVerify( const SESSION_INFO *sessionInfoPtr,
 		krnlSendNotifier( handshakeInfo->certVerifyContext, 
 						  IMESSAGE_DECREFCOUNT );
 		handshakeInfo->certVerifyContext = CRYPT_ERROR;
+#ifdef CONFIG_SUITEB_TESTS 
+		if( cryptStatusOK( status ) )
+			{
+			int sigKeySize;
+
+			status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext, 
+									  IMESSAGE_GETATTRIBUTE, &sigKeySize, 
+									  CRYPT_CTXINFO_KEYSIZE );
+			if( cryptStatusOK( status ) )
+				{
+				DEBUG_PRINT(( "Verified client's P%d authentication.\n", 
+							  bytesToBits( sigKeySize ) ));
+				}
+			}
+#endif /* CONFIG_SUITEB_TESTS */
 		}
 	return( status );
 	}
@@ -1599,9 +1614,16 @@ int checkKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr,
 		   hashsize n/n+1 and keysize n/n+1 and whatnot) */
 		if( sigKeySize < keyexKeySize - bitsToBytes( 8 ) )
 			return( CRYPT_ERROR_NOSECURE );
+#ifdef CONFIG_SUITEB
 		if( ( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB ) && \
 			sigKeySize > keyexKeySize + bitsToBytes( 8 ) )
 			return( CRYPT_ERROR_NOSECURE );
+  #ifdef CONFIG_SUITEB_TESTS 
+		DEBUG_PRINT(( "Verified server's P%d keyex with P%d signature.\n", 
+					  bytesToBits( keyexKeySize ), 
+					  bytesToBits( sigKeySize ) ));
+  #endif /* CONFIG_SUITEB_TESTS */
+#endif /* CONFIG_SUITEB */
 		}
 	else
 		{

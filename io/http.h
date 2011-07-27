@@ -62,7 +62,8 @@ int writeRequestHeader( INOUT STREAM *stream,
 						IN_OPT const HTTP_URI_INFO *httpReqInfo,
 						IN_BUFFER_OPT( contentTypeLen ) const char *contentType, 
 						IN_LENGTH_SHORT_Z const int contentTypeLen, 
-						IN_LENGTH_Z const int contentLength );
+						IN_LENGTH_Z const int contentLength,
+						const BOOLEAN forceGet );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sendHTTPData( INOUT STREAM *stream, 
 				  IN_BUFFER( length ) void *buffer, 

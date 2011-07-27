@@ -1,33 +1,32 @@
 /*
- ---------------------------------------------------------------------------
- Copyright (c) 1998-2008, Brian Gladman, Worcester, UK. All rights reserved.
+---------------------------------------------------------------------------
+Copyright (c) 1998-2010, Brian Gladman, Worcester, UK. All rights reserved.
 
- LICENSE TERMS
+The redistribution and use of this software (with or without changes)
+is allowed without the payment of fees or royalties provided that:
 
- The redistribution and use of this software (with or without changes)
- is allowed without the payment of fees or royalties provided that:
+  source code distributions include the above copyright notice, this
+  list of conditions and the following disclaimer;
 
-  1. source code distributions include the above copyright notice, this
-     list of conditions and the following disclaimer;
+  binary distributions include the above copyright notice, this list
+  of conditions and the following disclaimer in their documentation.
 
-  2. binary distributions include the above copyright notice, this list
-     of conditions and the following disclaimer in their documentation;
+This software is provided 'as is' with no explicit or implied warranties
+in respect of its operation, including, but not limited to, correctness
+and fitness for purpose.
+---------------------------------------------------------------------------
+Issue Date: 30/03/2011
 
-  3. the name of the copyright holder is not used to endorse products
-     built using this software without specific written permission.
+ My thanks to:
 
- DISCLAIMER
+   Colin Sinclair for finding an error and suggesting a number of
+   improvements to this code.
 
- This software is provided 'as is' with no explicit or implied warranties
- in respect of its properties, including, but not limited to, correctness
- and/or fitness for purpose.
- ---------------------------------------------------------------------------
- Issue Date: 07/10/2010
+   John Viega and David McGrew for their support in the development
+   of this code and to David for testing it on a big-endIAN system.
 
- My thanks to Colin Sinclair for finding an error and suggesting a number
- of improvements to this code. My thanks also to John Viega and David McGrew
- for their support in developing this code and to David for testing it on a
- big-endain system.
+   Mark Rodenkirch and Jason Papadopoulos for their help in finding
+   a bug in the fast buffer operations on big endian systems.
 */
 
 #if defined( INC_ALL )		/* pcg */
@@ -66,32 +65,44 @@
 
     If GF_REPRESENTATION is defined as one of:
 
-        (REVERSE_BYTES)                     // change to BB
-        (REVERSE_BITS)                      // change to LL
-        (REVERSE_BYTES | REVERSE_BITS)      // change to BL
+        REVERSE_BITS                      // change to LL
+        REVERSE_BYTES | REVERSE_BITS      // change to BL
+        REVERSE_NONE                      // no change
+        REVERSE_BYTES                     // change to BB
 
     then an appropriate change of representation will occur before and
     after calls to your revised field multiplier. To use this you need
     to add gf_convert.c to your application.
 */
-#undef GF_REPRESENTATION
 
 #if defined(__cplusplus)
 extern "C"
 {
 #endif
 
-#define BLOCK_SIZE      GCM_BLOCK_SIZE          /* block length                 */
-#define BLK_ADR_MASK    (BLOCK_SIZE - 1)        /* mask for 'in block' address  */
+#if 1
+#  undef GF_REPRESENTATION
+#elif 0
+#  define GF_REPRESENTATION REVERSE_BITS
+#elif 0
+#  define GF_REPRESENTATION REVERSE_BYTES | REVERSE_BITS
+#elif 0
+#  define GF_REPRESENTATION REVERSE_NONE
+#elif 0
+#  define GF_REPRESENTATION REVERSE_BITS
+#endif
+
+#define BLOCK_SIZE      GCM_BLOCK_SIZE      /* block length */
+#define BLK_ADR_MASK    (BLOCK_SIZE - 1)    /* mask for 'in block' address */
 #define CTR_POS         12
 
 #define inc_ctr(x)  \
     {   int i = BLOCK_SIZE; while(i-- > CTR_POS && !++(UI8_PTR(x)[i])) ; }
 
-ret_type gcm_init_and_key(                      /* initialise mode and set key  */
-            const unsigned char key[],          /* the key value                */
-            unsigned long key_len,              /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_init_and_key(                  /* initialise mode and set key */
+            const unsigned char key[],      /* the key value */
+            unsigned long key_len,          /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {
     memset(ctx->ghash_h, 0, sizeof(ctx->ghash_h));
 
@@ -151,10 +162,10 @@ void gf_mul_hh(gf_t a, gcm_ctx ctx[1])
 #endif
 }
 
-ret_type gcm_init_message(                      /* initialise a new message     */
-            const unsigned char iv[],           /* the initialisation vector    */
-            unsigned long iv_len,               /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_init_message(                  /* initialise a new message */
+            const unsigned char iv[],       /* the initialisation vector */
+            unsigned long iv_len,           /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {   uint_32t i, n_pos = 0;
     uint_8t *p;
 
@@ -194,10 +205,10 @@ ret_type gcm_init_message(                      /* initialise a new message     
     return RETURN_GOOD;
 }
 
-ret_type gcm_auth_header(                       /* authenticate the header      */
-            const unsigned char hdr[],          /* the header buffer            */
-            unsigned long hdr_len,              /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_auth_header(                   /* authenticate the header */
+            const unsigned char hdr[],      /* the header buffer */
+            unsigned long hdr_len,          /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {   uint_32t cnt = 0, b_pos = (uint_32t)ctx->hdr_cnt & BLK_ADR_MASK;
 
     if(!hdr_len)
@@ -251,10 +262,10 @@ ret_type gcm_auth_header(                       /* authenticate the header      
     return RETURN_GOOD;
 }
 
-ret_type gcm_auth_data(                         /* authenticate ciphertext data */
-            const unsigned char data[],         /* the data buffer              */
-            unsigned long data_len,             /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_auth_data(                     /* authenticate ciphertext data */
+            const unsigned char data[],     /* the data buffer */
+            unsigned long data_len,         /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {   uint_32t cnt = 0, b_pos = (uint_32t)ctx->txt_acnt & BLK_ADR_MASK;
 
     if(!data_len)
@@ -308,10 +319,10 @@ ret_type gcm_auth_data(                         /* authenticate ciphertext data 
     return RETURN_GOOD;
 }
 
-ret_type gcm_crypt_data(                        /* encrypt or decrypt data      */
-            unsigned char data[],               /* the data buffer              */
-            unsigned long data_len,             /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_crypt_data(                    /* encrypt or decrypt data */
+            unsigned char data[],           /* the data buffer */
+            unsigned long data_len,         /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {   uint_32t cnt = 0, b_pos = (uint_32t)ctx->txt_ccnt & BLK_ADR_MASK;
 
     if(!data_len)
@@ -358,7 +369,7 @@ ret_type gcm_crypt_data(                        /* encrypt or decrypt data      
     {
         if(b_pos == BLOCK_SIZE || !b_pos)
         {
-            inc_ctr(ctx->ctr_val);
+            inc_ctr(ctx->ctr_val); 
             aes_encrypt(UI8_PTR(ctx->ctr_val), UI8_PTR(ctx->enc_ctr), ctx->aes);
             b_pos = 0;
         }
@@ -369,12 +380,11 @@ ret_type gcm_crypt_data(                        /* encrypt or decrypt data      
     return RETURN_GOOD;
 }
 
-ret_type gcm_compute_tag(                       /* compute authentication tag   */
-            unsigned char tag[],                /* the buffer for the tag       */
-            unsigned long tag_len,              /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_compute_tag(                   /* compute authentication tag */
+            unsigned char tag[],            /* the buffer for the tag */
+            unsigned long tag_len,          /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {   uint_32t i, ln;
-    uint_64t tm;
     gf_t tbuf;
 
     if(ctx->txt_acnt != ctx->txt_ccnt && ctx->txt_ccnt > 0)
@@ -383,65 +393,83 @@ ret_type gcm_compute_tag(                       /* compute authentication tag   
     gf_mul_hh((void*)ctx->hdr_ghv, ctx);
     gf_mul_hh((void*)ctx->txt_ghv, ctx);
 
-#if 0   /* alternative versions of the exponentiation operation */
-    if(ctx->hdr_cnt && ((ln = (uint_32t)((ctx->txt_acnt + BLOCK_SIZE - 1) / BLOCK_SIZE)) != 0))
+    if(ctx->hdr_cnt)
     {
-        memcpy(tbuf, ctx->ghash_h, BLOCK_SIZE);
-#if defined(  GF_REPRESENTATION )
-        convert_representation(tbuf, tbuf, GF_REPRESENTATION);
-        convert_representation(ctx->hdr_ghv, ctx->hdr_ghv, GF_REPRESENTATION);
-#endif
-        for( ; ; )
+        ln = (uint_32t)((ctx->txt_acnt + BLOCK_SIZE - 1) / BLOCK_SIZE);
+        if(ln)
         {
-            if(ln & 1)
+#if 1       /* alternative versions of the exponentiation operation */
+            memcpy(tbuf, ctx->ghash_h, BLOCK_SIZE);
+#       if defined(  GF_REPRESENTATION )
+            convert_representation(tbuf, tbuf, GF_REPRESENTATION);
+            convert_representation(ctx->hdr_ghv, ctx->hdr_ghv, GF_REPRESENTATION);
+#       endif
+            for( ; ; )
             {
-                gf_mul((void*)ctx->hdr_ghv, tbuf);
+                if(ln & 1)
+                {
+                    gf_mul((void*)ctx->hdr_ghv, tbuf);
+                }
+                if(!(ln >>= 1))
+                    break;
+                gf_mul(tbuf, tbuf);
             }
-            if(!(ln >>= 1))
-                break;
-            gf_mul(tbuf, tbuf);
-        }
-#if defined(  GF_REPRESENTATION )
-        convert_representation(ctx->hdr_ghv, ctx->hdr_ghv, GF_REPRESENTATION);
+#else       /* this one seems slower on x86 and x86_64 :-( */
+            i = ln | ln >> 1; i |= i >> 2; i |= i >> 4;
+            i |= i >> 8; i |= i >> 16; i &= ~(i >> 1);
+            memset(tbuf, 0, BLOCK_SIZE);
+            UI8_PTR(tbuf)[0] = 0x80;
+            while(i)
+            {
+#           if defined(  GF_REPRESENTATION )
+                convert_representation(tbuf, tbuf, GF_REPRESENTATION);
+#           endif
+                gf_mul(tbuf, tbuf);
+#           if defined(  GF_REPRESENTATION )
+                convert_representation(tbuf, tbuf, GF_REPRESENTATION);
+#           endif
+                if(i & ln)
+                    gf_mul_hh(tbuf, ctx);
+                i >>= 1;
+            }
+#           if defined(  GF_REPRESENTATION )
+            convert_representation(tbuf, tbuf, GF_REPRESENTATION);
+            convert_representation(ctx->hdr_ghv, ctx->hdr_ghv, GF_REPRESENTATION);
+#           endif
+            gf_mul((void*)ctx->hdr_ghv, tbuf);
 #endif
+#if         defined(  GF_REPRESENTATION )
+            convert_representation(ctx->hdr_ghv, ctx->hdr_ghv, GF_REPRESENTATION);
+#           endif
+        }
     }
-#else   /* this one seems slower on x86 and x86_64 :-( */
-    if(ctx->hdr_cnt && ((ln = (uint_32t)((ctx->txt_acnt + BLOCK_SIZE - 1) / BLOCK_SIZE)) != 0))
-    {
-        i = ln | ln >> 1; i |= i >> 2; i |= i >> 4;
-        i |= i >> 8; i |= i >> 16; i = i & ~(i >> 1);
-        memset(tbuf, 0, BLOCK_SIZE);
-        tbuf[0] = 0x80;
-        while(i)
+
+    i = BLOCK_SIZE;
+#ifdef BRG_UI64
+    {   uint_64t tm = ((uint_64t)ctx->txt_acnt) << 3;
+        while(i-- > 0)
         {
-#if defined(  GF_REPRESENTATION )
-            convert_representation(tbuf, tbuf, GF_REPRESENTATION);
-#endif
-            gf_mul(tbuf, tbuf);
-#if defined(  GF_REPRESENTATION )
-            convert_representation(tbuf, tbuf, GF_REPRESENTATION);
-#endif
-            if(i & ln)
-                gf_mul_hh(tbuf, ctx);
-            i >>= 1;
+            UI8_PTR(ctx->hdr_ghv)[i] ^= UI8_PTR(ctx->txt_ghv)[i] ^ (unsigned char)tm;
+            tm = (i == 8 ? (((uint_64t)ctx->hdr_cnt) << 3) : tm >> 8);
         }
-#if defined(  GF_REPRESENTATION )
-        convert_representation(tbuf, tbuf, GF_REPRESENTATION);
-        convert_representation((void*)ctx->hdr_ghv, (void*)ctx->hdr_ghv, GF_REPRESENTATION);
-#endif
-        gf_mul((void*)ctx->hdr_ghv, tbuf);
-#if defined(  GF_REPRESENTATION )
-        convert_representation((void*)ctx->hdr_ghv, (void*)ctx->hdr_ghv, GF_REPRESENTATION);
-#endif
+    }
+#else
+    {   uint_32t tm = ctx->txt_acnt << 3;
+
+        while(i-- > 0)
+        {
+            UI8_PTR(ctx->hdr_ghv)[i] ^= UI8_PTR(ctx->txt_ghv)[i] ^ (unsigned char)tm;
+            if(i & 3)
+                tm >>= 8;
+            else if(i == 4)
+                tm = ctx->txt_acnt >> 29;
+            else if(i == 8)
+                tm = ctx->hdr_cnt << 3;
+            else
+                tm = ctx->hdr_cnt >> 29;
+        }
     }
 #endif
-    i = BLOCK_SIZE; 
-    tm = ((uint_64t)ctx->txt_acnt) << 3;
-    while(i-- > 0)
-    {
-        UI8_PTR(ctx->hdr_ghv)[i] ^= UI8_PTR(ctx->txt_ghv)[i] ^ (unsigned char)tm;
-        tm = (i == 8 ? (((uint_64t)ctx->hdr_cnt) << 3) | (ctx->txt_acnt >> 29) : tm >> 8);
-    }
 
     gf_mul_hh((void*)ctx->hdr_ghv, ctx);
 
@@ -454,17 +482,17 @@ ret_type gcm_compute_tag(                       /* compute authentication tag   
     return (ctx->txt_ccnt == ctx->txt_acnt ? RETURN_GOOD : RETURN_WARN);
 }
 
-ret_type gcm_end(                               /* clean up and end operation   */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_end(                           /* clean up and end operation */
+            gcm_ctx ctx[1])                 /* the mode context */
 {
     memset(ctx, 0, sizeof(gcm_ctx));
     return RETURN_GOOD;
 }
 
-ret_type gcm_encrypt(                           /* encrypt & authenticate data  */
-            unsigned char data[],               /* the data buffer              */
-            unsigned long data_len,             /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_encrypt(                       /* encrypt & authenticate data */
+            unsigned char data[],           /* the data buffer */
+            unsigned long data_len,         /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {
 
     gcm_crypt_data(data, data_len, ctx);
@@ -472,26 +500,26 @@ ret_type gcm_encrypt(                           /* encrypt & authenticate data  
     return RETURN_GOOD;
 }
 
-ret_type gcm_decrypt(                           /* authenticate & decrypt data  */
-            unsigned char data[],               /* the data buffer              */
-            unsigned long data_len,             /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_decrypt(                       /* authenticate & decrypt data */
+            unsigned char data[],           /* the data buffer */
+            unsigned long data_len,         /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {
     gcm_auth_data(data, data_len, ctx);
     gcm_crypt_data(data, data_len, ctx);
     return RETURN_GOOD;
 }
 
-ret_type gcm_encrypt_message(                   /* encrypt an entire message    */
-            const unsigned char iv[],           /* the initialisation vector    */
-            unsigned long iv_len,               /* and its length in bytes      */
-            const unsigned char hdr[],          /* the header buffer            */
-            unsigned long hdr_len,              /* and its length in bytes      */
-            unsigned char msg[],                /* the message buffer           */
-            unsigned long msg_len,              /* and its length in bytes      */
-            unsigned char tag[],                /* the buffer for the tag       */
-            unsigned long tag_len,              /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_encrypt_message(               /* encrypt an entire message */
+            const unsigned char iv[],       /* the initialisation vector */
+            unsigned long iv_len,           /* and its length in bytes */
+            const unsigned char hdr[],      /* the header buffer */
+            unsigned long hdr_len,          /* and its length in bytes */
+            unsigned char msg[],            /* the message buffer */
+            unsigned long msg_len,          /* and its length in bytes */
+            unsigned char tag[],            /* the buffer for the tag */
+            unsigned long tag_len,          /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {
     gcm_init_message(iv, iv_len, ctx);
     gcm_auth_header(hdr, hdr_len, ctx);
@@ -499,16 +527,16 @@ ret_type gcm_encrypt_message(                   /* encrypt an entire message    
     return gcm_compute_tag(tag, tag_len, ctx) ? RETURN_ERROR : RETURN_GOOD;
 }
 
-ret_type gcm_decrypt_message(                   /* decrypt an entire message    */
-            const unsigned char iv[],           /* the initialisation vector    */
-            unsigned long iv_len,               /* and its length in bytes      */
-            const unsigned char hdr[],          /* the header buffer            */
-            unsigned long hdr_len,              /* and its length in bytes      */
-            unsigned char msg[],                /* the message buffer           */
-            unsigned long msg_len,              /* and its length in bytes      */
-            const unsigned char tag[],          /* the buffer for the tag       */
-            unsigned long tag_len,              /* and its length in bytes      */
-            gcm_ctx ctx[1])                     /* the mode context             */
+ret_type gcm_decrypt_message(               /* decrypt an entire message */
+            const unsigned char iv[],       /* the initialisation vector */
+            unsigned long iv_len,           /* and its length in bytes */
+            const unsigned char hdr[],      /* the header buffer */
+            unsigned long hdr_len,          /* and its length in bytes */
+            unsigned char msg[],            /* the message buffer */
+            unsigned long msg_len,          /* and its length in bytes */
+            const unsigned char tag[],      /* the buffer for the tag */
+            unsigned long tag_len,          /* and its length in bytes */
+            gcm_ctx ctx[1])                 /* the mode context */
 {   uint_8t local_tag[BLOCK_SIZE];
     ret_type rr;
 

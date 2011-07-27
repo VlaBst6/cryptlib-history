@@ -12,24 +12,26 @@
   #include "asn1.h"
   #include "stream.h"
   #include "session.h"
+  #include "scorebrd.h"
 #else
   #include "enc_dec/asn1.h"
   #include "io/stream.h"
   #include "session/session.h"
+  #include "session/scorebrd.h"
 #endif /* Compiler-specific includes */
 
-/* The number of entries in the SSL session cache.  Note that when changing 
-   the SESSIONCACHE_SIZE value you need to also change MAX_ALLOC_SIZE in 
-   kernel/sec_mem.c to allow the allocation of such large amounts of secure 
-   memory */
+/* The number of entries in the SSL session cache.  Note that when increasing
+   the SESSIONCACHE_SIZE value to more than about 256 you need to also change 
+   MAX_ALLOC_SIZE in kernel/sec_mem.c to allow the allocation of such large 
+   amounts of secure memory */
 
 #if defined( CONFIG_CONSERVE_MEMORY )
-  #define SESSIONCACHE_SIZE			64
+  #define SESSIONCACHE_SIZE			8
 #else
-  #define SESSIONCACHE_SIZE			512
+  #define SESSIONCACHE_SIZE			64
 #endif /* CONFIG_CONSERVE_MEMORY */
 
-static SCOREBOARD_INFO scoreboardInfo;
+static SCOREBOARD_STATE scoreboardInfo;
 
 #ifdef USE_SESSIONS
 
@@ -518,7 +520,8 @@ static int openSession( OUT_HANDLE_OPT CRYPT_SESSION *iCryptSession,
 
 	/* If it's a session type that uses the scoreboard, set up the 
 	   scoreboard information for the session */
-	if( sessionType == CRYPT_SESSION_SSL_SERVER )
+	if( sessionType == CRYPT_SESSION_SSL || \
+		sessionType == CRYPT_SESSION_SSL_SERVER )
 		sessionInfoPtr->sessionSSL->scoreboardInfoPtr = &scoreboardInfo;
 
 	/* Check that the protocol info is OK */

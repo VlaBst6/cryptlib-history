@@ -50,13 +50,13 @@ static int writePgpSigPacketHeader( OUT_BUFFER_OPT( dataMaxLen, *dataLen ) \
 										const int sigType,
 									IN_LENGTH_SHORT_Z const int iAndSlength )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
 	STREAM stream;
 	MESSAGE_DATA msgData;
 	BYTE keyID[ PGP_KEYID_SIZE + 8 ];
 	BYTE iAndSHeader[ 64 + 8 ];
 	const time_t currentTime = getApproxTime();
-	int pgpHashAlgo, pgpSignAlgo, iAndSHeaderLength = 0, length, status;
+	int hashAlgo, signAlgo, pgpHashAlgo, pgpSignAlgo;	/* int vs.enum */
+	int iAndSHeaderLength = 0, length, status;
 
 	assert( ( data == NULL && dataMaxLen == 0 ) || \
 			isWritePtr( data, dataMaxLen ) );
@@ -76,23 +76,22 @@ static int writePgpSigPacketHeader( OUT_BUFFER_OPT( dataMaxLen, *dataLen ) \
 
 	/* Get the signature information */
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &hashAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM2 : status );
-	if( cryptStatusError( cryptlibToPgpAlgo( cryptAlgo, &pgpHashAlgo ) ) )
+	if( cryptStatusError( cryptlibToPgpAlgo( hashAlgo, &pgpHashAlgo ) ) )
 		return( CRYPT_ARGERROR_NUM2 );
 	status = krnlSendMessage( iSignContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
-	if( cryptStatusOK( status ) )
-		{
-		setMessageData( &msgData, keyID, PGP_KEYID_SIZE );
-		status = krnlSendMessage( iSignContext, IMESSAGE_GETATTRIBUTE_S,
-								  &msgData, CRYPT_IATTRIBUTE_KEYID_OPENPGP );
-		}
+							  &signAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM1 : status );
-	if( cryptStatusError( cryptlibToPgpAlgo( cryptAlgo, &pgpSignAlgo ) ) )
+	if( cryptStatusError( cryptlibToPgpAlgo( signAlgo, &pgpSignAlgo ) ) )
 		return( CRYPT_ARGERROR_NUM1 );
+	setMessageData( &msgData, keyID, PGP_KEYID_SIZE );
+	status = krnlSendMessage( iSignContext, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_IATTRIBUTE_KEYID_OPENPGP );
+	if( cryptStatusError( status ) )
+		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM1 : status );
 
 	/* Write the issuerAndSerialNumber packet header if necessary.  Since
 	   this is a variable-length packet we need to pre-encode it before we

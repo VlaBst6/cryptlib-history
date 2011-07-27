@@ -53,17 +53,6 @@ static BOOLEAN handleCertError( const CRYPT_CERTIFICATE cryptCert,
 		return( FALSE );
 		}
 
-	/* Some old certs use deprecated or now-broken algorithms which will 
-	   produce a CRYPT_ERROR_NOTAVAIL if we try and verify the signature, 
-	   treat this as a special case */
-	if( certNo == 1 && errorCode == CRYPT_ERROR_NOTAVAIL )
-		{
-		puts( "Warning: The hash/signature algorithm required to verify "
-			  "this certificate\n         isn't enabled in this build of "
-			  "cryptlib, can't verify the certificate\n         signature." );
-		return( TRUE );
-		}
-
 	/* Make sure that we don't fail just because the certificate that we're 
 	   using as a test has expired */
 	if( errorLocus == CRYPT_CERTINFO_VALIDTO )
@@ -75,36 +64,18 @@ static BOOLEAN handleCertError( const CRYPT_CERTIFICATE cryptCert,
 
 	/* RegTP CA certs are marked as non-CA certs, report the problem and 
 	   continue */
-	if( certNo == 4 && errorLocus == CRYPT_CERTINFO_CA )
+	if( certNo == 3 && errorLocus == CRYPT_CERTINFO_CA )
 		{
 		puts( "Warning: Validity check failed due to RegTP CA certificate "
 			  "incorrectly\n         marked as non-CA certificate." );
 		return( TRUE );
 		}
 
-	/* Certificate #25 is a special-case test certificate used to check the 
-	   ability to detect invalid PKCS #1 padding */
-	if( certNo == 25 )
-		{
-		puts( "Warning: Certificate contains invalid PKCS #1 padding for "
-			  "exponent-3 RSA\n         key, the certificate signature is "
-			  "invalid." );
-		if( errorCode == CRYPT_ERROR_BADDATA )
-			{
-			puts( "  (This is the correct result for this test)." );
-			return( TRUE );
-			}
-
-		/* Not detecting this is an error */
-		puts( "  (This should have been detected but wasn't)." );
-		return( FALSE );
-		}
-
-	/* Certificate #31 has an invalid keyUsage for the key it contains, it's
+	/* Certificate #26 has an invalid keyUsage for the key it contains, it's
 	   used in order to check for the ability to handle a non-hole BIT 
 	   STRING in a location where a hole encoding is normally used so we 
 	   don't care about this particular problem */
-	if( certNo == 31 && errorLocus == CRYPT_CERTINFO_KEYUSAGE )
+	if( certNo == 26 && errorLocus == CRYPT_CERTINFO_KEYUSAGE )
 		{
 		puts( "Warning: Validity check failed due to CA certificate with "
 			  "incorrect\n         key usage field (this will be ignored "
@@ -140,9 +111,8 @@ static int certImport( const int certNo, const BOOLEAN isECC,
 	/* Import the certificate */
 	status = cryptImportCert( buffer, count, CRYPT_UNUSED,
 							  &cryptCert );
-	if( status == CRYPT_ERROR_NOSECURE && !isECC && \
-		( certNo == 5 || certNo == 12 || certNo == 13 || certNo == 20 || \
-		  certNo == 25 ) )
+	if( status == CRYPT_ERROR_NOSECURE && !( isECC || isBase64 ) && \
+		( certNo == 9 || certNo == 10 ) )	/* 9 = 512-bit, 10 = P12 512-bit */
 		{
 		/* Some older certs use totally insecure 512-bit keys and can't be
 		   processed unless we deliberately allow insecure keys.  
@@ -154,15 +124,16 @@ static int certImport( const int certNo, const BOOLEAN isECC,
 			  "uses a very short\n         (insecure) key.\n" );
 		return( TRUE );
 		}
-	if( status == CRYPT_ERROR_BADDATA && !isECC && \
-		( certNo == 4 || certNo == 7 ) )
+	if( status == CRYPT_ERROR_BADDATA && !( isECC || isBase64 ) \
+		&& certNo == 3 )
 		{
 		puts( "Warning: Certificate import failed for RegTP/Deutsche "
 			  "Telekom CA\n         certificate with negative public-key "
 			  "values.\n" );
 		return( TRUE );
 		}
-	if( status == CRYPT_ERROR_NOTAVAIL && !isECC && certNo == 26 )
+	if( status == CRYPT_ERROR_NOTAVAIL && !( isECC || isBase64 ) && \
+		certNo == 21 )
 		{
 		/* This is an ECDSA certificate, the algorithm isn't enabled by 
 		   default */
@@ -249,7 +220,7 @@ int testCertImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 35; i++ )
+	for( i = 1; i <= 30; i++ )
 		{
 		if( !certImport( i, FALSE, FALSE ) )
 			return( FALSE );
@@ -549,6 +520,13 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 			return( TRUE );
 			}
 		}
+	if( errorLocus == CRYPT_CERTINFO_CERTIFICATE )
+		{
+		puts( "\nCertificate chain is incomplete (one or more certificates "
+			  "needed to\ncomplete the chain are missing), skipping "
+			  "signature check..." );
+		return( TRUE );
+		}
 
 	/* If we changed settings, restore their original values */
 	if( trustValue != CRYPT_UNUSED )
@@ -556,7 +534,7 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 
 	/* If we've got a long-enough chain, try again with the next-to-last 
 	   certificate marked as trusted */
-	if( cryptStatusOK( status ) && certNo == 5 )
+	if( cryptStatusOK( status ) && certNo == 4 )
 		{
 		puts( "signatures verified." );
 		puts( "Checking again with an intermediate certificate marked as "
@@ -591,17 +569,6 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 							   CRYPT_CERTINFO_TRUSTED_IMPLICIT, 
 							   trustValue );
 			}
-		}
-
-	/* Some old certs use deprecated or now-broken algorithms which will 
-	   produce a CRYPT_ERROR_NOTAVAIL if we try and verify the signature, 
-	   treat this as a special case */
-	if( certNo == 2 && status == CRYPT_ERROR_NOTAVAIL )
-		{
-		puts( "\nWarning: The hash/signature algorithm required to verify "
-			  "this certificate\n         isn't enabled in this build of "
-			  "cryptlib, can't verify the certificate\n         signature." );
-		return( TRUE );
 		}
 
 	/* If the lowered-limits check still didn't work, it's an error */
@@ -650,7 +617,7 @@ static int certChainImport( const int certNo, const BOOLEAN isBase64 )
 	if( cryptStatusError( status ) )
 		{
 		/* If we failed on the RSA e=3 certificate, this is a valid result */
-		if( certNo == 3 && status == CRYPT_ERROR_BADDATA )
+		if( certNo == 2 && status == CRYPT_ERROR_BADDATA )
 			{
 			printf( "Import of certificate with invalid e=3 key failed, "
 					"line %d.\n", __LINE__ );
@@ -659,7 +626,7 @@ static int certChainImport( const int certNo, const BOOLEAN isBase64 )
 			}
 		return( handleCertImportError( status, __LINE__ ) );
 		}
-	if( certNo == 3 )
+	if( certNo == 2 )
 		{
 		printf( "Import of certificate with invalid e=3 key succeeded when "
 				"it should have\n  failed, line %d.\n", __LINE__ );

@@ -609,7 +609,7 @@ static int decodeBase64chunk( INOUT STREAM *stream,
 		if( c0 == BEOF )
 			{
 			/* No more input, we're done */
-			return( 0 );
+			return( OK_SPECIAL );
 			}
 		if( c0 == BERR || c1 == BEOF || c1 == BERR )
 			{

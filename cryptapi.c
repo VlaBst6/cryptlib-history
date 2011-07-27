@@ -327,9 +327,7 @@ static int cmdCreateObjectIndirect( void *stateInfo, COMMAND_INFO *cmd )
 
 static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
-	CRYPT_MODE_TYPE cryptMode = CRYPT_MODE_NONE;
-	int status;
+	int algorithm, mode = CRYPT_MODE_NONE, status;	/* int vs.enum */
 
 	assert( cmd->type == COMMAND_DECRYPT );
 	assert( cmd->flags == COMMAND_FLAG_NONE );
@@ -340,19 +338,19 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 
 	/* Perform basic server-side error checking */
 	status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &algorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
+	if( algorithm <= CRYPT_ALGO_LAST_CONVENTIONAL )
 		{
 		status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE,
-								  &cryptMode, CRYPT_CTXINFO_MODE );
+								  &mode, CRYPT_CTXINFO_MODE );
 		if( cryptStatusError( status ) )
 				return( status );
 		}
 	else
 		{
-		if( cryptAlgo <= CRYPT_ALGO_LAST_PKC )
+		if( algorithm <= CRYPT_ALGO_LAST_PKC )
 			{
 			int blockSize;
 
@@ -366,7 +364,7 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 		}
 	if( cmd->strArgLen[ 0 ] < 0 )
 		return( CRYPT_ARGERROR_NUM1 );
-	if( cryptMode == CRYPT_MODE_ECB || cryptMode == CRYPT_MODE_CBC )
+	if( mode == CRYPT_MODE_ECB || mode == CRYPT_MODE_CBC )
 		{
 		int blockSize;
 
@@ -379,7 +377,7 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 		}
 
 	/* Make sure the IV has been set */
-	if( needsIV( cryptMode ) && !isStreamCipher( cryptAlgo ) )
+	if( needsIV( mode ) && !isStreamCipher( algorithm ) )
 		{
 		MESSAGE_DATA msgData;
 
@@ -391,12 +389,12 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 		}
 
 	status = krnlSendMessage( cmd->arg[ 0 ],
-							  ( isHashAlgo( cryptAlgo ) || \
-							    isMacAlgo( cryptAlgo ) ) ? \
+							  ( isHashAlgo( algorithm ) || \
+							    isMacAlgo( algorithm ) ) ? \
 								MESSAGE_CTX_HASH : MESSAGE_CTX_DECRYPT,
 							  cmd->strArgLen[ 0 ] ? cmd->strArg[ 0 ] : "",
 							  cmd->strArgLen[ 0 ] );
-	if( isHashAlgo( cryptAlgo ) || isMacAlgo( cryptAlgo ) )
+	if( isHashAlgo( algorithm ) || isMacAlgo( algorithm ) )
 		{
 		/* There's no data to return since the hashing doesn't change it */
 		cmd->strArgLen[ 0 ] = 0;
@@ -509,9 +507,7 @@ static int cmdDestroyObject( void *stateInfo, COMMAND_INFO *cmd )
 
 static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
-	CRYPT_MODE_TYPE cryptMode = CRYPT_MODE_NONE;
-	int status;
+	int algorithm, mode = CRYPT_MODE_NONE, status;	/* int vs.enum */
 
 	assert( cmd->type == COMMAND_ENCRYPT );
 	assert( cmd->flags == COMMAND_FLAG_NONE );
@@ -522,19 +518,19 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 
 	/* Perform basic server-side error checking */
 	status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &algorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
+	if( algorithm <= CRYPT_ALGO_LAST_CONVENTIONAL )
 		{
 		status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE,
-								  &cryptMode, CRYPT_CTXINFO_MODE );
+								  &mode, CRYPT_CTXINFO_MODE );
 		if( cryptStatusError( status ) )
 				return( status );
 		}
 	else
 		{
-		if( cryptAlgo <= CRYPT_ALGO_LAST_PKC )
+		if( algorithm <= CRYPT_ALGO_LAST_PKC )
 			{
 			int blockSize;
 
@@ -546,7 +542,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 				return( status );
 			}
 		}
-	if( isHashAlgo( cryptAlgo ) || isMacAlgo( cryptAlgo ) )
+	if( isHashAlgo( algorithm ) || isMacAlgo( algorithm ) )
 		{
 		/* For hash and MAC operations a length of zero is valid since this
 		   is an indication to wrap up the hash operation */
@@ -558,7 +554,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 		if( cmd->strArgLen[ 0 ] <= 0 )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
-	if( cryptMode == CRYPT_MODE_ECB || cryptMode == CRYPT_MODE_CBC )
+	if( mode == CRYPT_MODE_ECB || mode == CRYPT_MODE_CBC )
 		{
 		int blockSize;
 
@@ -571,7 +567,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 		}
 
 	/* If there's no IV set, generate one ourselves */
-	if( needsIV( cryptMode ) && !isStreamCipher( cryptAlgo ) )
+	if( needsIV( mode ) && !isStreamCipher( algorithm ) )
 		{
 		MESSAGE_DATA msgData;
 
@@ -588,12 +584,12 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 		}
 
 	status = krnlSendMessage( cmd->arg[ 0 ],
-							  ( isHashAlgo( cryptAlgo ) || \
-								isMacAlgo( cryptAlgo ) ) ? \
+							  ( isHashAlgo( algorithm ) || \
+								isMacAlgo( algorithm ) ) ? \
 								MESSAGE_CTX_HASH : MESSAGE_CTX_ENCRYPT,
 							  cmd->strArgLen[ 0 ] ? cmd->strArg[ 0 ] : "",
 							  cmd->strArgLen[ 0 ] );
-	if( isHashAlgo( cryptAlgo ) || isMacAlgo( cryptAlgo ) )
+	if( isHashAlgo( algorithm ) || isMacAlgo( algorithm ) )
 		{
 		/* There's no data to return since the hashing doesn't change it */
 		cmd->strArgLen[ 0 ] = 0;
@@ -4024,3 +4020,17 @@ C_RET cryptDeleteCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 #include "docs/cryptapi_ext.c"
 
 #endif /* Debug-mode only test code */
+
+#ifdef CONFIG_SUITEB_TESTS 
+
+/* Special kludge function to enable nonstandard behaviour for Suite B 
+   tests.  This just passes the call on down to the low-level internal
+   Suite B configuration code */
+
+int sslSuiteBTestConfig( const int magicValue );
+
+C_RET cryptSuiteBTestConfig( C_IN int magicValue )
+	{
+	return( sslSuiteBTestConfig( magicValue ) );
+	}
+#endif /* CONFIG_SUITEB_TESTS  */

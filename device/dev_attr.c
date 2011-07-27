@@ -262,10 +262,6 @@ int getDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
 					errorInfo = &deviceInfoPtr->devicePKCS11->errorInfo;
 					break;
 
-				case CRYPT_DEVICE_FORTEZZA:
-					errorInfo = &deviceInfoPtr->deviceFortezza->errorInfo;
-					break;
-
 				case CRYPT_DEVICE_CRYPTOAPI:
 					errorInfo = &deviceInfoPtr->deviceCryptoAPI->errorInfo;
 					break;

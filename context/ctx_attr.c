@@ -158,8 +158,8 @@ int getContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 				}
 			if( value <= 0 )
 				{
-				/* If a key hasn't been loaded yet we return the default
-				   key size */
+				/* If a key hasn't been loaded yet then we return the 
+				   default key size */
 				value = capabilityInfoPtr->keySize;
 				}
 			*valuePtr = value;
@@ -365,24 +365,6 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 			return( attributeCopy( msgData, contextInfoPtr->ctxPKC->openPgpKeyID,
 								   PGP_KEYID_SIZE ) );
 
-#ifdef USE_KEA
-		case CRYPT_IATTRIBUTE_KEY_KEADOMAINPARAMS:
-			REQUIRES( contextType == CONTEXT_PKC );
-
-			return( attributeCopy( msgData, contextInfoPtr->ctxPKC->domainParamPtr,
-								   contextInfoPtr->ctxPKC->domainParamSize ) );
-
-		case CRYPT_IATTRIBUTE_KEY_KEAPUBLICVALUE:
-			REQUIRES( contextType == CONTEXT_PKC );
-
-			return( attributeCopy( msgData, contextInfoPtr->ctxPKC->publicValuePtr,
-								   contextInfoPtr->ctxPKC->publicValueSize ) );
-#else
-		case CRYPT_IATTRIBUTE_KEY_KEADOMAINPARAMS:
-		case CRYPT_IATTRIBUTE_KEY_KEAPUBLICVALUE:
-			return( CRYPT_ERROR_NOTFOUND );
-#endif /* USE_KEA */
-
 		case CRYPT_IATTRIBUTE_KEY_SPKI:
 		case CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL:
 			/* CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL is used to read from dummy
@@ -490,7 +472,7 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	const CONTEXT_TYPE contextType = contextInfoPtr->type;
-	int *valuePtr, status;
+	int *valuePtr;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
@@ -556,9 +538,13 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 											KEYPARAM_MODE, NULL, value ) );
 
 		case CRYPT_CTXINFO_KEYSIZE:
-			{
-			int keySize;
+			/* Make sure that the requested size is within range */
+			if( value < capabilityInfoPtr->minKeySize || \
+				value > capabilityInfoPtr->maxKeySize )
+				return( CRYPT_ARGERROR_NUM1 );
 
+			/* Get the location to store the key size and make sure that 
+			   it's not already set */
 			switch( contextType )
 				{
 				case CONTEXT_CONV:
@@ -587,14 +573,29 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 			/* Trim the user-supplied value to the correct shape, taking
 			   into account various issues such as limitations with the
 			   underlying crypto code/hardware and interop problems with 
-			   algorithms that allow excessively long keys */
-			status = adjustUserKeySize( contextInfoPtr, value, &keySize );
-			if( cryptStatusError( status ) )
-				return( status );
-			*valuePtr = ( contextType == CONTEXT_PKC ) ? \
-						bytesToBits( keySize ) : keySize;
+			   algorithms that allow excessively long keys.  In virtute sunt 
+			   multi ascensus.
+
+			   If it's a PKC key then there's nothing further to do, since 
+			   the range check above is all that we need.  ECC keys are a 
+			   bit complicated because if we're using fixed curve parameters 
+			   (which in practice we always do) there are only a small 
+			   number of quantised key sizes that we can use, but since some 
+			   of those correspond to very odd bit sizes like 521 bits that 
+			   can't be specified as an integral byte count what we do in 
+			   the ECC code is use the nearest fixed curve parameters equal 
+			   to or above the given value, avoiding the need for the caller 
+			   to play guessing games as to which byte-count value 
+			   corresponds to which curve.
+			   
+			   For conventional/MAC keys we need to limit the maximum 
+			   working key length to a sane size since the other side may 
+			   not be able to handle stupidly large keys */
+			if( contextType == CONTEXT_PKC )
+				*valuePtr = bytesToBits( value );
+			else
+				*valuePtr = min( value, MAX_WORKING_KEYSIZE );
 			return( CRYPT_OK );
-			}
 
 		case CRYPT_CTXINFO_BLOCKSIZE:
 			REQUIRES( contextType == CONTEXT_HASH || \

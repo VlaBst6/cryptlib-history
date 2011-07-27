@@ -21,14 +21,14 @@
 
 				|  Cert	|  Attr	|  P10	|Cr.Req	|Rv.Req	
 	------------+-------+-------+-------+-------+-------+
-	STDATTR		|	X	|		|		|		|		|
-	ISSUERATTR	|	X	|	X	|		|		|		|
+	STDATTR		|	X[1]|		|		|		|		| Setup 
+	ISSUERATTR	|	X	|	X	|		|		|		| action
 	ISSUERDN	|	X	|	X	|		|		|		|
 	VALPERIOD	|	X	|	X	|		|		|		|
 	VALINFO		|		|		|		|		|		|
 	REVINFO		|		|		|		|		|		|
 	------------+-------+-------+-------+-------+-------+
-	SPKI		|	X	|		|	X	|	X	|		|
+	SPKI		|	X	|		|	X	|	X	|		| Check
 	DN			|	X	|	X	|		|		|		|
 	DN_PART		|		|		|	X	|	X	|		|
 	ISSUERDN	|	X	|	X	|		|		|	X	|
@@ -40,14 +40,14 @@
 
 				|RTCS Rq|RTCS Rs|OCSP Rq|OCSP Rs|  CRL	|CRLentr|
 	------------+-------+-------+-------+-------+-------+-------+
-	STDATTR		|		|		|		|		|		|		|
-	ISSUERATTR	|		|		|		|		|	X	|		|
+	STDATTR		|		|		|		|		|		|		| Setup 
+	ISSUERATTR	|		|		|		|		|	X	|		| action
 	ISSUERDN	|		|		|		|		|	X	|		|
 	VALPERIOD	|		|		|		|		|		|		|
 	VALINFO		|	X	|		|		|		|		|		|
 	REVINFO		|		|		|	X	|		|	X	|	X	|
 	------------+-------+-------+-------+-------+-------+-------+
-	SPKI		|		|		|		|		|		|		|
+	SPKI		|		|		|		|		|		|		| Check
 	DN			|		|		|		|	X	|		|		|
 	DN_PART		|		|		|		|		|		|		|
 	ISSUERDN	|		|		|		|		|	X	|		|
@@ -56,7 +56,15 @@
 	SERIALNO	|		|		|		|		|		|		|
 	VALENTRIES	|	X	|		|		|		|		|		|
 	REVENTRIES	|		|		|	X	|	X	|		|		|
-	------------+-------+-------+-------+-------+-------+-------+ */
+	------------+-------+-------+-------+-------+-------+-------+ 
+
+   We have to be careful here to avoid race conditions when some of the 
+   checks depend on setup actions having been performed first but some of
+   the setup actions require that checks be performed first.  The noted
+   exceptions are:
+
+	[1] Requires that the SPKI check be performed first since STDATTR
+		evaluates keyUsage from the SPKI */
 
 #ifdef USE_CERTIFICATES
 
@@ -82,7 +90,7 @@ static int addStandardExtensions( INOUT CERT_INFO *certInfoPtr )
 	/* Get the implicit keyUsage flags (based on any extended key usage 
 	   extensions present) and explicit key usage flags, which we use to 
 	   extend the basic keyUsage flags if required */
- 	status = getKeyUsageFromExtKeyUsage( certInfoPtr, &extKeyUsage,
+	status = getKeyUsageFromExtKeyUsage( certInfoPtr, &extKeyUsage,
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -348,6 +356,21 @@ int preEncodeCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 	   these aren't already present */
 	if( actions & PRE_SET_STANDARDATTR )
 		{
+		/* Setting the standard attributes requires the presence of a public
+		   key to get keyUsage information from, so we have to check this
+		   before we can add any attributes.  This would normally be checked 
+		   as part of the range of checking performedin 
+		   preCheckCertificate(), but that isn't called until the pre-
+		   encoding functions here have been performed */
+		if( subjectCertInfoPtr->publicKeyInfo == NULL )
+			{
+			setErrorInfo( subjectCertInfoPtr, 
+						  CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO,
+						  CRYPT_ERRTYPE_ATTR_ABSENT );
+			return( CRYPT_ERROR_NOTINITED );
+			}
+
+		/* Attributes are only allowed with version 3 certificates */
 		if( subjectCertInfoPtr->version >= 3 )
 			{
 			status = addStandardExtensions( subjectCertInfoPtr );

@@ -24,13 +24,16 @@
 
 /* Perform a pairwise consistency test on a public/private key pair */
 
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr,
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN pairwiseConsistencyTest( INOUT CONTEXT_INFO *contextInfoPtr,
 										const BOOLEAN isGeneratedKey )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	DLP_PARAMS dlpParams;
 	BYTE buffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 32 + 8 ];
 	int encrSize, status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* Encrypt with the public key.  We  */
 	memset( buffer, 0, CRYPT_MAX_PKCSIZE );
@@ -171,6 +174,7 @@ static const BYTE FAR_BSS kRandomVal[] = {
 	0x17, 0x03, 0x95, 0x50, 0xB7, 0xA1, 0x11, 0xBA,
 	};
 
+CHECK_RETVAL \
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -185,27 +189,27 @@ static int selfTest( void )
 		return( CRYPT_ERROR_FAILED );
 	status = importBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
 						   dlpTestKey.pLen, DLPPARAM_MIN_P, 
-						   DLPPARAM_MAX_P, NULL, SHORTKEY_CHECK_PKC );
+						   DLPPARAM_MAX_P, NULL, KEYSIZE_CHECK_PKC );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->dlpParam_g, dlpTestKey.g, 
 							   dlpTestKey.gLen, DLPPARAM_MIN_G, 
 							   DLPPARAM_MAX_G, &pkcInfo->dlpParam_p, 
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->dlpParam_q, dlpTestKey.q, 
 							   dlpTestKey.qLen, DLPPARAM_MIN_Q, 
 							   DLPPARAM_MAX_Q, &pkcInfo->dlpParam_p,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->dlpParam_y, dlpTestKey.y, 
 							   dlpTestKey.yLen, DLPPARAM_MIN_Y, 
 							   DLPPARAM_MAX_Y, &pkcInfo->dlpParam_p,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->dlpParam_x, dlpTestKey.x, 
 							   dlpTestKey.xLen, DLPPARAM_MIN_X, 
 							   DLPPARAM_MAX_X, &pkcInfo->dlpParam_p,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		{
 		staticDestroyContext( &contextInfo );
@@ -302,11 +306,12 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		{
 		status = importBignum( k, ( BYTE * ) kVal, ELGAMAL_SIGPART_SIZE, 
 							   ELGAMAL_SIGPART_SIZE, ELGAMAL_SIGPART_SIZE, 
-							   q, SHORTKEY_CHECK_NONE );
+							   q, KEYSIZE_CHECK_NONE );
 		}
 	else
 		{
-		status = generateBignum( k, bytesToBits( ELGAMAL_SIGPART_SIZE ) + 32,
+		status = generateBignum( k, bytesToBits( ELGAMAL_SIGPART_SIZE + \
+												 DLP_OVERFLOW_SIZE ), 
 								 0x80, 0, FALSE );
 		}
 	if( cryptStatusError( status ) )
@@ -332,7 +337,7 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 	/* Move the data from the buffer into a bignum */
 	status = importBignum( s, bufPtr, ELGAMAL_SIGPART_SIZE, q, 
-						   SHORTKEY_CHECK_NONE );
+						   KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -386,7 +391,7 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		u2 = BN_new();
 
 		status = importBignum( hash, buffer, ELGAMAL_SIGPART_SIZE, 
-							   &pkcInfo->dlpParam_p, SHORTKEY_CHECK_NONE );
+							   &pkcInfo->dlpParam_p, KEYSIZE_CHECK_NONE );
 		if( cryptStatusError( status ) )
 			return( status );
 
@@ -425,7 +430,10 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
    to the name since some systems already have 'encrypt' and 'decrypt' in
    their standard headers */
 
-static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+					  IN_LENGTH_FIXED( sizeof( DLP_PARAMS ) ) int noBytes )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
@@ -437,13 +445,17 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	const int length = bitsToBytes( pkcInfo->keySizeBits );
 	int i, bnStatus = BN_STATUS, status;
 
-	assert( noBytes == sizeof( DLP_PARAMS ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( dlpParams, sizeof( DLP_PARAMS ) ) );
 	assert( isReadPtr( dlpParams->inParam1, dlpParams->inLen1 ) );
-	assert( dlpParams->inLen1 == length );
-	assert( dlpParams->inParam2 == NULL && \
-			( dlpParams->inLen2 == 0 || dlpParams->inLen2 == -999 ) );
 	assert( isWritePtr( dlpParams->outParam, dlpParams->outLen ) );
-	assert( dlpParams->outLen >= ( 2 + length ) * 2 );
+
+	REQUIRES( noBytes == sizeof( DLP_PARAMS ) );
+	REQUIRES( dlpParams->inLen1 == length );
+	REQUIRES( dlpParams->inParam2 == NULL && \
+			  ( dlpParams->inLen2 == 0 || dlpParams->inLen2 == -999 ) );
+	REQUIRES( dlpParams->outLen >= ( 2 + length ) * 2 && \
+			  dlpParams->outLen < MAX_INTLENGTH_SHORT );
 
 	/* Make sure that we're not being fed suspiciously short data 
 	   quantities.  importBignum() performs a more rigorous check, but we
@@ -470,7 +482,7 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	if( dlpParams->inLen2 == -999 )
 		{
 		status = importBignum( k, ( BYTE * ) kRandomVal, length, 
-							   length, length, NULL, SHORTKEY_CHECK_NONE );
+							   length, length, NULL, KEYSIZE_CHECK_NONE );
 		}
 	else
 		{
@@ -478,7 +490,8 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		   in the DSA code to avoid bias in the output (the only real
 		   difference is that we eventually reduce it mode phi(p) rather than
 		   mod q) */
-		status = generateBignum( k, bytesToBits( length ) + 32, 0x80, 0 );
+		status = generateBignum( k, bytesToBits( length + \
+												 DLP_OVERFLOW_SIZE ), 0x80, 0 );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -506,7 +519,7 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	/* Move the input data into a bignum */
 	status = importBignum( tmp, ( BYTE * ) dlpParams->inParam1, length,
 						   MIN_PKCSIZE - 8, CRYPT_MAX_PKCSIZE, p, 
-						   SHORTKEY_CHECK_NONE );
+						   KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -543,7 +556,10 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Decrypt a single block of data */
 
-static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int decryptFn( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+					  IN_LENGTH_FIXED( sizeof( DLP_PARAMS ) ) int noBytes )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
@@ -552,12 +568,17 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	const int length = bitsToBytes( pkcInfo->keySizeBits );
 	int offset, dummy, bnStatus = BN_STATUS, status;
 
-	assert( noBytes == sizeof( DLP_PARAMS ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( dlpParams, sizeof( DLP_PARAMS ) ) );
 	assert( isReadPtr( dlpParams->inParam1, dlpParams->inLen1 ) );
-	assert( dlpParams->inLen1 >= ( 2 + ( length - 2 ) ) * 2 );
-	assert( dlpParams->inParam2 == NULL && dlpParams->inLen2 == 0 );
 	assert( isWritePtr( dlpParams->outParam, dlpParams->outLen ) );
-	assert( dlpParams->outLen >= length );
+
+	REQUIRES( noBytes == sizeof( DLP_PARAMS ) );
+	REQUIRES( dlpParams->inLen1 >= ( 2 + ( length - 2 ) ) * 2 && \
+			  dlpParams->inLen1 < MAX_INTLENGTH_SHORT );
+	REQUIRES( dlpParams->inParam2 == NULL && dlpParams->inLen2 == 0 );
+	REQUIRES( dlpParams->outLen >= length && \
+			  dlpParams->outLen < MAX_INTLENGTH_SHORT );
 
 	/* Decode the values from a DL data block and make sure that r and s are
 	   valid, i.e. r, s = [1...p-1] */
@@ -610,11 +631,20 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Load key components into an encryption context */
 
-static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
-					const int keyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+					IN_BUFFER_OPT( keyLength ) const void *key,
+					IN_LENGTH_SHORT_OPT const int keyLength )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
-	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( key == NULL && keyLength == 0 ) || \
+			( isReadPtr( key, keyLength ) && \
+			  keyLength == sizeof( CRYPT_PKCINFO_DLP ) ) );
+
+	REQUIRES( ( key == NULL && keyLength == 0 ) || \
+			  ( key != NULL && keyLength == sizeof( CRYPT_PKCINFO_DLP ) ) );
 
 #ifndef USE_FIPS140
 	/* Load the key component from the external representation into the
@@ -622,6 +652,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( key != NULL )
 		{
 		const CRYPT_PKCINFO_DLP *egKey = ( CRYPT_PKCINFO_DLP * ) key;
+		int status;
 
 		/* Load the key components into the bignums */
 		contextInfoPtr->flags |= ( egKey->isPublicKey ) ? \
@@ -629,31 +660,31 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		status = importBignum( &pkcInfo->dlpParam_p, egKey->p, 
 							   bitsToBytes( egKey->pLen ),
 							   DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL, 
-							   SHORTKEY_CHECK_PKC );
+							   KEYSIZE_CHECK_PKC );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->dlpParam_g, egKey->g, 
 								   bitsToBytes( egKey->gLen ),
 								   DLPPARAM_MIN_G, DLPPARAM_MAX_G,
 								   &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->dlpParam_q, egKey->q, 
 								   bitsToBytes( egKey->qLen ),
 								   DLPPARAM_MIN_Q, DLPPARAM_MAX_Q,
 								   &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->dlpParam_y, egKey->y, 
 								   bitsToBytes( egKey->yLen ),
 								   DLPPARAM_MIN_Y, DLPPARAM_MAX_Y,
 								   &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) && !egKey->isPublicKey )
 			status = importBignum( &pkcInfo->dlpParam_x, egKey->x, 
 								   bitsToBytes( egKey->xLen ),
 								   DLPPARAM_MIN_X, DLPPARAM_MAX_X,
 								   &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
 		if( cryptStatusError( status ) )
 			return( status );
@@ -678,9 +709,17 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 /* Generate a key into an encryption context */
 
-static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+						IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) \
+							const int keySizeBits )
 	{
 	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	status = generateDLPkey( contextInfoPtr, keySizeBits );
 	if( cryptStatusOK( status ) &&

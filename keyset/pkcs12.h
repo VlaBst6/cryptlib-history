@@ -21,17 +21,24 @@
 ****************************************************************************/
 
 /* A PKCS #12 file can in theory contain multiple key and certificate 
-   objects, however nothing seems to use this capability.  There are half 
-   a dozen different interpretations as to how it's supposed to work, both 
-   in terms of how to interpret the format and what to do with things like 
-   MACing, which can only use a single key even if there are multiple 
-   different encryption keys used for the data, and because the complete 
-   abscence of key indexing information means that there's no easy way to 
-   sort out which key is used for what.  The code is written to handle 
-   multiple personalities like PKCS #15 and PGP, but is restricted to 
-   using only a single personality */
+   objects, however no normal implementation seems to use this capability
+   (a few oddball ones do, generally storing additional unencrypted
+   certificates alongside the private key and associated certificate).
 
-#define MAX_PKCS12_OBJECTS		1
+   There are half a dozen different interpretations as to how multiple 
+   entries are supposed to work, both in terms of how to interpret the format 
+   and what to do with things like MACing, which can only use a single key 
+   even if there are multiple different encryption keys used for the data.  
+   In addition because of the complete abscence of key indexing information 
+   there's no easy way to sort out which key or other object is used for 
+   what.
+   
+   The code is written to handle multiple personalities like PKCS #15 and 
+   PGP, but treats the presence or more than one private key as an error (in 
+   practice it's a bit more complicated than that because of various PKCS 
+   #12 vagaries, see the code in pkcs12_rd.c for more details) */
+
+#define MAX_PKCS12_OBJECTS		8
 
 /* The minimum number of keying iterations to use when deriving a key wrap
    key from a password */
@@ -49,8 +56,17 @@
 
 #define KEYWRAP_ID_WRAPKEY		1
 #define KEYWRAP_ID_IV			2
-#define KEYWRAP_ID_MACKEY		4
+#define KEYWRAP_ID_MACKEY		3
+
 #define KEYWRAP_SALTSIZE		8
+
+/* Flags for PKCS #12 object types */
+
+#define PKCS12_FLAG_NONE		0x00
+#define PKCS12_FLAG_CERT		0x01	/* Object is certificate */
+#define PKCS12_FLAG_ENCCERT		0x02	/* Object is encrypted cert. */
+#define PKCS12_FLAG_PRIVKEY		0x04	/* Object is encrypted priv.key */
+#define PKCS12_FLAG_MAX			0x07
 
 /****************************************************************************
 *																			*
@@ -83,7 +99,7 @@ typedef struct {
 
 typedef struct {
 	/* General information */
-	int index;						/* Unique value for this personality */
+	int flags;						/* Object type information flags */
 	BUFFER( CRYPT_MAX_TEXTSIZE, labelLength ) \
 	char label[ CRYPT_MAX_TEXTSIZE + 8 ];/* PKCS #12 object label */
 	int labelLength;
@@ -119,6 +135,18 @@ typedef struct {
 
 /* Prototypes for functions in pkcs12.c */
 
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
+PKCS12_INFO *pkcs12FindEntry( IN_ARRAY( noPkcs12objects ) \
+									const PKCS12_INFO *pkcs12info,
+							  IN_LENGTH_SHORT const int noPkcs12objects,
+							  IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+							  IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
+							  IN_LENGTH_KEYID_Z const int keyIDlength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+PKCS12_INFO *pkcs12FindFreeEntry( IN_ARRAY( noPkcs12objects ) \
+									const PKCS12_INFO *pkcs12info,
+								  IN_LENGTH_SHORT const int noPkcs12objects, 
+								  OUT_OPT_LENGTH_SHORT_Z int *index );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void pkcs12freeObjectEntry( INOUT PKCS12_OBJECT_INFO *pkcs12objectInfo );
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -141,13 +169,21 @@ int createPkcs12MacContext( INOUT PKCS12_INFO *pkcs12info,
 /* Prototypes for functions in pkcs12_rd.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
-int readPkcs12Keyset( INOUT STREAM *stream, 
+int pkcs12ReadKeyset( INOUT STREAM *stream, 
 					  OUT_ARRAY( maxNoPkcs12objects ) PKCS12_INFO *pkcs12info, 
 					  IN_LENGTH_SHORT const int maxNoPkcs12objects, 
 					  IN_LENGTH const long endPos,
 					  INOUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initPKCS12get( INOUT KEYSET_INFO *keysetInfoPtr );
+
+/* Prototypes for functions in pkcs12_rd.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+int pkcs12ReadObject( INOUT STREAM *stream, 
+					  OUT PKCS12_INFO *pkcs12info, 
+					  const BOOLEAN isEncryptedCert,
+					  INOUT ERROR_INFO *errorInfo );
 
 /* Prototypes for functions in pkcs12_wr.c */
 

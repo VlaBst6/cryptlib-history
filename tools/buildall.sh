@@ -31,7 +31,7 @@ shift
 
 MAJ="3"
 MIN="4"
-PLV="0"
+PLV="1"
 PROJ="cl"
 SHARED_OBJ_PATH="./shared-obj/"
 if [ $OSNAME = "Darwin" ] ; then

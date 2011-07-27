@@ -41,7 +41,7 @@
 /* The size of the equivalent AES-GCM keying information */
 
 #define AES_GCM_CTX		gcm_ctx
-#define AES_GSM_EXPANDED_KEYSIZE	sizeof( AES_GCM_CTX )
+#define AES_GCM_EXPANDED_KEYSIZE	sizeof( AES_GCM_CTX )
 
 /* The scheduled AES key and key schedule control and function return 
    codes */
@@ -70,7 +70,8 @@
 
 #define UNIT_SIZE	16
 
-/* The size of the AES context rounded up (if necessary) to a multiple 16 bytes	*/
+/* The size of the AES context rounded up (if necessary) to a multiple of 16 
+   bytes */
 
 #define BYTE_SIZE( x )	( UNIT_SIZE * ( ( sizeof( x ) + UNIT_SIZE - 1 ) / UNIT_SIZE ) )
 
@@ -83,12 +84,9 @@
 
 #define KS_BASE(x)	( ( unsigned char * )( ( ( AES_CTX * ) x )->ksch ) )
 
-/* The AES encrypt context address rounded up (if necessary) to a 16 byte boundary */
+/* The AES encrypt/decrypt data within the AES context data */
 
 #define EKEY( x )	( ( AES_EKEY * ) ALIGN_CEIL( KS_BASE( x ), UNIT_SIZE ) )
-
-/* The AES decrypt context address rounded up (if necessary) to a 16 byte boundary */
-
 #define DKEY( x )	( ( AES_DKEY * ) ALIGN_CEIL( KS_BASE( x ) + BYTE_SIZE( AES_EKEY ), UNIT_SIZE ) )
 
 /* A type to hold the cryptlib AES context */
@@ -351,38 +349,57 @@ static int getInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type,
 	assert( ( length == 0 && isWritePtr( data, sizeof( int ) ) ) || \
 			( length > 0 && isWritePtr( data, length ) ) );
 
+	static_assert( AES_EXPANDED_KEYSIZE >= KS_SIZE, "AES context storage" );
+
 	REQUIRES( type > CAPABILITY_INFO_NONE && type < CAPABILITY_INFO_LAST );
-	REQUIRES( ( type == CAPABILITY_INFO_STATESIZE && \
+	REQUIRES( ( ( type == CAPABILITY_INFO_STATESIZE || \
+				  type == CAPABILITY_INFO_STATEALIGNTYPE ) && \
 				contextInfoPtr == NULL ) || \
 			  ( type == CAPABILITY_INFO_ICV && \
 				contextInfoPtr != NULL ) );
 
-	if( type == CAPABILITY_INFO_STATESIZE )
+	switch( type )
 		{
-		int *valuePtr = ( int * ) data;
+		case CAPABILITY_INFO_STATESIZE:
+			{
+			int *valuePtr = ( int * ) data;
 		
 #ifdef USE_GCM
-		*valuePtr = max( AES_EXPANDED_KEYSIZE, AES_GSM_EXPANDED_KEYSIZE );
+			*valuePtr = max( AES_EXPANDED_KEYSIZE, AES_GCM_EXPANDED_KEYSIZE );
 #else
-		*valuePtr = AES_EXPANDED_KEYSIZE;
+			*valuePtr = AES_EXPANDED_KEYSIZE;
 #endif /* USE_GCM */
 
-		return( CRYPT_OK );
-		}
+			return( CRYPT_OK );
+			}
+
+		case CAPABILITY_INFO_STATEALIGNTYPE:
+			{
+			int *valuePtr = ( int * ) data;
+
+			/* The AES code requires alignment to 128-bit boundaries */
+			*valuePtr = UNIT_SIZE;
+
+			return( CRYPT_OK );
+			}
 #ifdef USE_GCM
-	if( type == CAPABILITY_INFO_ICV )
-		{
-		CONV_INFO *convInfo = contextInfoPtr->ctxConv;
+		case CAPABILITY_INFO_ICV:
+			{
+			CONV_INFO *convInfo = contextInfoPtr->ctxConv;
 
-		REQUIRES( convInfo->mode == CRYPT_MODE_GCM );
+			REQUIRES( convInfo->mode == CRYPT_MODE_GCM );
 
-		return( ( gcm_compute_tag( data, length, 
-								   GCM_KEY( convInfo ) ) == RETURN_GOOD ) ? \
-				CRYPT_OK : CRYPT_ERROR_FAILED );
-		}
+			return( ( gcm_compute_tag( data, length, 
+									   GCM_KEY( convInfo ) ) == RETURN_GOOD ) ? \
+					CRYPT_OK : CRYPT_ERROR_FAILED );
+			}
 #endif /* USE_GCM */
 
-	return( getDefaultInfo( type, contextInfoPtr, data, length ) );
+		default:
+			return( getDefaultInfo( type, contextInfoPtr, data, length ) );
+		}
+
+	retIntError();
 	}
 
 /****************************************************************************

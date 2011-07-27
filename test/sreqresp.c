@@ -781,10 +781,30 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 					   "SVR: Attempt to activate OCSP server session" : \
 					   "Attempt to activate OCSP client session", status,
 					   __LINE__ );
+#if OCSP_SERVER_NO == 5
+		if( status == CRYPT_ERROR_SIGNATURE )
+			{
+			char errorMessage[ 512 ];
+			int errorMessageLength;
+
+			status = cryptGetAttributeString( cryptSession, 
+											  CRYPT_ATTRIBUTE_ERRORMESSAGE,
+											  errorMessage, &errorMessageLength );
+			if( cryptStatusOK( status ) && errorMessageLength >= 29 && \
+				!memcmp( errorMessage, "OCSP response doesn't contain", 29 ) )
+				{
+				cryptDestroySession( cryptSession );
+				puts( "  (Verisign's OCSP responder sends broken responses, "
+					  "continuing...)\n" );
+				return( CRYPT_ERROR_FAILED );
+				}
+			}
+#endif /* Verisign's broken OCSP responder */
 		cryptDestroySession( cryptSession );
 		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND || \
 			status == CRYPT_ERROR_TIMEOUT || status == CRYPT_ERROR_PERMISSION )
 			{
+
 			/* These servers are constantly appearing and disappearing so if
 			   we get a straight connect error we don't treat it as a serious
 			   failure.  In addition we can get server busy and no permission
@@ -966,14 +986,16 @@ int testSessionOCSPClientServer( void )
 	#8 - Chinese University of Hong Kong
 			None, info at http://www.e-timestamping.com/status.html.
 	#9 - SeMarket
-			None
+			None.
 	#10 - Entrust
-			None
+			None.
 	#11 - nCipher
-			Very slow TSP, requires extended read timeout to get response */
+			Very slow TSP, requires extended read timeout to get response.
+	#12 - Comodo
+			None */
 
 #define TSP_SERVER1_NAME	TEXT( "localhost" )
-#define TSP_SERVER2_NAME	TEXT( "http://www.edelweb.fr/cgi-bin/service-tsp" )
+#define TSP_SERVER2_NAME	TEXT( "http://timestamping.edelweb.fr/service/tsp" )
 #define TSP_SERVER3_NAME	TEXT( "tcp://test.timeproof.de" )
 #define TSP_SERVER4_NAME	TEXT( "tcp://203.238.37.132:3318" )
 #define TSP_SERVER5_NAME	TEXT( "tcp://neurath.iaik.at" )
@@ -983,15 +1005,17 @@ int testSessionOCSPClientServer( void )
 #define TSP_SERVER9_NAME	TEXT( "tcp://80.81.104.150" )
 #define TSP_SERVER10_NAME	TEXT( "http://vsinterop.entrust.com:7001/verificationserver/rfc3161timestamp" )
 #define TSP_SERVER11_NAME	TEXT( "tcp://dse200.ncipher.com" )
+#define TSP_SERVER12_NAME	TEXT( "http://timestamp.comodoca.com/rfc3161" )
 
 #define TSP_SERVER_NAME		TSP_SERVER2_NAME
-#define TSP_SERVER_NO		2
+#define TSP_SERVER_NO		2	/* Only used to identify slow-timeout server #11 */
 
 /* Perform a timestamping test */
 
 static int testTSP( const CRYPT_SESSION cryptSession,
 					const BOOLEAN isServer,
 					const BOOLEAN isRecycledConnection,
+					const BOOLEAN useAltHash,
 					const BOOLEAN localSession )
 	{
 	int status;
@@ -1011,14 +1035,15 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 
 		/* Create the hash value to add to the TSP request */
 		status = cryptCreateContext( &hashContext, CRYPT_UNUSED, 
-									 CRYPT_ALGO_SHA );
+									 useAltHash ? CRYPT_ALGO_SHA256 : \
+												  CRYPT_ALGO_SHA1 );
 		if( cryptStatusError( status ) )
 			return( FALSE );
 		cryptEncrypt( hashContext, "12345678", 8 );
 		cryptEncrypt( hashContext, "", 0 );
 		if( isRecycledConnection )
 			{
-			/* If we're moving further data over an existing connection,
+			/* If we're moving further data over an existing connection, 
 			   delete the message imprint from the previous run */
 			status = cryptDeleteAttribute( cryptSession,
 										   CRYPT_SESSINFO_TSP_MSGIMPRINT );
@@ -1050,10 +1075,12 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 			}		
 		}
 	else
+		{
 		/* We're the server, if this is the first connect tell the client 
 		   that we're ready to go */
 		if( localSession && !isRecycledConnection )
 			releaseMutex();
+		}
 
 	/* Activate the session and timestamp the message */
 #if TSP_SERVER_NO == 11
@@ -1072,9 +1099,9 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND || \
 			status == CRYPT_ERROR_TIMEOUT || status == CRYPT_ERROR_PERMISSION )
 			{
-			/* These servers are constantly appearing and disappearing so if
-			   we get a straight connect error we don't treat it as a serious
-			   failure.  In addition we can get server busy and no permission
+			/* These servers are constantly appearing and disappearing so if 
+			   we get a straight connect error we don't treat it as a serious 
+			   failure.  In addition we can get server busy and no permission 
 			   to access errors that are also treated as soft errors */
 			puts( "  (Server could be down, faking it and continuing...)\n" );
 			return( CRYPT_ERROR_FAILED );
@@ -1082,8 +1109,8 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 		return( FALSE );
 		}
 
-	/* There's not much more we can do in the client at this point since the
-	   TSP data is only used internally by cryptlib, OTOH if we get to here
+	/* There's not much more we can do in the client at this point since the 
+	   TSP data is only used internally by cryptlib, OTOH if we get to here 
 	   then we've received a valid response from the TSA so all is OK */
 	if( !isServer )
 		{
@@ -1123,6 +1150,7 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 	CRYPT_SESSION cryptSession;
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_TSP_SERVER ) ? \
 							   TRUE : FALSE;
+	const BOOLEAN useAltHash = ( !isServer && 0 ) ? TRUE : FALSE;
 	int status;
 
 	printf( "%sTesting %sTSP session...\n", isServer ? "SVR: " : "",
@@ -1143,9 +1171,9 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 		return( FALSE );
 		}
 
-	/* Set up the server information and activate the session.  Since this
-	   test explicitly tests the ability to handle persistent connections,
-	   we don't use the general-purpose request/response server wrapper,
+	/* Set up the server information and activate the session.  Since this 
+	   test explicitly tests the ability to handle persistent connections, 
+	   we don't use the general-purpose request/response server wrapper, 
 	   which only uses persistent connections opportunistically */
 	if( isServer )
 		{
@@ -1173,9 +1201,11 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 				return( FALSE );
 			}
 		else
+			{
 			status = cryptSetAttributeString( cryptSession,
 							CRYPT_SESSINFO_SERVER_NAME, TSP_SERVER_NAME,
 							paramStrlen( TSP_SERVER_NAME ) );
+			}
 		}
 	if( cryptStatusError( status ) )
 		{
@@ -1183,7 +1213,7 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 				"error code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	status = testTSP( cryptSession, isServer, FALSE, localSession );
+	status = testTSP( cryptSession, isServer, FALSE, useAltHash, localSession );
 	if( status <= 0 )
 		return( status );
 
@@ -1205,10 +1235,10 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 			}
 
 		/* Activate the connection to handle two more requests */
-		status = testTSP( cryptSession, isServer, TRUE, FALSE );
+		status = testTSP( cryptSession, isServer, TRUE, FALSE, FALSE );
 		if( status <= 0 )
 			return( status );
-		status = testTSP( cryptSession, isServer, TRUE, FALSE );
+		status = testTSP( cryptSession, isServer, TRUE, FALSE, FALSE );
 		if( status <= 0 )
 			return( status );
 		}

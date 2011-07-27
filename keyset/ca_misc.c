@@ -509,26 +509,36 @@ static int certMgmtFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   type values have to match their text equivalents defined at the start
 	   of this file.  Since we can't check this at compile time we have to
 	   do it here via an assertion */
-	assert( TEXT_CERTTYPE_REQUEST_CERT[ 0 ] - '0' == \
-			CRYPT_CERTTYPE_REQUEST_CERT );
-	assert( TEXT_CERTTYPE_REQUEST_REVOCATION[ 0 ] - '0' == \
-			CRYPT_CERTTYPE_REQUEST_REVOCATION );
-	assert( TEXT_CERTACTION_CREATE[ 0 ] - '0' == \
-			CRYPT_CERTACTION_CREATE );
-	assert( TEXTCH_CERTACTION_ADDUSER - '0' == \
-			CRYPT_CERTACTION_ADDUSER );
-	assert( TEXT_CERTACTION_REQUEST_CERT[ 0 ] - '0' == \
-			CRYPT_CERTACTION_REQUEST_CERT );
-	assert( TEXTCH_CERTACTION_REQUEST_CERT - '0' == \
-			CRYPT_CERTACTION_REQUEST_CERT );
-	assert( TEXT_CERTACTION_REQUEST_RENEWAL[ 0 ] - '0' == \
-			CRYPT_CERTACTION_REQUEST_RENEWAL );
-	assert( TEXTCH_CERTACTION_REQUEST_RENEWAL - '0' == \
-			CRYPT_CERTACTION_REQUEST_RENEWAL );
-	assert( TEXT_CERTACTION_CERT_CREATION[ 0 ] - '0' == \
-			CRYPT_CERTACTION_CERT_CREATION / 10 );
-	assert( TEXT_CERTACTION_CERT_CREATION[ 1 ] - '0' == \
-			CRYPT_CERTACTION_CERT_CREATION % 10 );
+	static_assert_opt( TEXT_CERTTYPE_REQUEST_CERT[ 0 ] - '0' == \
+							CRYPT_CERTTYPE_REQUEST_CERT, \
+					   "SQL data type" );
+	static_assert_opt( TEXT_CERTTYPE_REQUEST_REVOCATION[ 0 ] - '0' == \
+							CRYPT_CERTTYPE_REQUEST_REVOCATION, \
+					   "SQL data type" );
+	static_assert_opt( TEXT_CERTACTION_CREATE[ 0 ] - '0' == \
+							CRYPT_CERTACTION_CREATE, \
+					   "SQL data type" );
+	static_assert( TEXTCH_CERTACTION_ADDUSER - '0' == \
+						CRYPT_CERTACTION_ADDUSER, \
+				   "SQL data type" );
+	static_assert_opt( TEXT_CERTACTION_REQUEST_CERT[ 0 ] - '0' == \
+							CRYPT_CERTACTION_REQUEST_CERT, \
+					   "SQL data type" );
+	static_assert( TEXTCH_CERTACTION_REQUEST_CERT - '0' == \
+						CRYPT_CERTACTION_REQUEST_CERT, \
+				   "SQL data type" );
+	static_assert_opt( TEXT_CERTACTION_REQUEST_RENEWAL[ 0 ] - '0' == \
+							CRYPT_CERTACTION_REQUEST_RENEWAL, \
+					   "SQL data type" );
+	static_assert( TEXTCH_CERTACTION_REQUEST_RENEWAL - '0' == \
+				   CRYPT_CERTACTION_REQUEST_RENEWAL, \
+				   "SQL data type" );
+	static_assert_opt( TEXT_CERTACTION_CERT_CREATION[ 0 ] - '0' == \
+							CRYPT_CERTACTION_CERT_CREATION / 10, \
+					   "SQL data type" );
+	static_assert_opt( TEXT_CERTACTION_CERT_CREATION[ 1 ] - '0' == \
+							CRYPT_CERTACTION_CERT_CREATION % 10, \
+					   "SQL data type" );
 
 	/* Clear return value */
 	if( iCertificate != NULL )

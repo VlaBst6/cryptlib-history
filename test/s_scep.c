@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib SCEP Session Test Routines						*
-*					Copyright Peter Gutmann 1998-2008						*
+*					Copyright Peter Gutmann 1998-2009						*
 *																			*
 ****************************************************************************/
 
@@ -29,17 +29,23 @@
 
 	#1 - cryptlib: None.
 
-	#2 - SSH (www.ssh.com/support/testzone/pki.html): Invalid CA certs.
+	#2 - SSH (www.ssh.com/support/testzone/pki.html): Invalid CA 
+	     certificates.
 
 	#3 - OpenSCEP (openscep.othello.ch): Seems to be permanently unavailable.
 
 	#4 - Entrust (freecerts.entrust.com/vpncerts/cep.htm): Only seems to be
-			set up to handle Cisco gear.
+		 set up to handle Cisco gear.
 
 	#5 - EJBCA: 
 	
 	#6 - Insta-Certifier: Information at 
-		 http://www.certificate.fi/resources/demos/demo.htm */
+		 http://www.certificate.fi/resources/demos/demo.htm.
+
+	#7 - Microsoft NDES: Invalid CA certificates, set compliance level to
+	     CRYPT_COMPLIANCELEVEL_OBLIVIOUS to handle this.  GetCACaps 
+		 (via http://qa4-mdm3.qa4.imdmdemo.com/certsrv/mscep/?operation=GetCACaps) 
+		 is implemented but broken, returns a zero-length response */
 
 #define SCEP_NO		1
 
@@ -51,14 +57,25 @@ typedef struct {
 static const SCEP_INFO FAR_BSS scepInfo[] = {
 	{ NULL },	/* Dummy so index == SCEP_NO */
 	{ /*1*/ "cryptlib", TEXT( "http://localhost/pkiclient.exe" ), NULL, NULL, NULL },
-	{ /*2*/ "SSH", TEXT( "http://pki.ssh.com:8080/scep/pkiclient.exe" ), TEXT( "ssh" ), TEXT( "ssh" ),
+			/* The CA certificate URL may be overridden by passing a 
+			   CA-cert-read flag to the SCEP client function, it's tested 
+			   both with an explicitly-added certificate via a file and
+			   an implicitly-read certificate via GetCACert */
+	{ /*2*/ "SSH", TEXT( "http://pki.ssh.com:8080/scep/pkiclient.exe" ), 
+			TEXT( "ssh" ), TEXT( "ssh" ),
 			TEXT( "http://pki.ssh.com:8080/scep/pkiclient.exe?operation=GetCACert&message=test-ca1.ssh.com" ) },
-	{ /*3*/ "OpenSCEP", TEXT( "http://openscep.othello.ch/pkiclient.exe" ), TEXT( "????" ), TEXT( "????" ), NULL },
-	{ /*4*/ "Entrust", TEXT( "http://vpncerts.entrust.com/pkiclient.exe" ), TEXT( "????" ), TEXT( "????" ), NULL },
+	{ /*3*/ "OpenSCEP", TEXT( "http://openscep.othello.ch/pkiclient.exe" ), 
+			TEXT( "????" ), TEXT( "????" ), NULL },
+	{ /*4*/ "Entrust", TEXT( "http://vpncerts.entrust.com/pkiclient.exe" ), 
+			TEXT( "????" ), TEXT( "????" ), NULL },
 	{ /*5*/ "EJBCA", TEXT( "http://q-rl-xp:8080/ejbca/publicweb/apply/scep/pkiclient.exe" ),
 			TEXT("test2"), TEXT("test2"),
 			TEXT( "http://q-rl-xp:8080/ejbca/publicweb/webdist/certdist?cmd=nscacert&issuer=O=Test&+level=1" ) },
-	{ /*6*/ "SSH", TEXT( "http://pki.certificate.fi:8082/scep/" ), NULL, TEXT( "scep" ), NULL },
+	{ /*6*/ "SSH", TEXT( "http://pki.certificate.fi:8082/scep/" ), 
+			NULL, TEXT( "scep" ), NULL },
+	{ /*7*/ "Microsoft NDES", TEXT( "http://qa4-mdm3.qa4.imdmdemo.com" ), 
+			TEXT( "cryptlibtest" ), TEXT( "password!1" ), 
+			TEXT( "http://qa4-mdm3.qa4.imdmdemo.com/certsrv/mscep/?operation=GetCACert&message=qa" ) }
 	};
 
 /* Certificate request data for the certificate from the SCEP server.  Note 
@@ -457,7 +474,10 @@ static int connectSCEP( const BOOLEAN localSession,
 #else
 	const C_STR userPtr = scepInfo[ SCEP_NO ].user;
 	const C_STR passwordPtr = scepInfo[ SCEP_NO ].password;
-#endif /* cryptlib SCEP_NO == 1 */
+#endif /* cryptlib SCEP server */
+#if ( SCEP_NO == 7 )
+	int complianceValue;
+#endif /* MS NDES SCEP server */
 	int status;
 
 	printf( "Testing %s SCEP session%s...\n", scepInfo[ SCEP_NO ].name,
@@ -482,7 +502,16 @@ static int connectSCEP( const BOOLEAN localSession,
 			  "operations, can't perform SCEP test.\n" );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
-#endif /* cryptlib SCEP_NO == 1 */
+#endif /* cryptlib SCEP server */
+
+#if ( SCEP_NO == 7 )
+	/* The MS SCEP server certificate is broken so we have to turn down the
+	   compliance level to allow it to be used */
+	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+					   &complianceValue );
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+					   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
+#endif /* MS NDES SCEP server */
 
 	/* Get the issuing CA's certificate if required */
 	if( userSuppliesCACert )
@@ -523,7 +552,7 @@ static int connectSCEP( const BOOLEAN localSession,
 		}
 	userPtr = userID;
 	passwordPtr = password;
-#endif /* cryptlib SCEP_NO == 1 */
+#endif /* cryptlib SCEP server */
 
 	/* Create the SCEP session */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED,
@@ -592,8 +621,8 @@ static int connectSCEP( const BOOLEAN localSession,
 	if( cryptStatusOK( status ) )
 #else
 	loadRSAContextsEx( CRYPT_UNUSED, NULL, &cryptContext, NULL,
-					   USER_PRIVKEY_LABEL );
-#endif /* cryptlib SCEP_NO == 1 */
+					   USER_PRIVKEY_LABEL, FALSE, FALSE );
+#endif /* cryptlib SCEP server */
 	status = cryptCreateCert( &cryptRequest, CRYPT_UNUSED,
 							  CRYPT_CERTTYPE_CERTREQUEST );
 	if( cryptStatusOK( status ) )
@@ -643,6 +672,12 @@ static int connectSCEP( const BOOLEAN localSession,
 			}
 		return( FALSE );
 		}
+
+#if ( SCEP_NO == 7 )
+	/* Restore normal certificate checking */
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+					   complianceValue );
+#endif /* MS NDES SCEP server */
 
 	/* Print the session security information */
 	printFingerprint( cryptSession, FALSE );

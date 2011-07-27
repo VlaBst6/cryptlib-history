@@ -693,6 +693,13 @@ int generateDLPkey( INOUT CONTEXT_INFO *contextInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
+	/* Since the keygen is randomised it may occur that the final size of 
+	   the public value that determines its nominal size is slightly smaller 
+	   than the requested nominal size.  To handle this we recalculate the 
+	   effective key size after we've finished generating the public value
+	   that determines its nominal size */
+	pkcInfo->keySizeBits = BN_num_bits( p );
+
 	/* Evaluate the Montgomery form of p and calculate y */
 	CK( BN_MONT_CTX_set( &pkcInfo->dlpParam_mont_p, p, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )

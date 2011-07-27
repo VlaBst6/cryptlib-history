@@ -84,7 +84,7 @@ static int readKeyDerivationInfo( INOUT STREAM *stream,
 	if( value < 1 || value > MAX_KEYSETUP_ITERATIONS )
 		return( CRYPT_ERROR_BADDATA );
 	queryInfo->keySetupIterations = ( int ) value;
-	queryInfo->keySetupAlgo = CRYPT_ALGO_HMAC_SHA;
+	queryInfo->keySetupAlgo = CRYPT_ALGO_HMAC_SHA1;
 	if( stell( stream ) < endPos && \
 		sPeek( stream ) == BER_INTEGER )
 		{
@@ -310,9 +310,18 @@ static int readCryptlibKek( INOUT STREAM *stream,
 		memcpy( queryInfo->salt, keyDerivationQueryInfo.salt,
 				keyDerivationQueryInfo.saltLength );
 		queryInfo->saltLength = keyDerivationQueryInfo.saltLength;
-		queryInfo->keySetupIterations = keyDerivationQueryInfo.keySetupIterations;
+		queryInfo->keySetupIterations = \
+						keyDerivationQueryInfo.keySetupIterations;
 		queryInfo->keySetupAlgo = keyDerivationQueryInfo.keySetupAlgo;
-		queryInfo->keySize = keyDerivationQueryInfo.keySize;
+		if( keyDerivationQueryInfo.keySize > 0 )
+			{
+			/* How to handle the optional keysize value from the key-
+			   derivation information is a bit unclear, for example what 
+			   should we do if the encryption algorithm is AES-256 but the 
+			   keysize is 128 bits?  At the moment this problem is resolved
+			   by the fact that nothing seems to use the keysize value */
+			queryInfo->keySize = keyDerivationQueryInfo.keySize;
+			}
 		}
 
 	/* Finally, read the start of the encrypted key */
@@ -506,9 +515,9 @@ static int writePgpKek( INOUT STREAM *stream,
 						STDC_UNUSED const BYTE *encryptedKey, 
 						STDC_UNUSED const int encryptedKeyLength )
 	{
-	CRYPT_ALGO_TYPE hashAlgo = DUMMY_INIT, cryptAlgo = DUMMY_INIT;
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];
-	int pgpCryptAlgo, pgpHashAlgo = DUMMY_INIT, keySetupIterations;
+	int hashAlgo = DUMMY_INIT, kekCryptAlgo = DUMMY_INIT;	/* int vs.enum */
+	int pgpKekCryptAlgo, pgpHashAlgo = DUMMY_INIT, keySetupIterations;
 	int count = 0, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -527,7 +536,7 @@ static int writePgpKek( INOUT STREAM *stream,
 	if( cryptStatusOK( status ) )
 		{
 		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-						&cryptAlgo, CRYPT_CTXINFO_ALGO );
+						&kekCryptAlgo, CRYPT_CTXINFO_ALGO );
 		}
 	if( cryptStatusOK( status ) )
 		{
@@ -539,7 +548,7 @@ static int writePgpKek( INOUT STREAM *stream,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	status = cryptlibToPgpAlgo( cryptAlgo, &pgpCryptAlgo );
+	status = cryptlibToPgpAlgo( kekCryptAlgo, &pgpKekCryptAlgo );
 	if( cryptStatusOK( status ) )
 		status = cryptlibToPgpAlgo( hashAlgo, &pgpHashAlgo );
 	ENSURES( cryptStatusOK( status ) );
@@ -571,7 +580,7 @@ static int writePgpKek( INOUT STREAM *stream,
 						  PGP_VERSION_SIZE + PGP_ALGOID_SIZE + 1 + \
 							PGP_ALGOID_SIZE + PGP_SALTSIZE + 1 );
 	sputc( stream, PGP_VERSION_OPENPGP );
-	sputc( stream, pgpCryptAlgo );
+	sputc( stream, pgpKekCryptAlgo );
 	sputc( stream, 3 );		/* S2K = salted, iterated hash */
 	sputc( stream, pgpHashAlgo );
 	swrite( stream, salt, PGP_SALTSIZE );
@@ -878,9 +887,8 @@ static int writePgpKeytrans( INOUT STREAM *stream,
 							 STDC_UNUSED const void *auxInfo, 
 							 STDC_UNUSED const int auxInfoLength )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
 	BYTE keyID[ PGP_KEYID_SIZE + 8 ];
-	int pgpAlgo, status;
+	int algorithm, pgpAlgo, status;	/* int vs.enum */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( encryptedKey, encryptedKeyLength ) );
@@ -892,7 +900,7 @@ static int writePgpKeytrans( INOUT STREAM *stream,
 
 	/* Get the key information */
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &algorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) )
 		{
 		MESSAGE_DATA msgData;
@@ -903,19 +911,19 @@ static int writePgpKeytrans( INOUT STREAM *stream,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	status = cryptlibToPgpAlgo( cryptAlgo, &pgpAlgo );
+	status = cryptlibToPgpAlgo( algorithm, &pgpAlgo );
 	ENSURES( cryptStatusOK( status ) );
 
 	/* Write the PKE packet */
 	pgpWritePacketHeader( stream, PGP_PACKET_PKE,
 						  PGP_VERSION_SIZE + PGP_KEYID_SIZE + PGP_ALGOID_SIZE + \
-						  ( ( cryptAlgo == CRYPT_ALGO_RSA ) ? \
+						  ( ( algorithm == CRYPT_ALGO_RSA ) ? \
 							sizeofInteger16U( encryptedKeyLength ) : \
 							encryptedKeyLength ) );
 	sputc( stream, 3 );		/* Version = 3 (OpenPGP) */
 	swrite( stream, keyID, PGP_KEYID_SIZE );
 	sputc( stream, pgpAlgo );
-	return( ( cryptAlgo == CRYPT_ALGO_RSA ) ? \
+	return( ( algorithm == CRYPT_ALGO_RSA ) ? \
 			writeInteger16Ubits( stream, encryptedKey, encryptedKeyLength ) :
 			swrite( stream, encryptedKey, encryptedKeyLength ) );
 	}

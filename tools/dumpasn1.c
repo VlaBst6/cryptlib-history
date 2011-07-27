@@ -1238,7 +1238,7 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 				}
 			}
 		ch = getc( inFile );
-		printString( level, "%s%02X", i % lineLength ? " " : "", ch );
+		printString( level, "%s%02X", ( i % lineLength ) ? " " : "", ch );
 		printable[ i % 8 ] = ( ch >= ' ' && ch < 127 ) ? ch : '.';
 		fPos++;
 

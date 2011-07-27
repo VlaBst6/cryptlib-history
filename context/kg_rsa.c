@@ -106,7 +106,7 @@ static int enableSidechannelProtection( INOUT PKC_INFO *pkcInfo,
 		buffer[ 0 ] &= 0xFF >> ( -pkcInfo->keySizeBits & 7 );
 		status = importBignum( k, buffer, noBytes, MIN_PKCSIZE - 8, 
 							   CRYPT_MAX_PKCSIZE, NULL, 
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 		}
 	zeroise( buffer, noBytes );
 	if( cryptStatusError( status ) )
@@ -506,6 +506,13 @@ int generateRSAkey( INOUT CONTEXT_INFO *contextInfoPtr,
 	CKPTR( BN_mod_inverse( &pkcInfo->rsaParam_u, q, p, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
+
+	/* Since the keygen is randomised it may occur that the final size of 
+	   the public value that determines its nominal size is slightly smaller 
+	   than the requested nominal size.  To handle this we recalculate the 
+	   effective key size after we've finished generating the public value
+	   that determines its nominal size */
+	pkcInfo->keySizeBits = BN_num_bits( &pkcInfo->rsaParam_n );
 
 	/* Evaluate the Montgomery forms */
 	status = getRSAMontgomery( pkcInfo, TRUE );

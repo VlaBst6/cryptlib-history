@@ -5,6 +5,10 @@
 *																			*
 ****************************************************************************/
 
+#ifndef _CERTSTORE_DEFINED
+
+#define _CERTSTORE_DEFINED
+
 /* The certstore HTTP content type */
 
 #define CERTSTORE_CONTENT_TYPE		"application/pkix-cert"
@@ -47,3 +51,5 @@ int processCertQuery( INOUT SESSION_INFO *sessionInfoPtr,
 STDC_NONNULL_ARG( ( 1 ) ) \
 void sendCertErrorResponse( INOUT SESSION_INFO *sessionInfoPtr, 
 							IN_ERROR const int errorStatus );
+
+#endif /* _CERTSTORE_DEFINED */

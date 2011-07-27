@@ -273,6 +273,8 @@ static int writeConfigData( INOUT STREAM *stream,
    rather than manipulating the configuration info directly, which means 
    that everything read is subject to the usual ACL checks */
 
+#ifdef USE_CERTIFICATES
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 static int readTrustedCerts( IN_HANDLE const CRYPT_KEYSET iCryptKeyset,
 							 INOUT void *trustInfoPtr )
@@ -285,7 +287,7 @@ static int readTrustedCerts( IN_HANDLE const CRYPT_KEYSET iCryptKeyset,
 
 	REQUIRES( isHandleRangeValid( iCryptKeyset ) );
 
-	/* Read each trusted cert from the keyset */
+	/* Read each trusted certificate from the keyset */
 	setMessageData( &msgData, buffer, CRYPT_MAX_PKCSIZE + 1536 );
 	status = krnlSendMessage( iCryptKeyset, IMESSAGE_GETATTRIBUTE_S,
 							  &msgData, CRYPT_IATTRIBUTE_TRUSTEDCERT );
@@ -294,8 +296,8 @@ static int readTrustedCerts( IN_HANDLE const CRYPT_KEYSET iCryptKeyset,
 			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
-		/* Add the cert data as a trusted cert item and look for the next
-		   one */
+		/* Add the certificate data as a trusted certificate item and look 
+		   for the next one */
 		status = addTrustEntry( trustInfoPtr, CRYPT_UNUSED, msgData.data,
 								msgData.length, TRUE );
 		if( cryptStatusOK( status ) )
@@ -310,6 +312,7 @@ static int readTrustedCerts( IN_HANDLE const CRYPT_KEYSET iCryptKeyset,
 
 	return( ( status == CRYPT_ERROR_NOTFOUND ) ? CRYPT_OK : status );
 	}
+#endif /* USE_CERTIFICATES */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int readConfig( IN_HANDLE const CRYPT_USER iCryptUser, 
@@ -323,7 +326,7 @@ int readConfig( IN_HANDLE const CRYPT_USER iCryptUser,
 	char configFilePath[ MAX_PATH_LENGTH + 8 ];
 	int configFilePathLen, iterationCount, status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( iCryptUser == DEFAULTUSER_OBJECT_HANDLE || \
 			  isHandleRangeValid( iCryptUser ) );
@@ -357,13 +360,17 @@ int readConfig( IN_HANDLE const CRYPT_USER iCryptUser,
 		{
 		/* If there were no configuration options present there may still be 
 		   trusted certificates so we try and read those before exiting */
+#ifdef USE_CERTIFICATES
 		if( status == CRYPT_ERROR_NOTFOUND && trustInfoPtr != NULL )
 			status = readTrustedCerts( iCryptKeyset, trustInfoPtr );
+#endif /* USE_CERTIFICATES */
 		krnlSendNotifier( iCryptKeyset, IMESSAGE_DECREFCOUNT );
 		return( status );
 		}
+#ifdef USE_CERTIFICATES
 	if( trustInfoPtr != NULL )
 		status = readTrustedCerts( iCryptKeyset, trustInfoPtr );
+#endif /* USE_CERTIFICATES */
 	krnlSendNotifier( iCryptKeyset, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
@@ -419,7 +426,11 @@ int getConfigDisposition( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INF
 						  OUT_ENUM( CONFIG_DISPOSITION ) \
 							CONFIG_DISPOSITION_TYPE *disposition )
 	{
+#ifdef USE_CERTIFICATES
 	const BOOLEAN hasTrustedCerts = trustedCertsPresent( trustInfoPtr );
+#else
+	const BOOLEAN hasTrustedCerts = FALSE;
+#endif /* USE_CERTIFICATES */
 	int length, status;
 
 	assert( isReadPtr( configOptions, 
@@ -433,8 +444,8 @@ int getConfigDisposition( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INF
 	/* Clear return value */
 	*disposition = CONFIG_DISPOSITION_NONE;
 
-	/* If neither the configuration options nor any cert trust settings have
-	   changed, there's nothing to do */
+	/* If neither the configuration options nor any certificate trust 
+	   settings have changed, there's nothing to do */
 	if( !checkConfigChanged( configOptions, configOptionsCount ) && \
 		!hasTrustedCerts )
 		{
@@ -528,7 +539,7 @@ int commitConfigData( IN_STRING const char *fileName,
 	char configFilePath[ MAX_PATH_LENGTH + 8 ];
 	int configFilePathLen, status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 	assert( ( data == NULL && dataLength == 0 ) || \
 			isReadPtr( data, dataLength ) );
 

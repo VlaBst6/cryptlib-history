@@ -434,8 +434,9 @@ int extractCertData( IN_HANDLE const CRYPT_CERTIFICATE iCryptCert,
 	/* Make sure that there's no collision in format type values (although 
 	   the switch() statement will also catch this by producing a compile 
 	   error */
-	assert( CRYPT_CERTFORMAT_CERTIFICATE != CRYPT_ICERTFORMAT_DATA && \
-			CRYPT_CERTFORMAT_CERTIFICATE != CRYPT_IATTRIBUTE_CRLENTRY );
+	static_assert( CRYPT_CERTFORMAT_CERTIFICATE != CRYPT_ICERTFORMAT_DATA && \
+				   CRYPT_CERTFORMAT_CERTIFICATE != CRYPT_IATTRIBUTE_CRLENTRY, \
+				   "Format type collision" );
 
 	/* Clear return values */
 	memset( certDataBuffer, 0, min( 16, certDataMaxLength ) );
@@ -988,7 +989,9 @@ int setAccessMethodDBMS( INOUT KEYSET_INFO *keysetInfoPtr,
 	int status;
 
 	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
-	assert( DBMS_CACHEDQUERY_LAST == NO_CACHED_QUERIES );
+
+	static_assert( DBMS_CACHEDQUERY_LAST == NO_CACHED_QUERIES, \
+				   "Cached query ID" );
 
 	REQUIRES( type > CRYPT_KEYSET_NONE && type < CRYPT_KEYSET_LAST );
 

@@ -410,12 +410,14 @@ static void printTimes( HIRES_TIME times[ NO_TESTS + 1 ][ 8 ],
 		{
 		HIRES_TIME timeSum = 0, timeAvg, timeDelta;
 		HIRES_TIME timeMin = 1000000L;
-		HIRES_TIME timeCorrSum10 = 0, timeCorrSumSD = 0;
+		HIRES_TIME timeCorrSum10 = 0;
 		HIRES_TIME avgTime;
 #ifdef USE_SD
+		HIRES_TIME timeCorrSumSD = 0;
 		double stdDev;
+		int timesCountSD = 0;
 #endif /* USE_SD */
-		int j, timesCount10 = 0, timesCountSD = 0;
+		int j, timesCount10 = 0;
 
 		/* Find the mean execution time */
 		for( j = 1; j < NO_TESTS + 1; j++ )
@@ -547,11 +549,10 @@ static HIRES_TIME encOne( const CRYPT_CONTEXT cryptContext,
 						  BYTE *buffer, const int length )
 	{
 	HIRES_TIME timeVal;
-	int status;
 
 	memset( buffer, '*', length );
 	timeVal = timeDiff( 0 );
-	status = cryptEncrypt( cryptContext, buffer, length );
+	cryptEncrypt( cryptContext, buffer, length );
 	return( timeDiff( timeVal ) );
 	}
 

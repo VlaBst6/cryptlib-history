@@ -38,9 +38,10 @@ static int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
 	DEVICE_INFO *deviceInfo;
 	int status;
 
-	assert( isHandleRangeValid( iCryptContext ) );
 	assert( isWritePtr( iCryptDevice, sizeof( CRYPT_DEVICE ) ) );
 	assert( isWritePtr( hwInfoPtrPtr, sizeof( HARDWARE_INFO * ) ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
 
 	/* Clear return values */
 	*iCryptDevice = CRYPT_ERROR;
@@ -76,8 +77,9 @@ static int getHardwareReference( const CRYPT_CONTEXT iCryptContext,
 	BYTE storageID[ KEYID_SIZE + 8 ];
 	int status;
 
-	assert( isHandleRangeValid( iCryptContext ) );
 	assert( isWritePtr( keyHandle, sizeof( int ) ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
 
 	setMessageData( &msgData, storageID, KEYID_SIZE );
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
@@ -116,9 +118,10 @@ static int openStorageObject( CRYPT_KEYSET *iCryptKeyset,
 	int storageFilePathLen, status;
 
 	assert( isWritePtr( iCryptKeyset, sizeof( CRYPT_KEYSET ) ) );
-	assert( options == CRYPT_KEYOPT_NONE || \
-			options == CRYPT_KEYOPT_CREATE );
-	assert( isHandleRangeValid( iCryptDevice ) );
+
+	REQUIRES( options == CRYPT_KEYOPT_NONE || \
+			  options == CRYPT_KEYOPT_CREATE );
+	REQUIRES( isHandleRangeValid( iCryptDevice ) );
 
 	/* Clear return value */
 	*iCryptKeyset = CRYPT_ERROR;
@@ -307,7 +310,8 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 	int status;
 
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
-	assert( isAttribute( type ) || isInternalAttribute( type ) );
+
+	REQUIRES( isAttribute( type ) || isInternalAttribute( type ) );
 
 	UNUSED_ARG( hardwareInfo );
 	UNUSED_ARG( messageExtInfo );
@@ -420,7 +424,8 @@ static int getRandomFunction( DEVICE_INFO *deviceInfo, void *buffer,
 
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
-	assert( length > 0 && length < MAX_INTLENGTH );
+
+	REQUIRES( length > 0 && length < MAX_INTLENGTH );
 
 	/* Fill the buffer with random data */
 	return( hwGetRandom( buffer, length ) );
@@ -466,16 +471,17 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
-	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
-			itemType == KEYMGMT_ITEM_PRIVATEKEY );
-	assert( keyIDtype == CRYPT_KEYID_NAME || \
-			keyIDtype == CRYPT_KEYID_URI || \
-			keyIDtype == CRYPT_IKEYID_KEYID || \
-			keyIDtype == CRYPT_IKEYID_PGPKEYID || \
-			keyIDtype == CRYPT_IKEYID_ISSUERANDSERIALNUMBER );
 	assert( isReadPtr( keyID, keyIDlength ) );
-	assert( auxInfo == NULL && *auxInfoLength == 0 );
-	assert( flags >= KEYMGMT_FLAG_NONE && flags < KEYMGMT_FLAG_MAX );
+
+	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			  itemType == KEYMGMT_ITEM_PRIVATEKEY );
+	REQUIRES( keyIDtype == CRYPT_KEYID_NAME || \
+			  keyIDtype == CRYPT_KEYID_URI || \
+			  keyIDtype == CRYPT_IKEYID_KEYID || \
+			  keyIDtype == CRYPT_IKEYID_PGPKEYID || \
+			  keyIDtype == CRYPT_IKEYID_ISSUERANDSERIALNUMBER );
+	REQUIRES( auxInfo == NULL && *auxInfoLength == 0 );
+	REQUIRES( flags >= KEYMGMT_FLAG_NONE && flags < KEYMGMT_FLAG_MAX );
 
 #if 1
 	/* Redirect the fetch down to the PKCS #15 storage object, which will
@@ -688,7 +694,8 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 	MESSAGE_KEYMGMT_INFO setkeyInfo;
 
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
-	assert( isHandleRangeValid( iCryptHandle ) );
+
+	REQUIRES( isHandleRangeValid( iCryptHandle ) );
 
 	/* Redirect the add down to the PKCS #15 storage object */
 	if( hardwareInfo->iCryptKeyset == CRYPT_ERROR )
@@ -713,11 +720,12 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 	int status;
 
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
-	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
-			itemType == KEYMGMT_ITEM_PRIVATEKEY );
-	assert( keyIDtype == CRYPT_KEYID_NAME );
 	assert( isReadPtr( keyID, keyIDlength ) );
-	assert( keyIDlength > 0 && keyIDlength <= CRYPT_MAX_TEXTSIZE );
+
+	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			  itemType == KEYMGMT_ITEM_PRIVATEKEY );
+	REQUIRES( keyIDtype == CRYPT_KEYID_NAME );
+	REQUIRES( keyIDlength > 0 && keyIDlength <= CRYPT_MAX_TEXTSIZE );
 
 	/* Perform the delete both from the PKCS #15 storage object and the
 	   native storage.  This gets a bit complicated because in order to 
@@ -774,11 +782,12 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
-	assert( keyIDtype == CRYPT_IKEYID_KEYID );
 	assert( isReadPtr( keyID, keyIDlength ) );
-	assert( keyIDlength > 4 && keyIDlength < MAX_INTLENGTH_SHORT );
 	assert( isWritePtr( stateInfo, sizeof( int ) ) );
-	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
+
+	REQUIRES( keyIDtype == CRYPT_IKEYID_KEYID );
+	REQUIRES( keyIDlength > 4 && keyIDlength < MAX_INTLENGTH_SHORT );
+	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY );
 
 	/* Clear return values */
 	*iCertificate = CRYPT_ERROR;
@@ -802,7 +811,9 @@ static int getNextItemFunction( DEVICE_INFO *deviceInfo,
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( isWritePtr( stateInfo, sizeof( int ) ) );
-	assert( isHandleRangeValid( *stateInfo ) || *stateInfo == CRYPT_ERROR );
+
+	REQUIRES( isHandleRangeValid( *stateInfo ) || \
+			  *stateInfo == CRYPT_ERROR );
 
 	UNUSED_ARG( hardwareInfo );
 
@@ -850,9 +861,10 @@ int setPersonalityMapping( CONTEXT_INFO *contextInfoPtr, const int keyHandle,
 	int status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( keyHandle >= 0 && keyHandle < INT_MAX );
 	assert( isWritePtr( storageID, storageIDlength ) );
-	assert( storageIDlength >= 4 && storageIDlength <= KEYID_SIZE );
+
+	REQUIRES( keyHandle >= 0 && keyHandle < INT_MAX );
+	REQUIRES( storageIDlength >= 4 && storageIDlength <= KEYID_SIZE );
 
 	/* Set up the mapping information in the context */
 	status = hwGetRandom( buffer, KEYID_SIZE );
@@ -936,8 +948,9 @@ static int generateKeyComponents( CONTEXT_INFO *staticContextInfo,
 	assert( isWritePtr( staticContextInfo, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( contextData, sizeof( PKC_INFO ) ) );
 	assert( isReadPtr( capabilityInfoPtr, sizeof( CAPABILITY_INFO ) ) );
-	assert( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
-			keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* Initialise a static context to generate the key into */
 	status = staticInitContext( staticContextInfo, CONTEXT_PKC, 
@@ -966,8 +979,9 @@ static int rsaGenerateComponents( CRYPT_PKCINFO_RSA *rsaKeyInfo,
 	int status;
 
 	assert( isWritePtr( rsaKeyInfo, sizeof( CRYPT_PKCINFO_RSA ) ) );
-	assert( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
-			keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* Clear return value */
 	cryptInitComponents( rsaKeyInfo, FALSE );
@@ -1009,11 +1023,12 @@ static int dlpGenerateComponents( CRYPT_PKCINFO_DLP *dlpKeyInfo,
 	int status;
 
 	assert( isWritePtr( dlpKeyInfo, sizeof( CRYPT_PKCINFO_DLP ) ) );
-	assert( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
-			keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
-	assert( cryptAlgo == CRYPT_ALGO_DH || \
-			cryptAlgo == CRYPT_ALGO_DSA || \
-			cryptAlgo == CRYPT_ALGO_ELGAMAL );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+	REQUIRES( cryptAlgo == CRYPT_ALGO_DH || \
+			  cryptAlgo == CRYPT_ALGO_DSA || \
+			  cryptAlgo == CRYPT_ALGO_ELGAMAL );
 
 	/* Clear return value */
 	cryptInitComponents( dlpKeyInfo, FALSE );
@@ -1073,13 +1088,14 @@ int generatePKCcomponents( CONTEXT_INFO *contextInfoPtr,
 	int status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( keyInfo != NULL );
-	assert( cryptAlgo == CRYPT_ALGO_DH || \
-			cryptAlgo == CRYPT_ALGO_RSA || \
-			cryptAlgo == CRYPT_ALGO_DSA || \
-			cryptAlgo == CRYPT_ALGO_ELGAMAL );
-	assert( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
-			keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+
+	REQUIRES( keyInfo != NULL );
+	REQUIRES( cryptAlgo == CRYPT_ALGO_DH || \
+			  cryptAlgo == CRYPT_ALGO_RSA || \
+			  cryptAlgo == CRYPT_ALGO_DSA || \
+			  cryptAlgo == CRYPT_ALGO_ELGAMAL );
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	switch( cryptAlgo )
 		{
@@ -1116,14 +1132,15 @@ int setPKCinfo( CONTEXT_INFO *contextInfoPtr,
 	int keyDataSize, status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( cryptAlgo == CRYPT_ALGO_DH || \
-			cryptAlgo == CRYPT_ALGO_RSA || \
-			cryptAlgo == CRYPT_ALGO_DSA || \
-			cryptAlgo == CRYPT_ALGO_ELGAMAL );
 	assert( ( cryptAlgo == CRYPT_ALGO_RSA && \
 			  isReadPtr( keyInfo, sizeof( CRYPT_PKCINFO_RSA ) ) ) || \
 			( cryptAlgo != CRYPT_ALGO_RSA && \
 			  isReadPtr( keyInfo, sizeof( CRYPT_PKCINFO_DLP ) ) ) );
+
+	REQUIRES( cryptAlgo == CRYPT_ALGO_DH || \
+			  cryptAlgo == CRYPT_ALGO_RSA || \
+			  cryptAlgo == CRYPT_ALGO_DSA || \
+			  cryptAlgo == CRYPT_ALGO_ELGAMAL );
 
 	/* Send the public key data to the context.  We send the keying 
 	   information as CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
@@ -1195,7 +1212,8 @@ int setPKCinfo( CONTEXT_INFO *contextInfoPtr,
 int setConvInfo( const CRYPT_CONTEXT iCryptContext, const int keySize )
 	{
 	assert( isHandleRangeValid( iCryptContext ) );
-	assert( keySize >= MIN_KEYSIZE && keySize <= CRYPT_MAX_KEYSIZE );
+
+	REQUIRES( keySize >= MIN_KEYSIZE && keySize <= CRYPT_MAX_KEYSIZE );
 
 	return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
 							 ( MESSAGE_CAST ) &keySize, 

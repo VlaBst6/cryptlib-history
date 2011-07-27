@@ -51,7 +51,8 @@
 
 /* Perform a pairwise consistency test on a public/private key pair */
 
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN pairwiseConsistencyTest( INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	CONTEXT_INFO checkContextInfo;
 	PKC_INFO *sourcePkcInfo = contextInfoPtr->ctxPKC;
@@ -59,6 +60,8 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 	KEYAGREE_PARAMS keyAgreeParams1, keyAgreeParams2;
 	const CAPABILITY_INFO *capabilityInfoPtr;
 	int bnStatus = BN_STATUS, status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* The DH pairwise check is a bit more complex than the one for the
 	   other algorithms because there's no matched public/private key pair,
@@ -195,6 +198,7 @@ static const DLP_KEY FAR_BSS dlpTestKey = {
 	  0xDC, 0xCE, 0xA4, 0xD5, 0xA5, 0x4F, 0x08, 0x0F }
 	};
 
+CHECK_RETVAL \
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -209,27 +213,27 @@ static int selfTest( void )
 		return( CRYPT_ERROR_FAILED );
 	status = importBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
 						   dlpTestKey.pLen, DLPPARAM_MIN_P, 
-						   DLPPARAM_MAX_P, NULL, SHORTKEY_CHECK_PKC );
+						   DLPPARAM_MAX_P, NULL, KEYSIZE_CHECK_PKC );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->dlpParam_g, dlpTestKey.g, 
 							   dlpTestKey.gLen, DLPPARAM_MIN_G, 
 							   DLPPARAM_MAX_G, &pkcInfo->dlpParam_p,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->dlpParam_q, dlpTestKey.q, 
 							   dlpTestKey.qLen, DLPPARAM_MIN_Q, 
 							   DLPPARAM_MAX_Q, &pkcInfo->dlpParam_p,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->dlpParam_y, dlpTestKey.y, 
 							   dlpTestKey.yLen, DLPPARAM_MIN_Y, 
 							   DLPPARAM_MAX_Y, &pkcInfo->dlpParam_p,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusOK( status ) )
 		status = importBignum( &pkcInfo->dlpParam_x, dlpTestKey.x, 
 							   dlpTestKey.xLen, DLPPARAM_MIN_X, 
 							   DLPPARAM_MAX_X, &pkcInfo->dlpParam_p,
-							   SHORTKEY_CHECK_NONE );
+							   KEYSIZE_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		{
 		staticDestroyContext( &contextInfo );
@@ -261,16 +265,20 @@ static int selfTest( void )
    distinguisher 'Fn' to the name since some systems already have 'encrypt'
    and 'decrypt' in their standard headers */
 
-static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+					  IN_LENGTH_FIXED( sizeof( KEYAGREE_PARAMS ) ) int noBytes )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	KEYAGREE_PARAMS *keyAgreeParams = ( KEYAGREE_PARAMS * ) buffer;
 	int status;
 
-	UNUSED_ARG( noBytes );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( keyAgreeParams, sizeof( KEYAGREE_PARAMS ) ) );
 
-	assert( noBytes == sizeof( KEYAGREE_PARAMS ) );
-	assert( !BN_is_zero( &pkcInfo->dlpParam_y ) );
+	REQUIRES( noBytes == sizeof( KEYAGREE_PARAMS ) );
+	REQUIRES( !BN_is_zero( &pkcInfo->dlpParam_y ) );
 
 	/* y is generated either at keygen time for static DH or as a side-effect
 	   of the implicit generation of the x value for ephemeral DH, so all we
@@ -293,17 +301,24 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Perform phase 2 of Diffie-Hellman ("import") */
 
-static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int decryptFn( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  INOUT_BUFFER_FIXED( noBytes ) BYTE *buffer, 
+					  IN_LENGTH_FIXED( sizeof( KEYAGREE_PARAMS ) ) int noBytes )
 	{
 	KEYAGREE_PARAMS *keyAgreeParams = ( KEYAGREE_PARAMS * ) buffer;
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	BIGNUM *z = &pkcInfo->tmp1;
 	int bnStatus = BN_STATUS, status;
 
-	assert( noBytes == sizeof( KEYAGREE_PARAMS ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( keyAgreeParams, sizeof( KEYAGREE_PARAMS ) ) );
 	assert( isReadPtr( keyAgreeParams->publicValue, 
 					   keyAgreeParams->publicValueLen ) );
-	assert( keyAgreeParams->publicValueLen >= MIN_PKCSIZE );
+
+	REQUIRES( noBytes == sizeof( KEYAGREE_PARAMS ) );
+	REQUIRES( keyAgreeParams->publicValueLen >= MIN_PKCSIZE && \
+			  keyAgreeParams->publicValueLen < MAX_INTLENGTH_SHORT );
 
 	/* The other party's y value will be stored with the key agreement info
 	   rather than having been read in when we read the DH public key */
@@ -311,7 +326,7 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 						   keyAgreeParams->publicValue, 
 						   keyAgreeParams->publicValueLen,
 						   DLPPARAM_MIN_Y, DLPPARAM_MAX_Y, 
-						   &pkcInfo->dlpParam_p, SHORTKEY_CHECK_PKC );
+						   &pkcInfo->dlpParam_p, KEYSIZE_CHECK_PKC );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -346,11 +361,20 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Load key components into an encryption context */
 
-static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
-					const int keyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+					IN_BUFFER_OPT( keyLength ) const void *key,
+					IN_LENGTH_SHORT_OPT const int keyLength )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
-	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( key == NULL && keyLength == 0 ) || \
+			( isReadPtr( key, keyLength ) && \
+			  keyLength == sizeof( CRYPT_PKCINFO_DLP ) ) );
+
+	REQUIRES( ( key == NULL && keyLength == 0 ) || \
+			  ( key != NULL && keyLength == sizeof( CRYPT_PKCINFO_DLP ) ) );
 
 #ifndef USE_FIPS140
 	/* Load the key component from the external representation into the
@@ -358,37 +382,38 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( key != NULL )
 		{
 		const CRYPT_PKCINFO_DLP *dhKey = ( CRYPT_PKCINFO_DLP * ) key;
+		int status;
 
 		contextInfoPtr->flags |= ( dhKey->isPublicKey ) ? \
 					CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
 		status = importBignum( &pkcInfo->dlpParam_p, dhKey->p, 
 							   bitsToBytes( dhKey->pLen ),
 							   DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL, 
-							   SHORTKEY_CHECK_PKC );
+							   KEYSIZE_CHECK_PKC );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->dlpParam_g, dhKey->g, 
 								   bitsToBytes( dhKey->gLen ),
 								   DLPPARAM_MIN_G, DLPPARAM_MAX_G,
 								   &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->dlpParam_q, dhKey->q, 
 								   bitsToBytes( dhKey->qLen ),
 								   DLPPARAM_MIN_Q, DLPPARAM_MAX_Q,
 								   &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) )
 			status = importBignum( &pkcInfo->dlpParam_y, dhKey->y, 
 								   bitsToBytes( dhKey->yLen ),
 								   DLPPARAM_MIN_Y, DLPPARAM_MAX_Y,
 								   &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		if( cryptStatusOK( status ) && !dhKey->isPublicKey )
 			status = importBignum( &pkcInfo->dlpParam_x, dhKey->x, 
 								   bitsToBytes( dhKey->xLen ),
 								   DLPPARAM_MIN_X, DLPPARAM_MAX_X,
 								   &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
+								   KEYSIZE_CHECK_NONE );
 		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
 		if( cryptStatusError( status ) )
 			return( status );
@@ -407,9 +432,17 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 /* Generate a key into an encryption context */
 
-static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+						IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) \
+							const int keySizeBits )
 	{
 	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( keySizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keySizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	status = generateDLPkey( contextInfoPtr, keySizeBits );
 	if( cryptStatusOK( status ) &&

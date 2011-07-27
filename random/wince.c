@@ -230,7 +230,7 @@ static void slowPollWinCE( void )
 	HANDLE hSnapshot;
 	RANDOM_STATE randomState;
 	BYTE buffer[ BIG_RANDOM_BUFSIZE ];
-	int listCount = 0, iterationCount;
+	int iterationCount;
 
 	/* Initialize the Toolhelp32 function pointers if necessary.  The
 	   Toolhelp DLL isn't always present (some OEMs omit it) so we have to
@@ -315,10 +315,12 @@ static void slowPollWinCE( void )
 		}
 	hl32.dwSize = sizeof( HEAPLIST32 );
 	if( pHeap32ListFirst( hSnapshot, &hl32 ) )
+		{
+		int listCount = 0;
+
 		do
 			{
 			HEAPENTRY32 he32;
-			int entryCount = 0;
 
 			/* First add the information from the basic Heaplist32
 			   structure */
@@ -333,6 +335,9 @@ static void slowPollWinCE( void )
 			   on each of them */
 			he32.dwSize = sizeof( HEAPENTRY32 );
 			if( pHeap32First( hSnapshot, &he32, hl32.th32ProcessID, hl32.th32HeapID ) )
+				{
+				int entryCount = 0;
+
 				do
 					{
 					if( krnlIsExiting() )
@@ -344,8 +349,10 @@ static void slowPollWinCE( void )
 								   sizeof( HEAPENTRY32 ) );
 					}
 				while( entryCount++ < 20 && pHeap32Next( hSnapshot, &he32 ) );
+				}
 			}
 		while( listCount++ < 20 && pHeap32ListNext( hSnapshot, &hl32 ) );
+		}
 	pCloseToolhelp32Snapshot( hSnapshot );
 	if( krnlIsExiting() )
 		return;
@@ -360,6 +367,7 @@ static void slowPollWinCE( void )
 	pe32.dwSize = sizeof( PROCESSENTRY32 );
 	iterationCount = 0;
 	if( pProcess32First( hSnapshot, &pe32 ) )
+		{
 		do
 			{
 			if( krnlIsExiting() )
@@ -371,6 +379,7 @@ static void slowPollWinCE( void )
 			}
 		while( pProcess32Next( hSnapshot, &pe32 ) && \
 			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+		}
 	pCloseToolhelp32Snapshot( hSnapshot );
 	if( krnlIsExiting() )
 		return;
@@ -385,6 +394,7 @@ static void slowPollWinCE( void )
 	te32.dwSize = sizeof( THREADENTRY32 );
 	iterationCount = 0;
 	if( pThread32First( hSnapshot, &te32 ) )
+		{
 		do
 			{
 			if( krnlIsExiting() )
@@ -394,8 +404,9 @@ static void slowPollWinCE( void )
 				}
 			addRandomData( randomState, &te32, sizeof( THREADENTRY32 ) );
 			}
-	while( pThread32Next( hSnapshot, &te32 ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE  );
+		while( pThread32Next( hSnapshot, &te32 ) && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE  );
+		}
 	pCloseToolhelp32Snapshot( hSnapshot );
 	if( krnlIsExiting() )
 		return;
@@ -410,6 +421,7 @@ static void slowPollWinCE( void )
 	me32.dwSize = sizeof( MODULEENTRY32 );
 	iterationCount = 0;
 	if( pModule32First( hSnapshot, &me32 ) )
+		{
 		do
 			{
 			if( krnlIsExiting() )
@@ -419,8 +431,9 @@ static void slowPollWinCE( void )
 				}
 			addRandomData( randomState, &me32, sizeof( MODULEENTRY32 ) );
 			}
-	while( pModule32Next( hSnapshot, &me32 ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE  );
+		while( pModule32Next( hSnapshot, &me32 ) && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE  );
+		}
 	pCloseToolhelp32Snapshot( hSnapshot );
 	if( krnlIsExiting() )
 		return;

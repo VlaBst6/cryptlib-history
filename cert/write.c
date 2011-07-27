@@ -1335,10 +1335,10 @@ static int getPkiUserInfo( INOUT CERT_PKIUSER_INFO *certUserInfo,
 						   OUT_LENGTH_SHORT_Z int *algoIdSize )
 	{
 	CRYPT_CONTEXT iCryptContext;
-	static const CRYPT_MODE_TYPE mode = CRYPT_MODE_CFB;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
 	STREAM stream;
+	static const int mode = CRYPT_MODE_CFB;	/* enum vs.int */
 	int userInfoBufPos = DUMMY_INIT, i, status;
 
 	assert( isWritePtr( certUserInfo, sizeof( CERT_PKIUSER_INFO ) ) );
@@ -1417,7 +1417,7 @@ static int getPkiUserInfo( INOUT CERT_PKIUSER_INFO *certUserInfo,
 	   associated with the CA user to perform the encryption instead of a 
 	   fixed interop key.  This isn't a security issue because the CA 
 	   database is assumed to be secure (or at least the CA is in serious 
-	   trouble if it's database isn't secured), we encrypt because it's 
+	   trouble if its database isn't secured), we encrypt because it's 
 	   pretty much free and because it doesn't hurt either way.  Most CA 
 	   guidelines merely require that the CA protect its user database via 
 	   standard (physical/ACL) security measures so this is no less secure 

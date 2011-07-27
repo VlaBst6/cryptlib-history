@@ -248,14 +248,12 @@ int importConventionalKey( IN_BUFFER( encryptedKeyLength ) \
 						   IN_HANDLE const CRYPT_CONTEXT iImportContext,
 						   IN_ENUM( KEYEX ) const KEYEX_TYPE keyexType )
 	{
-	CRYPT_ALGO_TYPE importAlgo;
-	CRYPT_MODE_TYPE importMode = DUMMY_INIT;
 	MECHANISM_WRAP_INFO mechanismInfo;
 	const READKEK_FUNCTION readKeyexFunction = getReadKekFunction( keyexType );
 	QUERY_INFO queryInfo;
 	MESSAGE_DATA msgData;
 	STREAM stream;
-	int status;
+	int importAlgo, importMode = DUMMY_INIT, status;	/* int vs.enum */
 
 	assert( isReadPtr( encryptedKey, encryptedKeyLength ) );
 

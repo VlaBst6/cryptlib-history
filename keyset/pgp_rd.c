@@ -368,7 +368,7 @@ static int readPublicKeyComponents( INOUT STREAM *stream,
 		if( cryptStatusError( status ) )
 			return( status );
 		totalLength += length;
-		assert( PGP_KEYID_SIZE < MIN_PKCSIZE );
+		static_assert( PGP_KEYID_SIZE < MIN_PKCSIZE, "PGP keyID size" );
 	
 		/* Move back and copy out the last PGP_KEYID_SIZE bytes of n as the PGP 
 		   2.x key ID */

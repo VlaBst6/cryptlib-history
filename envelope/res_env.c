@@ -71,50 +71,6 @@ static int checkPgpUsage( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	}
 #endif /* USE_PGP */
 
-#ifdef USE_FORTEZZA
-
-/* Check that an object being added is suitable for use with Fortezza data */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
-static int checkFortezzaUsage( IN_HANDLE const CRYPT_HANDLE cryptHandle,
-							   const ENVELOPE_INFO *envelopeInfoPtr,
-							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE envInfo )
-	{
-	CRYPT_ALGO_TYPE cryptAlgo;
-	int device1, device2 = DUMMY_INIT, status;
-
-	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-
-	REQUIRES( isHandleRangeValid( cryptHandle ) );
-	REQUIRES( envInfo == CRYPT_ENVINFO_ORIGINATOR || \
-			  envInfo == CRYPT_ENVINFO_SESSIONKEY );
-
-	/* Make sure that the new session key being added (if there's existing
-	   originator info) or the existing one (if it's originator info being
-	   added) is a Skipjack context */
-	status = krnlSendMessage( ( envInfo == CRYPT_ENVINFO_ORIGINATOR ) ? \
-							  envelopeInfoPtr->iCryptContext : cryptHandle,
-							  IMESSAGE_GETATTRIBUTE, &cryptAlgo,
-							  CRYPT_CTXINFO_ALGO );
-	if( cryptStatusError( status ) || cryptAlgo != CRYPT_ALGO_SKIPJACK )
-		return( CRYPT_ARGERROR_NUM1 );
-
-	/* Make sure that both objects are present in the same device */
-	status = krnlSendMessage( cryptHandle, IMESSAGE_GETDEPENDENT, &device1,
-							  OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( status ) )
-		{
-		status = krnlSendMessage( envelopeInfoPtr->iCryptContext,
-								  IMESSAGE_GETDEPENDENT, &device2,
-								  OBJECT_TYPE_DEVICE );
-		}
-	if( cryptStatusOK( status ) && ( device1 != device2 ) )
-		status = CRYPT_ARGERROR_NUM1;
-
-	return( status );
-	}
-#endif /* USE_FORTEZZA */
-
 /****************************************************************************
 *																			*
 *					Misc.Enveloping Info Management Functions				*
@@ -133,8 +89,7 @@ int initEnvelopeEncryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 							const BOOLEAN copyContext )
 	{
 	CRYPT_CONTEXT iCryptContext = cryptContext;
-	CRYPT_ALGO_TYPE cryptAlgo = DUMMY_INIT;
-	CRYPT_MODE_TYPE cryptMode = DUMMY_INIT;
+	int contextAlgorithm = DUMMY_INIT, contextMode = DUMMY_INIT;
 	int blockSize = DUMMY_INIT, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -152,10 +107,10 @@ int initEnvelopeEncryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Extract the information that we need to process data */
 	status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &contextAlgorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE,
-								  &cryptMode, CRYPT_CTXINFO_MODE );
+								  &contextMode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE,
 								  &blockSize, CRYPT_CTXINFO_BLOCKSIZE );
@@ -164,7 +119,7 @@ int initEnvelopeEncryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Make sure that the context is what's required */
 	if( algorithm != CRYPT_ALGO_NONE && \
-		( cryptAlgo != algorithm || cryptMode != mode ) )
+		( contextAlgorithm != algorithm || contextMode != mode ) )
 		{
 		/* This can only happen on de-enveloping if the data is corrupted or
 		   if the user is asked for a KEK and tries to supply a session key
@@ -183,7 +138,7 @@ int initEnvelopeEncryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		{
 		MESSAGE_CREATEOBJECT_INFO createInfo;
 
-		setMessageCreateObjectInfo( &createInfo, cryptAlgo );
+		setMessageCreateObjectInfo( &createInfo, contextAlgorithm );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 								  OBJECT_TYPE_CONTEXT );
@@ -201,7 +156,7 @@ int initEnvelopeEncryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Load the IV into the context and set up the encryption information for
 	   the envelope */
-	if( !isStreamCipher( cryptAlgo ) )
+	if( !isStreamCipher( contextAlgorithm ) )
 		{
 		if( iv != NULL )
 			{
@@ -314,19 +269,6 @@ static int checkMissingInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 							  CRYPT_ERRTYPE_ATTR_ABSENT );
 				return( CRYPT_ERROR_NOTINITED );
 				}
-
-#ifdef USE_FORTEZZA
-			/* If there's an originator present there must be a matching 
-			   public-key action present */
-			if( envelopeInfoPtr->iExtraCertChain != CRYPT_ERROR && \
-				findAction( envelopeInfoPtr->preActionList,
-							ACTION_KEYEXCHANGE_PKC ) == NULL )
-				{
-				setErrorInfo( envelopeInfoPtr, CRYPT_ENVINFO_PUBLICKEY, 
-							  CRYPT_ERRTYPE_ATTR_ABSENT );
-				return( CRYPT_ERROR_NOTINITED );
-				}
-#endif /* USE_FORTEZZA */
 			break;
 
 		case ACTION_SIGN:
@@ -507,7 +449,7 @@ static int addPgpPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
 	BYTE salt[ PGP_SALTSIZE + 8 ];
-	static const CRYPT_MODE_TYPE mode = CRYPT_MODE_CFB;
+	static const int mode = CRYPT_MODE_CFB;	/* int vs.enum */
 	int status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -590,12 +532,10 @@ static int addContextInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 						   INOUT_PTR ACTION_LIST **actionListHeadPtrPtr,
 						   IN_ENUM( ACTION ) const ACTION_TYPE actionType )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo, certHashAlgo;
-	CRYPT_MODE_TYPE cryptMode = CRYPT_MODE_NONE;
 	CRYPT_HANDLE iCryptHandle = cryptHandle;
 	ACTION_LIST *actionListPtr, *hashActionPtr;
 	ACTION_RESULT actionResult;
-	int status;
+	int algorithm, mode = CRYPT_MODE_NONE, certHashAlgo, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( actionListHeadPtrPtr, sizeof( ACTION_LIST * ) ) );
@@ -612,15 +552,15 @@ static int addContextInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   the calling function but we double-check here because this provides 
 	   a convenient centralised location for it */
 	status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
-	if( cryptStatusOK( status ) && isConvAlgo( cryptAlgo ) )
+							  &algorithm, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) && isConvAlgo( algorithm ) )
 		{
 		status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE,
-								  &cryptMode, CRYPT_CTXINFO_MODE );
+								  &mode, CRYPT_CTXINFO_MODE );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	if( !envelopeInfoPtr->checkAlgo( cryptAlgo, cryptMode ) )
+	if( !envelopeInfoPtr->checkAlgo( algorithm, mode ) )
 		return( CRYPT_ARGERROR_NUM1 );
 
 	/* Find the insertion point for this action and make sure that it isn't
@@ -660,7 +600,7 @@ static int addContextInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		{
 		MESSAGE_CREATEOBJECT_INFO createInfo;
 
-		setMessageCreateObjectInfo( &createInfo, cryptAlgo );
+		setMessageCreateObjectInfo( &createInfo, algorithm );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 								  OBJECT_TYPE_CONTEXT );
@@ -930,31 +870,8 @@ static int addEnvelopeInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			}
 
 		case CRYPT_ENVINFO_ORIGINATOR:
-#ifdef USE_FORTEZZA
-			/* If there's a session key present make sure that it's 
-			   consistent with the originator info */
-			if( envelopeInfoPtr->iCryptContext != CRYPT_ERROR )
-				{
-				int status;
-
-				status = checkFortezzaUsage( cryptHandle, envelopeInfoPtr,
-											 CRYPT_ENVINFO_ORIGINATOR );
-				if( cryptStatusError( status ) )
-					return( status );
-				}
-
-			/* Increment its reference count and add it to the action */
-			krnlSendNotifier( cryptHandle, IMESSAGE_INCREFCOUNT );
-			envelopeInfoPtr->iExtraCertChain = cryptHandle;
-
-			/* Since we're using Fortezza key management we have to use 
-			   Skipjack as the data encryption algorithm */
-			envelopeInfoPtr->defaultAlgo = CRYPT_ALGO_SKIPJACK;
-
-			return( CRYPT_OK );
-#else
+			/* Historic value only needed for Fortezza */
 			return( CRYPT_ARGERROR_NUM1 );
-#endif /* USE_FORTEZZA */
 
 		case CRYPT_ENVINFO_COMPRESSION:
 #ifdef USE_COMPRESSION
@@ -1014,20 +931,6 @@ static int addEnvelopeInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 							  CRYPT_ERRTYPE_ATTR_PRESENT );
 				return( CRYPT_ERROR_INITED );
 				}
-
-#ifdef USE_FORTEZZA
-			/* If there's originator info present make sure that it's
-			   consistent with the new session key */
-			if( envelopeInfoPtr->iExtraCertChain != CRYPT_ERROR )
-				{
-				int status;
-
-				status = checkFortezzaUsage( cryptHandle, envelopeInfoPtr,
-											 CRYPT_ENVINFO_SESSIONKEY );
-				if( cryptStatusError( status ) )
-					return( status );
-				}
-#endif /* USE_FORTEZZA */
 
 			return( addContextInfo( envelopeInfoPtr, cryptHandle, 
 									&envelopeInfoPtr->actionList,

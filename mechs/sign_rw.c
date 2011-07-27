@@ -97,8 +97,9 @@ static int readX509Signature( INOUT STREAM *stream,
 
 	/* Read the signature/hash algorithm information followed by the start
 	   of the signature */
-	status = readAlgoIDext( stream, &queryInfo->cryptAlgo,
-							&queryInfo->hashAlgo, ALGOID_CLASS_PKCSIG );
+	status = readAlgoIDex( stream, &queryInfo->cryptAlgo,
+						   &queryInfo->hashAlgo, &queryInfo->hashParam, 
+						   ALGOID_CLASS_PKCSIG );
 	if( cryptStatusOK( status ) )
 		{
 		status = readBitStringHole( stream, &queryInfo->dataLength, 18 + 18,

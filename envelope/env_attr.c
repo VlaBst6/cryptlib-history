@@ -811,7 +811,6 @@ static int checkOtherAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				return( exitErrorInited( envelopeInfoPtr, 
 										 CRYPT_ENVINFO_KEYSET_SIGCHECK ) );
 			return( CRYPT_OK );
-
 		}
 
 	retIntError();
@@ -1015,7 +1014,7 @@ int getEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			CONTENT_LIST *contentListItem = \
 								envelopeInfoPtr->contentListCurrent;
 
-			assert( contentListItem != NULL );
+			REQUIRES( contentListItem != NULL );
 
 			/* Make sure that there's extra data present */
 			iCryptHandle = \
@@ -1352,15 +1351,8 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	if( checkType != MESSAGE_CHECK_NONE )
 		{
-		/* Check the object as appropriate.  A key agreement key can also act
-		   as a public key because of the way KEA works so if a check for a
-		   straight public key fails we try again to see if it's a key
-		   agreement key with import capabilities */
+		/* Check the object as appropriate */
 		status = krnlSendMessage( value, IMESSAGE_CHECK, NULL, checkType );
-		if( status == CRYPT_ARGERROR_OBJECT && \
-			attribute == CRYPT_ENVINFO_PUBLICKEY )
-			status = krnlSendMessage( value, IMESSAGE_CHECK, NULL,
-									  MESSAGE_CHECK_PKC_KA_IMPORT );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ARGERROR_NUM1 );
 
@@ -1378,8 +1370,7 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			checkType == MESSAGE_CHECK_HASH || \
 			checkType == MESSAGE_CHECK_MAC )
 			{
-			CRYPT_ALGO_TYPE algorithm;
-			CRYPT_MODE_TYPE mode = CRYPT_MODE_NONE;
+			int algorithm, mode = CRYPT_MODE_NONE;
 
 			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE,
 									  &algorithm, CRYPT_CTXINFO_ALGO );
@@ -1411,15 +1402,25 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			{
 			int inited, certType;
 
-			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE, &inited, 
-									  CRYPT_CERTINFO_IMMUTABLE );
-			if( cryptStatusError( status ) || !inited )
-				return( CRYPT_ARGERROR_NUM1 );
 			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE,
 									  &certType, CRYPT_CERTINFO_CERTTYPE );
 			if( cryptStatusError( status ) ||
 				( certType != CRYPT_CERTTYPE_CERTIFICATE && \
 				  certType != CRYPT_CERTTYPE_CERTCHAIN ) )
+				{
+				/* These objects work with CRYPT_FORMAT_CRYPTLIB but not 
+				   CRYPT_FORMAT_CMS/SMIME, which may be confusing for some
+				   users so we try and provide somewhat more detailed 
+				   information on what the problem is.  Since it's the
+				   result of a complex dependency it's a bit difficult to 
+				   do, the following is about the best that we can manage */
+				setErrorInfo( envelopeInfoPtr, CRYPT_CERTINFO_CERTIFICATE, 
+							  CRYPT_ERRTYPE_ATTR_ABSENT );
+				return( CRYPT_ARGERROR_NUM1 );
+				}
+			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE, &inited, 
+									  CRYPT_CERTINFO_IMMUTABLE );
+			if( cryptStatusError( status ) || !inited )
 				return( CRYPT_ARGERROR_NUM1 );
 			}
 		}

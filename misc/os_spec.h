@@ -106,9 +106,33 @@
   #define __VMS__
 #endif /* VMS */
 
-/* In some cases we're using a DOS or Windows system as a cross-development
-   platform, if we are we add extra defines to turn off some Windows-
-   specific features */
+/* In some cases we're using a Windows system as an emulated cross-
+   development platform, in which case we are we add extra defines to turn 
+   off some Windows-specific features.  The override for BOOLEAN is required 
+   because once __WIN32__ is turned off we try and typedef BOOLEAN, but 
+   under Windows it's already typedef'd which leads to error messages */
+
+#if defined( __WIN32__ ) && ( _MSC_VER == 1200 ) && 0
+  /* Embedded OS variant */
+//  #define __EmbOS__ 
+//  #define __FreeRTOS__
+//	#define __ITRON__
+//	#define __RTEMS__
+//	#define __ThreadX__
+//	#define __TKernel__
+//  #define __UCOS__
+
+  /* Undo Windows defines */
+  #undef __WINDOWS__
+  #undef __WIN32__
+  #ifndef __UCOS__		
+	#define BOOLEAN			FNORDIAN
+  #endif /* Systems that typedef BOOLEAN */
+
+  /* In addition '__i386__' (assuming gcc with an x86 target) needs to be 
+     defined globally via Project Settings | C/C++ | Preprocessor.  This
+	 are already defined for the 'Crosscompile' build configuration */
+#endif /* Windows emulated cross-compile environment */
 
 #ifdef _SCCTK
   #define __IBM4758__
@@ -141,6 +165,7 @@
   #define VC_LT_2005( version )		( version < 1400 )
   #define VC_GE_2005( version )		( version >= 1400 )
   #define VC_GE_2008( version )		( version >= 1500 )
+  #define VC_GE_2010( version )		( version >= 1600 )
 #else
   /* These aren't specifically required on non-VC++ systems, but some 
      preprocessors get confused if they aren't defined since they're used */
@@ -149,6 +174,7 @@
   #define VC_LT_2005( version )		0
   #define VC_GE_2005( version )		0
   #define VC_GE_2008( version )		0
+  #define VC_GE_2010( version )		0
 #endif /* Visual C++ */
 
 /* If we're compiling under VC++ with the maximum level of warnings, turn
@@ -359,8 +385,12 @@ typedef unsigned char		BYTE;
 #if defined( __STDC_VERSION__ ) && ( __STDC_VERSION__ >= 199901L ) && 0
   #include <stdbool.h>
   typedef bool              BOOLEAN;
-#elif defined( __WIN32__ ) || defined( __WINCE__ )
+#elif defined( __WIN32__ ) || defined( __WINCE__ ) 
   /* VC++ typedefs BOOLEAN so we need to use the preprocessor to override it */
+  #define BOOLEAN			int
+#elif defined ( __UCOS__ )
+  /* uC/OS-II typedefs BOOLEAN and it's probably not worth changing so we 
+     leave it as is */
   #define BOOLEAN			int
 #else
   typedef int				BOOLEAN;
@@ -487,7 +517,7 @@ typedef unsigned char		BYTE;
 #if ( defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 ) ) || \
 	( defined( __hpux ) && !defined( __GNUC__ ) ) || \
 	( defined( __QNX__ ) && ( OSVERSION <= 4 ) ) || \
-	( defined( __SUNPRO_C ) && ( __SUNPRO_C >= 0x570 ) ) || \
+	( defined( __SUNPRO_C ) && ( __SUNPRO_C <= 0x570 ) ) || \
 	defined( __SCO_VERSION__ ) || \
 	defined( _CRAY )
   #define CONST_INIT
@@ -587,6 +617,41 @@ typedef unsigned char		BYTE;
 #else
   #define verifyVAList( x ) ( ( x ) != NULL )
 #endif /* Nonstandard va_list types */
+
+/* cryptlib has many code sequences of the form:
+
+	status = foo();
+	if( cryptStatusOK( status ) )
+		status = bar();
+	if( cryptStatusOK( status ) )
+		status = baz();
+	if( cryptStatusOK( status ) )
+		...
+
+   These can be made more efficient when the compiler can assume that the
+   majority case has 'status == CRYPT_OK'.  gcc provides a means of doing 
+   this via __builtin_expect().  As usual for gcc the documentation for this 
+   is quite confusing:
+
+     "if( __builtin_expect( x, 0 ) ) foo (); would indicate that we do not 
+	 expect to call foo, since we expect x to be zero"
+
+   In this case the test is actually the expression 'x', which is evaluated
+   as 'x != 0', with the second parameter only taking values 0 (to mean 'not
+   likely') or 1 (to mean 'likely').  So the appropriate usage is 
+   "__builtin_expect( expr, 0 )" to mean that we don't expect something and 
+   "__builtin_expect( expr, 1 )" to mean that we do expect it.  The 
+   following forms of cryptStatusError() and cryptStatusOK() assume that in 
+   the majority of situations we won't encounter the error case */
+
+#if defined( __GNUC__ ) && ( __GNUC__ >= 3 )
+  #undef cryptStatusError
+  #undef cryptStatusOK
+  #define cryptStatusError( status ) \
+		  __builtin_expect( ( status ) < CRYPT_OK, 0 )
+  #define cryptStatusOK( status ) \
+		  __builtin_expect( ( status ) == CRYPT_OK, 1 )
+#endif /* gcc 3.x and newer */
 
 /****************************************************************************
 *																			*
@@ -697,6 +762,8 @@ typedef unsigned char		BYTE;
   #elif defined( __SYMBIAN32__ ) && \
 		( defined( __MARM__ ) || defined( __EMU_SYMBIAN_OS__ ) )
 	#define DATA_LITTLEENDIAN	/* Symbian on ARM/x86 always little-endian */
+  #elif defined( __m68k__  )
+	#define DATA_BIGENDIAN		/* 68K always big-endian */
   #elif defined __GNUC__
 	#ifdef BYTES_BIG_ENDIAN
 	  #define DATA_BIGENDIAN	/* Big-endian byte order */
@@ -1078,5 +1145,16 @@ typedef unsigned char		BYTE;
   /* Misc.functions */
   #define gmTime_s( timer, result )		gmtime( timer )
 #endif /* TR 24731 safe stdlib extensions */
+
+/****************************************************************************
+*																			*
+*				Miscellaneous System-specific Support Functions				*
+*																			*
+****************************************************************************/
+
+/* Perform various operations on pointers */
+
+void *ptr_align( const void *ptr, const int units );
+int ptr_diff( const void *ptr1, const void *ptr2 );
 
 #endif /* _OSSPEC_DEFINED */

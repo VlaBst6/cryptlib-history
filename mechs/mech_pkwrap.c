@@ -108,7 +108,7 @@ static int pgpExtractKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	{
 	CRYPT_ALGO_TYPE cryptAlgo = CRYPT_ALGO_NONE;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	static const CRYPT_MODE_TYPE mode = CRYPT_MODE_CFB;
+	static const int mode = CRYPT_MODE_CFB;	/* int vs.enum */
 	int status;
 
 	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
@@ -497,7 +497,7 @@ static int pkcs1Wrap( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
 #ifdef USE_PGP
 	if( type == PKCS1_WRAP_PGP )
 		{
-		CRYPT_ALGO_TYPE sessionKeyAlgo;
+		int sessionKeyAlgo;	/* int vs.enum */
 
 		/* PGP includes an additional algorithm specifier and checksum with
 		   the wrapped key so we adjust the length to take this into

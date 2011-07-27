@@ -381,7 +381,8 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 	*packetLength = 0;
 	*packetExtraLength = 0;
 
-	assert( CRYPT_MAX_IVSIZE >= MIN_PACKET_SIZE );
+	static_assert( CRYPT_MAX_IVSIZE >= MIN_PACKET_SIZE, \
+				   "Packet header size" );
 			/* Packet header is a single cipher block */
 
 	/* SSH encrypts everything but the MAC (including the packet length) so 
@@ -460,7 +461,9 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 			long as the minimum-length packet */
 	sMemConnect( &stream, headerBufPtr, MIN_PACKET_SIZE );
 	length = readUint32( &stream );
-	assert( SSH2_HEADER_REMAINDER_SIZE == MIN_PACKET_SIZE - LENGTH_SIZE );
+	static_assert( SSH2_HEADER_REMAINDER_SIZE == MIN_PACKET_SIZE - \
+												 LENGTH_SIZE, \
+				   "Header length calculation" );
 	if( cryptStatusError( length ) || \
 		length + extraLength < SSH2_HEADER_REMAINDER_SIZE || \
 		length < ID_SIZE + PADLENGTH_SIZE + SSH2_MIN_PADLENGTH_SIZE || \
@@ -488,7 +491,8 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Extract the pad length and type information.  We have to leave this 
 	   in place in the session buffer because it's MACd later on so we can't 
 	   read it from the stream above but have to manually extract it here */
-	assert( LENGTH_SIZE + 1 + ID_SIZE <= MIN_PACKET_SIZE );
+	static_assert( LENGTH_SIZE + 1 + ID_SIZE <= MIN_PACKET_SIZE,
+				   "Header length calculation" );
 	sshInfo->padLength = headerBufPtr[ LENGTH_SIZE ];
 	sshInfo->packetType = headerBufPtr[ LENGTH_SIZE + 1 ];
 	if( sshInfo->padLength < SSH2_MIN_PADLENGTH_SIZE || \

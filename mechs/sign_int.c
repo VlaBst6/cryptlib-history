@@ -207,13 +207,13 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 					 IN_HANDLE_OPT const CRYPT_CONTEXT iHashContext2,
 					 IN_ENUM( SIGNATURE ) const SIGNATURE_TYPE signatureType )
 	{
-	CRYPT_ALGO_TYPE signAlgo, hashAlgo;
 	STREAM stream;
 	const WRITESIG_FUNCTION writeSigFunction = getWriteSigFunction( signatureType );
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE *bufPtr = ( signature == NULL ) ? NULL : buffer;
+	const BOOLEAN isSSLsig = ( signatureType == SIGNATURE_SSL ) ? TRUE : FALSE;
 	const int bufSize = ( signature == NULL ) ? 0 : CRYPT_MAX_PKCSIZE;
-	int length = DUMMY_INIT, hashParam = 0, status;
+	int signAlgo, hashAlgo, length = DUMMY_INIT, hashParam = 0, status;
 
 	assert( ( signature == NULL && sigMaxLength == 0 ) || \
 			isWritePtr( signature, sigMaxLength ) );
@@ -253,11 +253,16 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM2 : status );
 
-	/* DLP and ECC signatures are handled somewhat specially */
+	/* DLP and ECDLP signatures are handled somewhat specially */
 	if( isDlpAlgo( signAlgo ) || isEccAlgo( signAlgo ) )
 		{
+		/* In addition to the special-case processing for DLP/ECDLP 
+		   signatures, we have to provide even further special handling for 
+		   SSL signatures, which normally sign a dual hash of MD5 and SHA-1 
+		   but for DLP only sign the second SHA-1 hash */
 		status = createDlpSignature( bufPtr, bufSize, &length, iSignContext, 
-									 iHashContext, signatureType,
+									 isSSLsig ? iHashContext2 : iHashContext, 
+									 signatureType, 
 									 isEccAlgo( signAlgo ) ? TRUE : FALSE );
 		}
 	else
@@ -268,8 +273,8 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 		setMechanismSignInfo( &mechanismInfo, bufPtr, bufSize, iHashContext, 
 							  iHashContext2, iSignContext );
 		status = krnlSendMessage( iSignContext, IMESSAGE_DEV_SIGN, &mechanismInfo,
-								  ( signatureType == SIGNATURE_SSL ) ? \
-									MECHANISM_SIG_SSL : MECHANISM_SIG_PKCS1 );
+								  isSSLsig ? MECHANISM_SIG_SSL : \
+											 MECHANISM_SIG_PKCS1 );
 		if( cryptStatusOK( status ) )
 			length = mechanismInfo.signatureLength;
 		clearMechanismInfo( &mechanismInfo );
@@ -324,13 +329,13 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 					IN_HANDLE_OPT const CRYPT_CONTEXT iHashContext2,
 					IN_ENUM( SIGNATURE ) const SIGNATURE_TYPE signatureType )
 	{
-	CRYPT_ALGO_TYPE signAlgo, hashAlgo;
 	MECHANISM_SIGN_INFO mechanismInfo;
 	const READSIG_FUNCTION readSigFunction = getReadSigFunction( signatureType );
 	QUERY_INFO queryInfo;
 	STREAM stream;
 	void *signatureData;
-	int signatureDataLength, hashParam = 0, status;
+	const BOOLEAN isSSLsig = ( signatureType == SIGNATURE_SSL ) ? TRUE : FALSE;
+	int signAlgo, hashAlgo, signatureDataLength, hashParam = 0, status;
 
 	assert( isReadPtr( signature, signatureLength ) );
 	
@@ -431,15 +436,16 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 	signatureDataLength = queryInfo.dataLength;
 	zeroise( &queryInfo, sizeof( QUERY_INFO ) );
 
-	/* DLP and ECC signatures are handled somewhat specially.  In addition
-	   if it's an SSL signature then the dual-hash signature used for RSA
-	   is just a single-hash signature for a DLP/ECC algorithm */
+	/* DLP and ECDLP signatures are handled somewhat specially */
 	if( isDlpAlgo( signAlgo ) || isEccAlgo( signAlgo ) )
 		{
+		/* In addition to the special-case processing for DLP/ECDLP 
+		   signatures, we have to provide even further special handling for 
+		   SSL signatures, which normally sign a dual hash of MD5 and SHA-1 
+		   but for DLP only sign the second SHA-1 hash */
 		return( checkDlpSignature( signatureData, signatureDataLength, 
 								   iSigCheckContext, 
-								   ( signatureType == SIGNATURE_SSL ) ? \
-									iHashContext2 : iHashContext,
+								   isSSLsig ? iHashContext2 : iHashContext,
 								   signatureType, 
 								   isEccAlgo( signAlgo ) ? TRUE : FALSE ) );
 		}
@@ -448,9 +454,8 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 	setMechanismSignInfo( &mechanismInfo, signatureData, signatureDataLength, 
 						  iHashContext, iHashContext2, iSigCheckContext );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_SIGCHECK, 
-							  &mechanismInfo,
-							  ( signatureType == SIGNATURE_SSL ) ? \
-								MECHANISM_SIG_SSL : MECHANISM_SIG_PKCS1 );
+							  &mechanismInfo, isSSLsig ? MECHANISM_SIG_SSL : \
+														 MECHANISM_SIG_PKCS1 );
 	clearMechanismInfo( &mechanismInfo );
 	if( cryptStatusError( status ) )
 		{

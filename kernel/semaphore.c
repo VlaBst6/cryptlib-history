@@ -42,7 +42,7 @@ int initSemaphores( INOUT KERNEL_DATA *krnlDataPtr )
 
 	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
-	assert( MUTEX_LAST == 4 );
+	static_assert( MUTEX_LAST == 4, "Mutex value" );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -145,10 +145,13 @@ void setSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore,
 	if( semaphoreInfo->state == SEMAPHORE_STATE_UNINITED )
 		{
 		/* The semaphore can only be set if it's currently in the uninited 
-		   state */
+		   state.  Since the semaphore handle may be a non-scalar type we
+		   have to use a cast to make it non-const (semaphoreInfo->object
+		   can be const if it's a pointer but has to be non-const if it's
+		   a scalar) */
 		*semaphoreInfo = SEMAPHORE_INFO_TEMPLATE;
 		semaphoreInfo->state = SEMAPHORE_STATE_SET;
-		semaphoreInfo->object = object;
+		semaphoreInfo->object = ( MUTEX_HANDLE ) object;
 		}
 	MUTEX_UNLOCK( semaphore );
 	}

@@ -138,10 +138,11 @@ int getHashAlgoParams( IN_HANDLE const CRYPT_CONTEXT hashContext,
 	{
 	int status;
 
-	assert( isHandleRangeValid( hashContext ) );
 	assert( isWritePtr( hashAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 	assert( ( hashSize == NULL ) || \
 			isWritePtr( hashSize, sizeof( int ) ) );
+
+	REQUIRES( isHandleRangeValid( hashContext ) );
 
 	/* Clear return values */
 	*hashAlgo = CRYPT_ALGO_NONE;

@@ -8,7 +8,7 @@ use Carp;
 require Exporter;
 use AutoLoader;
 
-our $VERSION = '1.04';
+our $VERSION = '1.11';
 
 
 #############################################################################
@@ -83,6 +83,20 @@ our $VERSION = '1.04';
 		die "Usage: cryptFinalizeComponents(\$componentInfo, \$blob, \$size)\nFor more info see README file." if scalar(@_) != 3;
 		my ($componentInfo, $blob, $size) = @_;
 		my @rsaFields = qw(isPublicKey n nLen e eLen d dLen p pLen q qLen u uLen e1 e1Len e2 e2Len);
+	        my @dlpFields = qw(isPublicKey p pLen q qLen g gLen y yLen x xLen);
+		my @values = ();
+		map {
+			my $field = $_;
+			my $value = $componentInfo->{$field};
+			if ( $field =~ /Len$/  ||  $field eq 'isPublicKey' ) {
+			    $value = sprintf("%08x", $componentInfo->{$field});
+			    $value = pack("H8", join('', reverse($value =~ /(..)/g))); # inverte l'ordine dei byte e impacka
+			}
+			push @values, $value;
+			$$size += length($values[$#values]);
+		    } ( scalar(keys(%{$componentInfo})) == scalar(@rsaFields) ? @rsaFields : @dlpFields );
+		$$blob = join('', @values);
+		return &CRYPT_OK;
 	}
 
 
@@ -100,7 +114,7 @@ our $VERSION = '1.04';
 							cryptInit cryptEnd 
 							cryptQueryCapability 
 							cryptCreateContext cryptDestroyContext cryptDestroyObject 
-							cryptGenerateKey cryptGenerateKeyAsync cryptAsyncQuery cryptAsyncCancel 
+							cryptGenerateKey  
 							cryptEncrypt cryptDecrypt 
 							cryptSetAttribute cryptSetAttributeString cryptGetAttribute cryptGetAttributeString cryptDeleteAttribute 
 							cryptAddRandom 
@@ -116,7 +130,8 @@ our $VERSION = '1.04';
 							cryptDeviceOpen cryptDeviceClose cryptDeviceQueryCapability cryptDeviceCreateContext 
 							cryptLogin cryptLogout 
 						);
-
+	# Add deprecated functions when CRYPTLIB_VERSION prior 3.4.0
+	push @FUNCTIONS, qw(cryptGenerateKeyAsync cryptAsyncQuery cryptAsyncCancel) if &CRYPTLIB_VERSION < 3400;
 
 	# Esportazione costanti e funzioni
 	our @ISA = qw(Exporter);
@@ -154,6 +169,8 @@ sub AUTOLOAD {
 
 require XSLoader;
 XSLoader::load('PerlCryptLib', $VERSION);
+## Add deprecated functions if CRYPTLIB_VERSION is less than 3.4.0
+#XSLoader::load('PerlCryptLib-deprecated-340', $VERSION) if &CRYPTLIB_VERSION < 3400;
 
 if ( __FILE__ eq "$0" ) {
 	# TEST PACKAGE SPACE
@@ -191,22 +208,22 @@ its official web-site at:
 
 =head1 INSTALLATION
 
-Starting from version 1.04, PerlCryptLib has the ablility to match the correct 
-version of the 'cryptlib' library used by your system. 
+Starting from version 1.04, PerlCryptLib got the capability to match the correct 
+version of the 'cryptlib' library used by the guest system. 
 This is done translating on-the-fly the cryptlib.h header file into a 
 correspondent Perl header file (named PerlCryptLib.ph) that will be used by
 the main module.
-To do that, you simply have to suggest the full-path to the cryptlib.h header 
-file when prompted by the configuration utility:
-
- ./configure
-
-After the configuration you can build, test and install as usual:
+PerlCryptLib need to know the path to cryptlib.h header file for the libcl
+installed in the system.
+You can set (export) environment variable B<PERL_CRYPT_LIB_HEADER> or,
+alternatively, Makefile.PL try itself to search for B<cryptlib.h> in B</usr> 
+and B</home> directories.
+If it found more than one version of B<cryptlib.h>, it will use the one with greater version number.
 
  perl Makefile.PL
  make
  make test TEST_VERBOSE=1  # or, simply, the canonical  make test
- make install
+ sudo make install
 
 =head1 SYNOPSIS
 
@@ -449,7 +466,7 @@ Alvaro Livraghi, <perlcryptlib@gmail.com>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2006-2007 Alvaro Livraghi. All Rights Reserved.
+Copyright (C) 2006-2010 Alvaro Livraghi. All Rights Reserved.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself. 

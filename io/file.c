@@ -234,7 +234,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 		};
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 	
 	REQUIRES( mode != 0 );
 
@@ -360,7 +360,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	{
 	struct fjxstat fileInfo;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	if( fjstat( fileName, &fileInfo ) < 0 )
 		return( TRUE );
@@ -433,7 +433,7 @@ void fileErase( IN_STRING const char *fileName )
 	struct fjxstat fileInfo;
 	int status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Try and open the file so that we can erase it.  If this fails, the
 	   best that we can do is a straight unlink */
@@ -510,6 +510,10 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 
 #elif defined( __UCOSII__ )
 
+/* Note that the following code requires at least uC/FS 2.x for functions 
+   like FS_GetFileAttributes()/FS_SetFileAttributes(), FS_GetFileSize(),
+   and FS_SetFileTime() */
+
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -521,7 +525,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	const char *openMode;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 	
 	REQUIRES( mode != 0 );
 
@@ -653,7 +657,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	{
 	FS_U8 fileAttr;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	if( ( fileAttr = FS_GetFileAttributes( fileName ) ) == 0xFF )
 		return( TRUE );
@@ -723,7 +727,7 @@ void fileErase( IN_STRING const char *fileName )
 	STREAM stream;
 	int length, status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	if( ( length = FS_GetFileSize( fileName ) ) < 0 )
 		return;
@@ -785,6 +789,9 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 		{
 		FS_DIR dirInfo;
 
+		/* Note that the following two functions are uc/FS 2.x functions, 
+		   uc/FS 3.x uses the rather odd FS_FindFirstFile() in place of
+		   these */
 		if( ( dirInfo = FS_OpenDir( path ) ) != NULL )
 			FSCloseDir( dirInfo );
 		else
@@ -817,7 +824,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( mode != 0 );
 
@@ -984,9 +991,9 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 void fileErase( IN_STRING const char *fileName )
 	{
 	STREAM stream;
-	int fileHandle, length, status;
+	int length, status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Try and open the file so that we can erase it.  If this fails, the
 	   best that we can do is a straight unlink */
@@ -1001,7 +1008,6 @@ void fileErase( IN_STRING const char *fileName )
 		}
 
 	/* Determine the size of the file and erase it */
-	fileHandle = fileno( stream.filePtr );
 	fseek( stream.filePtr, 0, SEEK_END );
 	length = ( int ) ftell( stream.filePtr );
 	fseek( stream.filePtr, 0, SEEK_SET );
@@ -1073,7 +1079,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	OSErr err;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( mode != 0 );
 
@@ -1128,7 +1134,8 @@ RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sFileClose( INOUT STREAM *stream )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( stream->type == STREAM_TYPE_FILE );
+	
+	REQUIRES( stream->type == STREAM_TYPE_FILE );
 
 	/* Close the file and clear the stream structure */
 	FSClose( stream->refNum );
@@ -1225,7 +1232,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	OSErr err;
 	short refnum;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	CStringToPString( fileName, pFileName );
 
@@ -1302,7 +1309,7 @@ void fileErase( IN_STRING const char *fileName )
 	STREAM stream;
 	int length, status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Try and open the file so that we can erase it.  If this fails, the
 	   best that we can do is a straight unlink */
@@ -1410,7 +1417,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( mode != 0 );
 
@@ -1706,7 +1713,7 @@ int fileSeek( INOUT STREAM *stream, IN_LENGTH_Z const long position )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	{
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 #if defined( __IBM4758__ ) || defined( __MVS__ ) || \
 	defined( __VMCMS__ ) || defined( __TESTIO__ )
@@ -1754,7 +1761,7 @@ void fileErase( IN_STRING const char *fileName )
   #endif /* EBCDIC_CHARS */
 	int length = CRYPT_ERROR;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
   #if defined( __MVS__ ) && defined( DDNAME_IO )
 	/* If we're using DDNAME I/O under MVS we can't perform standard
@@ -1915,7 +1922,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	status_t err;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( mode != 0 );
 
@@ -2058,7 +2065,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	uint16_t volRefNum;
 	status_t err;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	if( VFSVolumeEnumerate( &volRefNum, &volIterator ) != errNone )
 		return( TRUE );
@@ -2134,7 +2141,7 @@ void fileErase( IN_STRING const char *fileName )
 	uint16_t volRefNum;
 	int status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Try and open the file so that we can erase it.  If this fails, the
 	   best that we can do is a straight unlink */
@@ -2265,7 +2272,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	int openMode;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 	
 	REQUIRE( mode != 0 );
 
@@ -2409,7 +2416,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	{
 	UINT attributes;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	if( fx_file_attribute_read( media, fileName, &attributes ) != FX_SUCCESS )
 		return( TRUE );
@@ -2481,7 +2488,7 @@ void fileErase( IN_STRING const char *fileName )
 	STREAM stream;
 	int length, status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Try and open the file so that we can erase it.  If this fails, the
 	   best that we can do is a straight unlink */
@@ -2606,7 +2613,7 @@ static int openFile( INOUT STREAM *stream, IN_STRING const char *fileName,
 	int fd, count;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( stream->type == STREAM_TYPE_FILE );
 			  /* openMode is a unistd.h define so can't be checked against
@@ -2673,7 +2680,7 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 #endif /* !USE_EMBEDDED_OS && USE_FCNTL_LOCKING */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( mode != 0 );
 
@@ -3068,12 +3075,12 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 #ifdef EBCDIC_CHARS
 	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	fileName = bufferToEbcdic( fileNameBuffer, fileName );
+#else
+	assert( isReadPtr( fileName, 2 ) );
 #endif /* EBCDIC_CHARS */
-	assert( fileName != NULL );
-
 	if( access( fileName, W_OK ) < 0 && errno != ENOENT )
 		return( TRUE );
 
@@ -3119,7 +3126,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 		}
 	fsync( stream->fd );
 #ifdef __GNUC__
-	/* Work around a persistent bogus warning in gcc */
+	/* Work around a persistent bogus warning in gcc.  Unfortunately this 
+	   generates a second warning about 'x' being unused, but it's less
+	   problematic than the return-value-unused one */
 	{ int x = ftruncate( stream->fd, position ); }
 #else
 	( void ) ftruncate( stream->fd, position );
@@ -3164,7 +3173,7 @@ void fileErase( IN_STRING const char *fileName )
 #endif /* EBCDIC_CHARS */
 	int status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 #ifdef EBCDIC_CHARS
 	fileName = bufferToEbcdic( fileNameBuffer, fileName );
@@ -3369,6 +3378,7 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 	/* Add the filename to the path */
 	strlcat_s( path, pathMaxLen, "/" );
 #ifndef EBCDIC_CHARS
+	ANALYSER_HINT( fileName != NULL );
 	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
 							fileNameLen, option ) );
 #else
@@ -3469,7 +3479,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 	
 	REQUIRES( mode != 0 );
 
@@ -3608,7 +3618,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	{
 	int fd;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* The only way to tell whether a file is writeable is to try to open it
 	   for writing, since there's no access() function */
@@ -3701,7 +3711,7 @@ void fileErase( IN_STRING const char *fileName )
 	struct stat statStruct;
 	int length, status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Try and open the file so that we can erase it.  If this fails, the
 	   best that we can do is a straight unlink */
@@ -3959,7 +3969,9 @@ static BOOLEAN checkUserKnown( IN_BUFFER( fileNameLength ) const char *fileName,
 	int fileNamePtrLength = fileNameLength, serverNameLength, length;
 
 	assert( isReadPtr( fileName, fileNameLength ) );
-	assert( sizeof( UNIVERSAL_NAME_INFO ) + _MAX_PATH <= UNI_BUFFER_SIZE );
+
+	static_assert( sizeof( UNIVERSAL_NAME_INFO ) + _MAX_PATH <= UNI_BUFFER_SIZE, \
+				   "UNC buffer size" );
 
 	REQUIRES_B( fileNameLength > 0 && fileNameLength < _MAX_PATH );
 
@@ -4108,7 +4120,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	int status = CRYPT_OK;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( mode != 0 );
 
@@ -4428,7 +4440,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	const char *fileNamePtr = fileName;
 #endif /* __WINCE__ */
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Convert the filename to the native character set if necessary */
 #ifdef __WINCE__
@@ -4535,7 +4547,7 @@ void fileErase( IN_STRING const char *fileName )
 #endif /* __WINCE__ */
 	int status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Convert the filename to the native character set if necessary */
 #ifdef __WINCE__
@@ -4564,6 +4576,12 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 #if defined( __WIN32__ )
+
+#ifdef __WIN64__
+  #define WIN_DEFAULT_USER_HANDLE	IntToPtr( -1 )
+#else
+  #define WIN_DEFAULT_USER_HANDLE	( HANDLE ) -1
+#endif /* 32- vs. 64-bit Windows */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int getFolderPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
@@ -4616,7 +4634,11 @@ static int getFolderPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 		   changed yet again for Vista to SHGetKnownFolderPath(), but the
 		   existing SHGetFolderPath() is provided as a wrapper for
 		   SHGetKnownFolderPath() so we use that in all cases to keep
-		   things simple */
+		   things simple.  Finally, the use of the CSIDL_FLAG_CREATE flag 
+		   can cause performance issues if it requires groping around on a 
+		   network (for example due to having your profile folder redirected 
+		   to a network share that's offline), but this is fairly uncommon 
+		   so it shouldn't be a problem */
 		hComCtl32 = DynamicLoad( "ComCtl32.dll" );
 		if( hComCtl32 != NULL )
 			{
@@ -4675,7 +4697,8 @@ static int getFolderPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 					gotPath = TRUE;
 				if( gotPath && isXPOrNewer && \
 					pSHGetFolderPath( NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE,
-									  ( HANDLE ) -1, SHGFP_TYPE_CURRENT, 
+									  WIN_DEFAULT_USER_HANDLE, 
+									  SHGFP_TYPE_CURRENT, 
 									  defaultUserPath ) == S_OK )
 					{
 					if( !strcmp( path, defaultUserPath ) )
@@ -4847,7 +4870,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	int openMode;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 	
 	REQUIRE( mode != 0 );
 
@@ -4969,7 +4992,7 @@ int fileSeek( INOUT STREAM *stream, IN_LENGTH_Z const long position )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	{
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* All non-ROM filesystems are writeable under MFS, in theory a ROM-based
 	   FS would be non-writeable but there's no way to tell whether the
@@ -4997,9 +5020,8 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 void fileErase( IN_STRING const char *fileName )
 	{
 	STREAM stream;
-	int status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Delete the file */
 	mfs_delete_file( fileName );
@@ -5108,7 +5130,7 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	const char *openMode;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	REQUIRES( mode != 0 );
 
@@ -5124,25 +5146,26 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 	if( ( mode & FILE_FLAG_WRITE ) && fileReadonly( fileName ) )
 		return( CRYPT_ERROR_PERMISSION );
 
-#if defined( __MSDOS16__ ) || defined( __WIN16__ ) || defined( __WINCE__ ) || \
-	defined( __OS2__ ) || defined( __SYMBIAN32__ )
 	/* Try and open the file */
 	stream->filePtr = fopen( fileName, openMode );
+#if defined( __MSDOS16__ ) || defined( __WIN16__ ) || defined( __WINCE__ ) || \
+	defined( __OS2__ ) || defined( __SYMBIAN32__ )
 	if( stream->filePtr == NULL )
 		{
 		/* The open failed, determine whether it was because the file doesn't
 		   exist or because we can't use that access mode */
-		return( ( access( fileName, 0 ) < 0 ) ? CRYPT_ERROR_NOTFOUND : \
-												  CRYPT_ERROR_OPEN );
+		return( ( access( fileName, 0 ) < 0 ) ? \
+				  CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_OPEN );
 		}
 #elif defined( __TANDEMNSK__ )
-	stream->filePtr = fopen( fileName, openMode );
 	if( stream->filePtr == NULL )
+		{
 		return( ( errno == ENOENT ) ? \
 				CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_OPEN );
+		}
 #else
-  #error Need to add file accessibility call
-#endif /* OS-specific file accessibility check */
+  #error Need to add file open error-handling
+#endif /* OS-specific file open error-handling */
 
 	return( CRYPT_OK );
 	}
@@ -5244,7 +5267,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 #elif defined( __TANDEMNSK__ )
 	FILE *filePtr;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	if( ( filePtr = fopen( fileName, MODE_READWRITE ) ) == NULL )
 		{
@@ -5354,9 +5377,9 @@ void fileErase( IN_STRING const char *fileName )
 #elif defined( __WIN16__ )
 	HFILE hFile;
 #endif /* OS-specific variable declarations */
-	int fileHandle, length, status;
+	int length, status;
 
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, 2 ) );
 
 	/* Try and open the file so that we can erase it.  If this fails, the
 	   best that we can do is a straight unlink */
@@ -5371,7 +5394,6 @@ void fileErase( IN_STRING const char *fileName )
 		}
 
 	/* Determine the size of the file and erase it */
-	fileHandle = fileno( stream.filePtr );
 	fseek( stream.filePtr, 0, SEEK_END );
 	length = ( int ) ftell( stream.filePtr );
 	fseek( stream.filePtr, 0, SEEK_SET );

@@ -1091,9 +1091,10 @@ static int encodeSendResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	   doubling of the IV count is because the minimum padding length 
 	   requirement can result in an expansion by two encrypted blocks rather
 	   than one */
-	assert( EXTRA_PACKET_SIZE > ( 2 * ( SSH2_HEADER_SIZE + \
-										CRYPT_MAX_HASHSIZE + \
-										( 2 * CRYPT_MAX_IVSIZE ) ) ) + 32 );
+	static_assert( EXTRA_PACKET_SIZE > \
+						( 2 * ( SSH2_HEADER_SIZE + CRYPT_MAX_HASHSIZE + \
+								( 2 * CRYPT_MAX_IVSIZE ) ) ) + 32,
+				   "Buffer packet size" );
 
 	/* Clear return value */
 	if( responseSize != NULL )

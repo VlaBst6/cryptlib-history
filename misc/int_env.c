@@ -5,14 +5,13 @@
 *																			*
 ****************************************************************************/
 
-#include "crypt.h"
-#ifndef NDEBUG		/* For assert( checkObjectEncoding() ) */
-  #if defined( INC_ALL )
-	#include "asn1.h"
-  #else
-	#include "enc_dec/asn1.h"
-  #endif /* Compiler-specific includes */
-#endif /* NDEBUG */
+#if defined( INC_ALL )
+  #include "crypt.h"
+  #include "asn1.h"
+#else
+  #include "crypt.h"
+  #include "enc_dec/asn1.h"
+#endif /* Compiler-specific includes */
 
 #ifdef USE_ENVELOPES
 
@@ -82,9 +81,12 @@ int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData,
 							  ( MESSAGE_CAST ) &inDataLength,
 							  CRYPT_ENVINFO_DATASIZE );
 	if( cryptStatusOK( status ) && contentType != CRYPT_CONTENT_NONE )
+		{
+		const int value = contentType;	/* int vs.enum */
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-								  ( MESSAGE_CAST ) &contentType,
+								  ( MESSAGE_CAST ) &value,
 								  CRYPT_ENVINFO_CONTENTTYPE );
+		}
 	if( cryptStatusOK( status ) && iPublicKey != CRYPT_UNUSED )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
 								  ( MESSAGE_CAST ) &iPublicKey,
@@ -121,9 +123,9 @@ int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData,
 		}
 	krnlSendNotifier( iCryptEnvelope, IMESSAGE_DECREFCOUNT );
 
-	assert( cryptStatusError( status ) || \
-			!cryptStatusError( checkObjectEncoding( outData, \
-													*outDataLength ) ) );
+	ENSURES( cryptStatusError( status ) || \
+			 !cryptStatusError( checkObjectEncoding( outData, \
+													 *outDataLength ) ) );
 	assert( !cryptArgError( status ) );
 	return( cryptArgError( status ) ? CRYPT_ERROR_BADDATA : status );
 	}
@@ -288,9 +290,12 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 							  ( MESSAGE_CAST ) &inDataLength,
 							  CRYPT_ENVINFO_DATASIZE );
 	if( cryptStatusOK( status ) && contentType != CRYPT_CONTENT_NONE )
+		{
+		const int value = contentType;	/* int vs.enum */
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-								  ( MESSAGE_CAST ) &contentType,
+								  ( MESSAGE_CAST ) &value,
 								  CRYPT_ENVINFO_CONTENTTYPE );
+		}
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
 								  ( MESSAGE_CAST ) &iSigKey,
@@ -342,9 +347,9 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 		}
 	krnlSendNotifier( iCryptEnvelope, IMESSAGE_DECREFCOUNT );
 
-	assert( cryptStatusError( status ) || \
-			!cryptStatusError( checkObjectEncoding( outData, \
-													*outDataLength ) ) );
+	ENSURES( cryptStatusError( status ) || \
+			 !cryptStatusError( checkObjectEncoding( outData, \
+													 *outDataLength ) ) );
 	assert( !cryptArgError( status ) );
 	return( cryptArgError( status ) ? CRYPT_ERROR_BADDATA : status );
 	}

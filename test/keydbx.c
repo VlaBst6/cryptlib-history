@@ -22,7 +22,12 @@
 
 /* A certificate containing an email address */
 
-#define EMAIL_ADDR_CERT		14
+#define EMAILADDR_CERT_NO	14
+
+/* A certificate chain that can be added to a database keyset and
+   looked up again afterwards */
+
+#define CERT_CHAIN_NO		5
 
 /* Some LDAP keyset names and names of probably-present certs and CRLs.
    These keysets (and their contents) come and go, so we have a variety of
@@ -258,7 +263,7 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	   from scratch.  We use one of the later certs in the test set, since
 	   this contains an email address, which the earlier ones don't */
 	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 
-									 EMAIL_ADDR_CERT );
+									 EMAILADDR_CERT_NO );
 	if( cryptStatusError( status ) )
 		{
 		printf( "Couldn't read certificate from file, status %d, line %d.\n",
@@ -456,7 +461,8 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 
 	/* Finally, try it with a certificate chain */
 	puts( "Adding certificate chain." );
-	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 2 );
+	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 
+							   CERT_CHAIN_NO );
 	status = importCertFile( &cryptCert, filenameBuffer );
 	if( cryptStatusError( status ) )
 		{
@@ -518,7 +524,7 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 
 		/* Add the P256 certificate */
 		filenameFromTemplate( filenameBuffer, 
-							  SERVER_PRIVKEY_FILE_TEMPLATE, 2 );
+							  SERVER_ECPRIVKEY_FILE_TEMPLATE, 256 );
 #ifdef UNICODE_STRINGS
 		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
 		fileNamePtr = wcBuffer;
@@ -539,7 +545,7 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 
 		/* Add the P384 certificate */
 		filenameFromTemplate( filenameBuffer, 
-							  SERVER_PRIVKEY_FILE_TEMPLATE, 3 );
+							  SERVER_ECPRIVKEY_FILE_TEMPLATE, 384 );
 #ifdef UNICODE_STRINGS
 		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
 		fileNamePtr = wcBuffer;
@@ -659,7 +665,7 @@ int testReadCert( void )
 	/* Get the DN from one of the test certs (the one that we wrote to the
 	   keyset earlier with testKeysetWrite() */
 	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 
-									 EMAIL_ADDR_CERT );
+									 EMAILADDR_CERT_NO );
 	if( cryptStatusError( status ) )
 		{
 		printf( "Couldn't read certificate from file, status %d, line %d.\n",
@@ -732,7 +738,8 @@ int testReadCert( void )
 		return( FALSE );
 
 	/* Get the DN from one of the test certificate chains */
-	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 2 );
+	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 
+							   CERT_CHAIN_NO );
 	status = importCertFile( &cryptCert, filenameBuffer );
 	if( cryptStatusError( status ) )
 		{
