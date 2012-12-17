@@ -144,7 +144,9 @@ static int updateDependentObjectPerms( IN_HANDLE const CRYPT_HANDLE objectHandle
 	const int uniqueID = objectTable[ objectHandle ].uniqueID;
 	int actionFlags = 0, status;
 	ORIGINAL_INT_VAR( oldPerm, objectTable[ contextHandle ].actionFlags );
-
+		/* Note that the above macro gives initialised-but-not-referenced 
+		   warnings in release builds */
+	
 	/* Preconditions: Objects are valid, one is a cert and the other a
 	   context, and they aren't dependent on each other (which would create
 	   a dependency update loop).  Note that these checks aren't performed
@@ -347,10 +349,10 @@ int getPropertyAttribute( IN_HANDLE const int objectHandle,
 			   only exists because of Win32 security holes arising from the 
 			   ability to perform thread injection, so this isn't a big 
 			   issue */
-  #ifdef NONSCALAR_THREADS
+  #ifdef NONSCALAR_HANDLES
 			if( sizeof( objectInfoPtr->objectOwner ) > sizeof( int ) )
 				return( CRYPT_ERROR_NOTAVAIL );
-  #endif /* NONSCALAR_THREADS */
+  #endif /* NONSCALAR_HANDLES */
 			*valuePtr = ( int ) objectInfoPtr->objectOwner;
 #else
 			*valuePtr = 0;
@@ -461,9 +463,9 @@ int setPropertyAttribute( IN_HANDLE const int objectHandle,
 #if defined( USE_THREADS ) 
 				/* See the comment in getPropertyAttribute() about the use 
 				   of scalar vs. non-scalar thread types */
-  #ifdef NONSCALAR_THREADS
+  #ifdef NONSCALAR_HANDLES
 				if( sizeof( objectInfoPtr->objectOwner ) <= sizeof( int ) )
-  #endif /* NONSCALAR_THREADS */
+  #endif /* NONSCALAR_HANDLES */
 					{
 					objectInfoPtr->objectOwner = ( THREAD_HANDLE ) value;
 					objectInfoPtr->flags |= OBJECT_FLAG_OWNED;

@@ -32,27 +32,6 @@
 #define TSP_CONTENT_TYPE_RESP		"application/timestamp-reply"
 #define TSP_CONTENT_TYPE_RESP_LEN	27
 
-/* TSP socket protocol information.  This is a mutant variant of the CMP 
-   socket protocol (but incompatible, obviously) with no-one involved in the
-   standard really able to explain why it exists, since it doesn't actually
-   serve any purpose */
-
-#ifdef USE_CMP_TRANSPORT
-
-#define TSP_PORT					318	/* Default port number */
-#define TSP_HEADER_SIZE				5	/* 4-byte length + 1-byte type */
-
-enum { TSP_MESSAGE_REQUEST, TSP_MESSAGE_POLLREP, TSP_MESSAGE_POLLREQ,
-	   TSP_MESSAGE_NEGPOLLREP, TSP_MESSAGE_PARTIALMSGREP, TSP_MESSAGE_RESPONSE,
-	   TSP_MESSAGE_ERROR };
-
-#endif /* USE_CMP_TRANSPORT */
-
-/* Dummy policy OID for the TSA ('snooze policy, "Anything that arrives, we
-   sign") */
-
-#define OID_TSP_POLICY		MKOID( "\x06\x0B\x2B\x06\x01\x04\x01\x97\x55\x36\xDD\x24\x36" )
-
 /* TSP protocol state information.  This is passed around the various
    subfunctions that handle individual parts of the protocol */
 
@@ -88,7 +67,18 @@ int readPkiStatusInfo( INOUT STREAM *stream,
 *																			*
 ****************************************************************************/
 
-/* Read a TSP request */
+/* Read a TSP request:
+
+	TSARequest ::= SEQUENCE {
+		version				INTEGER (1),
+		msgImprint			MessageDigest,
+		policy				OBJECT IDENTIFIER OPTIONAL,
+												-- Ignored
+		nonce				INTEGER OPTIONAL,	-- Copy to output if present
+		includeSigCerts		BOOLEAN DEFAULT FALSE,
+												-- Include signer certs if set
+		extensions		[0]	Extensions OPTIONAL	-- Ignored, see below
+		} */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int readTSPRequest( INOUT STREAM *stream, 
@@ -376,23 +366,27 @@ static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	{
 	TSP_INFO *tspInfo = sessionInfoPtr->sessionTSP;
 	STREAM stream;
-#ifdef USE_CMP_TRANSPORT
-	BYTE *bufPtr = sessionInfoPtr->receiveBuffer;
-#endif /* USE_CMP_TRANSPORT */
 	void *msgImprintPtr;
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( TSP_PROTOCOL_INFO ) ) );
 
-	/* Create the encoded request.  We never ask for the inclusion of
-	   signing certificates (which is the default behaviour for TSP) because 
-	   the CMS signature-generation code needs to perform two passes over 
-	   the data (to get the signed data size for encoding purposes), however
-	   we can't get the size without generating a timestamp.  Since the
-	   basic TST is compact and fixed-length we can manage this, but we 
-	   can't easily handle having arbitrary amounts of signing certificates 
-	   being returned.
+	/* Create the encoded request:
+
+		TSARequest ::= SEQUENCE {
+			version				INTEGER (1),
+			msgImprint			MessageDigest,
+			includeSigCerts		BOOLEAN TRUE
+			}
+	
+	   We have to ask for the inclusion of signing certificates in the
+	   response (by default they're not included) because the caller may not 
+	   have the TSA's certificate, or may have an out-of-date version 
+	   depending on how frequently the TSA rolls over certificates.  This 
+	   tends to bloat up the response somewhat, but it's only way to deal
+	   with the certificate issue without requiring lots of manual 
+	   certificate-processing from the caller.
 
 	   When we write the message imprint as a hash value we save a copy of
 	   the encoded data so that we can check it against the returned
@@ -405,18 +399,16 @@ static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	sMemOpen( &stream, sessionInfoPtr->receiveBuffer, 1024 );
 	writeSequence( &stream, sizeofShortInteger( TSP_VERSION ) + \
 							protocolInfo->msgImprintSize + \
-							( protocolInfo->includeSigCerts ? \
-								sizeofBoolean() : 0 ) );
+							sizeofBoolean() );
 	writeShortInteger( &stream, TSP_VERSION, DEFAULT_TAG );
 	status = sMemGetDataBlock( &stream, &msgImprintPtr, 
 							   protocolInfo->msgImprintSize );
 	ENSURES( cryptStatusOK( status ) );
-	status = writeMessageDigest( &stream, tspInfo->imprintAlgo,
-								 tspInfo->imprint, tspInfo->imprintSize );
+	writeMessageDigest( &stream, tspInfo->imprintAlgo, 
+						tspInfo->imprint, tspInfo->imprintSize );
 	memcpy( protocolInfo->msgImprint, msgImprintPtr,
 			protocolInfo->msgImprintSize );
-	if( protocolInfo->includeSigCerts )
-		status = writeBoolean( &stream, TRUE, DEFAULT_TAG );
+	status = writeBoolean( &stream, TRUE, DEFAULT_TAG );
 	if( cryptStatusOK( status ) )
 		sessionInfoPtr->receiveBufEnd = stell( &stream );
 	sMemDisconnect( &stream );
@@ -424,21 +416,6 @@ static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 	DEBUG_DUMP_FILE( "tsa_req", sessionInfoPtr->receiveBuffer,
 					 sessionInfoPtr->receiveBufEnd );
-
-#ifdef USE_CMP_TRANSPORT
-	/* If we're using the socket protocol, add the TSP header:
-		uint32		length of type + data
-		byte		type
-		byte[]		data */
-	if( !( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) )
-		{
-		memmove( bufPtr + TSP_HEADER_SIZE, bufPtr,
-				 sessionInfoPtr->receiveBufEnd );
-		mputLong( bufPtr, sessionInfoPtr->receiveBufEnd + 1 );
-		*bufPtr = TSP_MESSAGE_REQUEST;
-		sessionInfoPtr->receiveBufEnd += TSP_HEADER_SIZE;
-		}
-#endif /* USE_CMP_TRANSPORT */
 
 	/* Send the request to the server */
 	return( writePkiDatagram( sessionInfoPtr, TSP_CONTENT_TYPE_REQ,
@@ -452,9 +429,6 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 							   INOUT TSP_PROTOCOL_INFO *protocolInfo )
 	{
 	STREAM stream;
-#ifdef USE_CMP_TRANSPORT
-	const int oldBufSize = sessionInfoPtr->receiveBufSize;
-#endif /* USE_CMP_TRANSPORT */
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -464,56 +438,8 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	   buffer from previous transactions */
 	sessionInfoPtr->receiveBufEnd = sessionInfoPtr->receiveBufPos = 0;
 
-#ifdef USE_CMP_TRANSPORT
-	/* If we're using the socket protocol, read back the header and make
-	   sure that it's in order.  The check for a response labelled as a 
-	   request is necessary because some buggy implementations use the 
-	   request message type for any normal communication (in fact since the 
-	   socket protocol arose from a botched cut & paste of the equivalent 
-	   CMP protocol it serves no actual purpose and so some implementations 
-	   just memcpy() in a fixed header) */
-	if( !( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) )
-		{
-		BYTE buffer[ TSP_HEADER_SIZE + 8 ], *bufPtr = buffer;
-		long packetLength;
-
-		status = sread( &sessionInfoPtr->stream, buffer, TSP_HEADER_SIZE );
-		if( cryptStatusError( status ) )
-			{
-			sNetGetErrorInfo( &sessionInfoPtr->stream,
-							  &sessionInfoPtr->errorInfo );
-			return( status );
-			}
-		packetLength = mgetLong( bufPtr );
-		if( packetLength < 16 || \
-			packetLength > sessionInfoPtr->receiveBufSize || \
-			( *bufPtr != TSP_MESSAGE_REQUEST && \
-			  *bufPtr != TSP_MESSAGE_RESPONSE ) )
-			{
-			retExt( CRYPT_ERROR_BADDATA,
-					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-					  "Invalid TSP socket protocol data" ) );
-			}
-
-		/* Fiddle the read buffer size to make sure that we only try and 
-		   read as much as the wrapper protocol has told us is present.  
-		   This kludge is necessary because the wrapper protocol isn't any 
-		   normal transport mechanism like HTTP but a botched cut & paste 
-		   from CMP that can't easily be accommodated by the network-layer 
-		   code */
-		sessionInfoPtr->receiveBufSize = ( int ) packetLength - 1;
-		}
-#endif /* USE_CMP_TRANSPORT */
-
 	/* Read the response data from the server */
 	status = readPkiDatagram( sessionInfoPtr );
-#ifdef USE_CMP_TRANSPORT
-	if( !( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) )
-		{
-		/* Reset the receive buffer size to its true value */
-		sessionInfoPtr->receiveBufSize = oldBufSize;
-		}
-#endif /* USE_CMP_TRANSPORT */
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -600,29 +526,6 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
    number of these, we write back a fixed blob rather than encoding each
    one */
 
-#ifdef USE_CMP_TRANSPORT
-
-#define respSize( data )	( data[ 3 ] + 4 )
-
-static const BYTE FAR_BSS respBadGeneric[] = {
-	0x00, 0x00, 0x00, 0x08,			/* Length */
-	0x05,							/* Type */
-	0x30, 0x05, 0x30, 0x03, 0x02, 0x01, 0x02
-	};								/* Rejection, unspecified reason */
-static const BYTE FAR_BSS respBadData[] = {
-	0x00, 0x00, 0x00, 0x0C,			/* Length */
-	0x05,							/* Type */
-	0x30, 0x09, 0x30, 0x07, 0x02, 0x01, 0x02, 0x03,
-	0x02, 0x05, 0x20				/* Rejection, badDataFormat */
-	};
-static const BYTE FAR_BSS respBadExtension[] = {
-	0x00, 0x00, 0x00, 0x0E,			/* Length */
-	0x05,							/* Type */
-	0x30, 0x0B, 0x30, 0x09, 0x02, 0x01, 0x02, 0x03,
-	0x04, 0x07, 0x00, 0x00, 0x80	/* Rejection, unacceptedExtension */
-	};
-#else
-
 #define respSize( data )	( data[ 1 ] + 2 )
 
 static const BYTE FAR_BSS respBadGeneric[] = {
@@ -642,7 +545,6 @@ static const BYTE FAR_BSS respBadExtension[] = {
 				0x02, 0x01, 0x02, 
 				0x03, 0x04, 0x07, 0x00, 0x00, 0x80	/* Rejection, unacceptedExtension */
 	};
-#endif /* USE_CMP_TRANSPORT */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int sendErrorResponse( INOUT SESSION_INFO *sessionInfoPtr,
@@ -657,20 +559,9 @@ static int sendErrorResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	   in terms of alerting the user if a further error occurs when writing 
 	   the error response, so we ignore any potential write errors that occur
 	   at this point */
-#ifdef USE_CMP_TRANSPORT
-	if( !( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) )
-		{
-		memcpy( sessionInfoPtr->receiveBuffer, errorResponse,
-				respSize( errorResponse ) );
-		sessionInfoPtr->receiveBufEnd = respSize( errorResponse );
-		}
-	else
-#endif /* USE_CMP_TRANSPORT */
-		{
-		memcpy( sessionInfoPtr->receiveBuffer, errorResponse,
-				respSize( errorResponse ) );
-		sessionInfoPtr->receiveBufEnd = respSize( errorResponse );
-		}
+	memcpy( sessionInfoPtr->receiveBuffer, errorResponse,
+			respSize( errorResponse ) );
+	sessionInfoPtr->receiveBufEnd = respSize( errorResponse );
 	( void ) writePkiDatagram( sessionInfoPtr, TSP_CONTENT_TYPE_RESP,
 							   TSP_CONTENT_TYPE_RESP_LEN );
 	return( status );
@@ -683,60 +574,13 @@ static int readClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 							  INOUT TSP_PROTOCOL_INFO *protocolInfo )
 	{
 	STREAM stream;
-#ifdef USE_CMP_TRANSPORT
-	BYTE *bufPtr = sessionInfoPtr->receiveBuffer;
-	const int oldBufSize = sessionInfoPtr->receiveBufSize;
-#endif /* USE_CMP_TRANSPORT */
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( TSP_PROTOCOL_INFO ) ) );
 
-#ifdef USE_CMP_TRANSPORT
-	/* If we're using the socket protocol, read the request header and make
-	   sure it's in order.  We don't write an error response at this initial
-	   stage to prevent scanning/DOS attacks (vir sapit qui pauca
-	   loquitur) */
-	if( !( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) )
-		{
-		long packetLength;
-
-		status = sread( &sessionInfoPtr->stream, bufPtr, TSP_HEADER_SIZE );
-		if( cryptStatusError( status ) )
-			{
-			sNetGetErrorInfo( &sessionInfoPtr->stream,
-							  &sessionInfoPtr->errorInfo );
-			return( status );
-			}
-		packetLength = mgetLong( bufPtr );
-		if( packetLength < 16 || \
-			packetLength > sessionInfoPtr->receiveBufSize || \
-			( *bufPtr != TSP_MESSAGE_REQUEST && \
-			  *bufPtr != TSP_MESSAGE_RESPONSE ) )
-			{
-			retExt( CRYPT_ERROR_BADDATA,
-					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-					  "Invalid TSP socket protocol data" ) );
-			}
-
-		/* Fiddle the read buffer size to make sure we only try and read as
-		   much as the wrapper protocol has told us is present.  This kludge
-		   is necessary because the wrapper protocol isn't any normal
-		   transport mechanism like HTTP but a botched cut&paste from CMP
-		   that can't easily be accommodated by the network-layer code */
-		sessionInfoPtr->receiveBufSize = ( int ) packetLength - 1;
-		}
-#endif /* USE_CMP_TRANSPORT */
-
 	/* Read the request data from the client */
 	status = readPkiDatagram( sessionInfoPtr );
-#ifdef USE_CMP_TRANSPORT
-	if( !( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) )
-		{
-		/* Reset the receive buffer size to its true value */
-		sessionInfoPtr->receiveBufSize = oldBufSize;
-		}
-#endif /* USE_CMP_TRANSPORT */
 	if( cryptStatusError( status ) )
 		return( sendErrorResponse( sessionInfoPtr, respBadGeneric, status ) );
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
@@ -767,12 +611,6 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	BYTE serialNo[ 16 + 8 ];
 	BYTE *bufPtr = sessionInfoPtr->receiveBuffer;
 	const time_t currentTime = getReliableTime( sessionInfoPtr->privateKey );
-#ifdef USE_CMP_TRANSPORT
-	const int headerOfs = ( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) ? \
-						  0 : TSP_HEADER_SIZE;
-#else
-  #define headerOfs	0
-#endif /* USE_CMP_TRANSPORT */
 	int tstLength = DUMMY_INIT, responseLength, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -809,7 +647,7 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Sign the token.   The reason for the min() part of the expression is 
 	   that signTSToken() gets suspicious of very large buffer sizes, for 
 	   example when the user has specified the use of a huge send buffer */
-	status = signTSToken( sessionInfoPtr->receiveBuffer + headerOfs + 9,
+	status = signTSToken( sessionInfoPtr->receiveBuffer + 9,
 						  min( sessionInfoPtr->receiveBufSize, \
 							   MAX_INTLENGTH_SHORT - 1 ), &responseLength, 
 						  protocolInfo->hashAlgo, tstBuffer, tstLength, 
@@ -818,21 +656,8 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( sendErrorResponse( sessionInfoPtr, respBadGeneric, status ) );
 	DEBUG_DUMP_FILE( "tsa_token",
-					 sessionInfoPtr->receiveBuffer + headerOfs + 9,
+					 sessionInfoPtr->receiveBuffer + 9,
 					 responseLength );
-
-#ifdef USE_CMP_TRANSPORT
-	/* If we're using the socket protocol, add the TSP header:
-		uint32		length of type + data
-		byte		type
-		byte[]		data */
-	if( !( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) )
-		{
-		bufPtr = sessionInfoPtr->receiveBuffer;
-		mputLong( bufPtr, 1 + 9 + responseLength );
-		*bufPtr++ = TSP_MESSAGE_RESPONSE;
-		}
-#endif /* USE_CMP_TRANSPORT */
 
 	/* Add the TSA response wrapper and send it to the client.  This assumes
 	   that the TSA response will be >= 256 bytes (for a 4-byte SEQUENCE
@@ -844,7 +669,7 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	writeSequence( &stream, 5 + responseLength );
 	swrite( &stream, "\x30\x03\x02\x01\x00", 5 );
 	sMemDisconnect( &stream );
-	sessionInfoPtr->receiveBufEnd = headerOfs + 9 + responseLength;
+	sessionInfoPtr->receiveBufEnd = 9 + responseLength;
 	return( writePkiDatagram( sessionInfoPtr, TSP_CONTENT_TYPE_RESP,
 							  TSP_CONTENT_TYPE_RESP_LEN ) );
 	}
@@ -1072,15 +897,6 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setAccessMethodTSP( INOUT SESSION_INFO *sessionInfoPtr )
 	{
-#ifdef USE_CMP_TRANSPORT
-	static const ALTPROTOCOL_INFO altProtocolInfo = {
-		STREAM_PROTOCOL_TCPIP,		/* Alt.protocol type */
-		"tcp://", 6,				/* Alt.protocol URI type */
-		TSP_PORT,					/* Alt.protocol port */
-		SESSION_ISHTTPTRANSPORT,	/* Protocol flags to replace */
-		SESSION_USEALTTRANSPORT		/* Alt.protocol flags */
-		};
-#endif /* USE_CMP_TRANSPORT */
 	static const PROTOCOL_INFO protocolInfo = {
 		/* General session information */
 		TRUE,						/* Request-response protocol */
@@ -1094,9 +910,6 @@ int setAccessMethodTSP( INOUT SESSION_INFO *sessionInfoPtr )
 
 		/* Protocol-specific information */
 		BUFFER_SIZE_DEFAULT			/* Send/receive buffers */
-#ifdef USE_CMP_TRANSPORT
-		, &altProtocolInfo			/* Alt.transport protocol */
-#endif /* USE_CMP_TRANSPORT */
 		};
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );

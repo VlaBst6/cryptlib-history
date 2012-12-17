@@ -1594,19 +1594,41 @@ static int readAttributeWrapper( INOUT STREAM *stream,
 /* Read a PKCS #10 certificate request wrapper for a set of attributes.  
    This isn't as simple as it should be because there are two approaches to 
    adding extensions to a request, the PKCS #10 approach which puts them all 
-   inside a PKCS #9 extensionRequest attribute and the SET approach which
+   inside a PKCS #9 extensionRequest attribute and the SET approach which 
    lists them all individually (CRMF is a separate case handled by 
-   readAttributeWrapper() above).  In addition Microsoft invented their own 
-   incompatible version of the PKCS #9 extensionRequest which is exactly
-   the same as the PKCS #9 one but with a MS OID, however they also invented 
-   other values to add containing God knows what sort of data (long Unicode 
-   strings describing the Windows module that created it (as if you'd need 
-   that to know where it came from), the scripts from "Gilligan's Island", 
-   every "Brady Bunch" episode ever made, dust from under somebody's bed 
-   from the 1930s, etc).  Because of this, the following code skips over 
-   unknown garbage until it finds a valid extension.  Since all attributes 
-   may be either skipped or processed at this stage we include provisions 
-   for bailing out if we exhaust the available attributes */
+   readAttributeWrapper() above).  Complicating this even further is the 
+   SCEP approach, which puts extensions intended to be put into the final 
+   certificate inside a PKCS #9 extensionRequest but other extensions used 
+   for certificate issuance, for example a challengePassword, individually 
+   as SET does.  So the result can be something like:
+
+	[0] SEQUENCE {
+		SEQUENCE { challengePassword ... }
+		SEQUENCE { extensionRequest 
+			SEQUENCE basicConstraints 
+			SEQUENCE keyUsage 
+			}
+		}
+
+   In addition Microsoft invented their own incompatible version of the PKCS 
+   #9 extensionRequest which is exactly the same as the PKCS #9 one but with 
+   a MS OID, however they also invented other values to add containing God 
+   knows what sort of data (long Unicode strings describing the Windows 
+   module that created it (as if you'd need that to know where it came 
+   from), the scripts from "Gilligan's Island", every "Brady Bunch" episode 
+   ever made, dust from under somebody's bed from the 1930s, etc).  Because 
+   of these problems, the following code skips over unknown garbage until it 
+   finds a valid extension.  
+   
+   This leads to two follow-on issues.  Firstly, since all attributes may be 
+   either skipped or processed at this stage we include provisions for 
+   bailing out if we exhaust the available attributes.  Secondly, the 
+   handling of extensions is somewhat dependent on the order of processing 
+   since as soon as we encounter an extensionRequest we exit back to 
+   readAttributes() for handling the individual attributes within the 
+   extensionRequest.  This means that if there are additional attributes
+   present after the ones encapsulated in the extensionRequest then they'll
+   be skippped.  So far no requests have been discovered that do this */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5, 6 ) ) \
 static int readCertReqWrapper( INOUT STREAM *stream, 
@@ -1636,15 +1658,15 @@ static int readCertReqWrapper( INOUT STREAM *stream,
 	for( attributesProcessed = 0; attributesProcessed < 16; \
 		 attributesProcessed++ )
 		{
-#ifdef USE_CERT_OBSOLETE
+#if defined( USE_CERT_OBSOLETE ) || defined( USE_SCEP )
 		const ATTRIBUTE_INFO *attributeInfoPtr;
-#endif /* USE_CERT_OBSOLETE */
+#endif /* USE_CERT_OBSOLETE || USE_SCEP */
 		BYTE oid[ MAX_OID_SIZE + 8 ];
 		int oidLength;
 
 		/* If we've run out of attributes without finding anything useful, 
 		   exit */
-		if( stell( stream ) > endPos - MIN_ATTRIBUTE_SIZE )
+		if( stell( stream ) >= endPos )
 			return( CRYPT_OK );
 
 		/* Read the wrapper SEQUENCE and OID */
@@ -1654,8 +1676,8 @@ static int readCertReqWrapper( INOUT STREAM *stream,
 		if( cryptStatusError( status ) )
 			return( status );
 
-#ifdef USE_CERT_OBSOLETE
-		/* Check for a known attribute, which can happen with SET 
+#if defined( USE_CERT_OBSOLETE ) || defined( USE_SCEP )
+		/* Check for a known attribute, which can happen with SET and SCEP 
 		   certificate requests.  If it's a known attribute, process it */
 		attributeInfoPtr = oidToAttribute( ATTRIBUTE_CERTIFICATE, 
 										   oid, oidLength );
@@ -1672,7 +1694,7 @@ static int readCertReqWrapper( INOUT STREAM *stream,
 				return( status );
 			}
 		else
-#endif /* USE_CERT_OBSOLETE */
+#endif /* USE_CERT_OBSOLETE || USE_SCEP */
 			{
 			/* It's not a known attribute, check whether it's a CRMF or MS 
 			   wrapper attribute */
@@ -1719,6 +1741,9 @@ int readAttributes( INOUT STREAM *stream,
 										 ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE;
 	const BOOLEAN wrapperTagSet = ( attributeType == ATTRIBUTE_CMS ) ? \
 								  TRUE : FALSE;
+#ifdef USE_CERTREQ 
+	const int attributeEndPos = stell( stream ) + attributeLength;
+#endif /* USE_CERTREQ */
 	int length, endPos, complianceLevel, iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -1765,7 +1790,7 @@ int readAttributes( INOUT STREAM *stream,
 	TRACE_DEBUG(( "\nReading attributes for certificate object starting at "
 				  "offset %d.", stell( stream ) ));
 	for( iterationCount = 0;
-		 stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE && \
+		 stell( stream ) < endPos && \
 			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
@@ -1896,6 +1921,21 @@ int readAttributes( INOUT STREAM *stream,
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	TRACE_DEBUG(( "Finished reading attributes for certificate object ending at "
 				  "offset %d.\n", stell( stream ) ));
+
+	/* Certificate requests can contain multiple sets of attributes, 
+	   including ones before and after the ones that we're interested in, so
+	   if there are further attributes present after the ones that we want we
+	   skip them */
+#ifdef USE_CERTREQ 
+	if( type == CRYPT_CERTTYPE_CERTREQUEST && \
+		stell( stream ) < attributeEndPos )
+		{
+		( void ) readCertReqWrapper( stream, 
+									 ( ATTRIBUTE_LIST ** ) attributeListPtrPtr, 
+									 &length, stell( stream ) < attributeEndPos, 
+									 errorLocus, errorType );
+		}
+#endif /* USE_CERTREQ */
 
 	return( CRYPT_OK );
 	}

@@ -362,7 +362,7 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   point since it could be buried in the middle of a certificate chain 
 	   so we leave the checking to addCertChain() */
 	pkcs15infoPtr = findEntry( pkcs15info, noPkcs15objects, CRYPT_KEYIDEX_ID,
-							   iD, iDsize, KEYMGMT_FLAG_NONE );
+							   iD, iDsize, KEYMGMT_FLAG_NONE, FALSE );
 	if( pkcs15infoPtr != NULL )
 		{
 		/* Determine what actually needs to be added */
@@ -415,7 +415,7 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 				return( status );
 			if( findEntry( pkcs15info, noPkcs15objects, CRYPT_KEYID_NAME,
 						   msgData.data, msgData.length,
-						   KEYMGMT_FLAG_NONE ) != NULL )
+						   KEYMGMT_FLAG_NONE, FALSE ) != NULL )
 				{
 				retExt( CRYPT_ERROR_DUPLICATE, 
 						( CRYPT_ERROR_DUPLICATE, KEYSET_ERRINFO, 
@@ -569,10 +569,12 @@ static int deleteItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
 			  keyIDlength < MAX_ATTRIBUTE_SIZE );
 
-	/* Locate the appropriate object in the PKCS #15 collection */
+	/* Locate the appropriate object in the PKCS #15 collection.  Note that
+	   we don't allow wildcard deletes, since this is a bit too risky */
 	pkcs15infoPtr = findEntry( keysetInfoPtr->keyData, 
 							   keysetInfoPtr->keyDataNoObjects, keyIDtype, 
-							   keyID, keyIDlength, KEYMGMT_FLAG_NONE );
+							   keyID, keyIDlength, KEYMGMT_FLAG_NONE,
+							   FALSE );
 	if( pkcs15infoPtr == NULL )
 		{
 		retExt( CRYPT_ERROR_NOTFOUND, 

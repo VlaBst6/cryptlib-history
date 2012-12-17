@@ -798,7 +798,7 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 	int requireExplicitPolicyLevel, inhibitPolicyMapLevel;
 	int inhibitAnyPolicyLevel;
 	int pathLength = DUMMY_INIT, certIndex = startCertIndex;
-	int value, iterationCount, status = CRYPT_OK;
+	int value, iterationCount, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isReadPtr( issuerAttributes, sizeof( ATTRIBUTE_PTR_STORAGE ) ) );

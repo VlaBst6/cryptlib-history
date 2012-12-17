@@ -228,236 +228,22 @@ static long getFailureBitString( IN_STATUS const int pkiStatus )
 *																			*
 ****************************************************************************/
 
-#if 0	/* 28/9/08 In the usual CMP weirdness the failure information is
-				   encoded as a BIT STRING instead of an ENUMERATED value,
-				   and comes with a side-order of an arbitrary number of
-				   free-format text strings of unknown type or function.  
-				   Although we could in theory jump through all sorts of
-				   hoops to try and handle the resulting multivalued
-				   status code and multivalued string data it doesn't make
-				   any sense to do so and just increases our attack surface
-				   significantly, so all we do is look for the first (and in
-				   all known implementations only) bit set and use that as
-				   the error value */
-
-/* Read PKIStatus information:
-
-	PKIStatusInfo ::= SEQUENCE {
-		status			INTEGER,
-		statusString	SEQUENCE OF UTF8String OPTIONAL,
-		failInfo		BIT STRING OPTIONAL
-		} */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
-static int readFreeText( INOUT STREAM *stream, 
-						 OUT_BUFFER( stringMaxLen, *stringLength ) char *string, 
-						 IN_LENGTH_SHORT_MIN( 16 ) const int stringMaxLen,
-						 OUT_LENGTH_SHORT_Z int *stringLength )
-	{
-	int endPos, length, status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( string, stringMaxLen ) );
-	assert( isWritePtr( stringLength, sizeof( int ) ) );
-
-	REQUIRES( stringMaxLen >= 16 && stringMaxLen < MAX_INTLENGTH_SHORT );
-
-	/* Read the status string(s).  There can be more than one of these,
-	   there's no indication of what the subsequent ones are used for and
-	   not much that we can do with them in any case, so we skip them */
-	status = readSequence( stream, &endPos );
-	if( cryptStatusOK( status ) )
-		{
-		endPos += stell( stream );
-		status = readCharacterString( stream, string, stringMaxLen, 
-									  &length, BER_STRING_UTF8 );
-		}
-	if( cryptStatusError( status ) )
-		{
-		strlcpy_s( string, stringMaxLen, "Invalid PKI free text" );
-		return( status );
-		}
-	*stringLength = length;
-	length = endPos - stell( stream );
-	if( length > 0 )
-		{
-		/* There's extra junk present, skip it */
-		status = sSkip( stream, length );
-		}
-	return( status );
-	}
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int readPkiStatusInfo( INOUT STREAM *stream, INOUT ERROR_INFO *errorInfo )
-	{
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ], textBitString[ 128 + 8 ];
-	long value, endPos;
-	int errorMessageLength = 0, textBitStringLength;
-	int bitString, noBits, bitMask, bitNo = -1, i, length, status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
-
-	/* Clear the return values */
-	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
-
-	/* Read the outer wrapper and status value */
-	status = readSequence( stream, &length );
-	if( cryptStatusOK( status ) )
-		{
-		endPos = stell( stream ) + length;
-		status = readShortInteger( stream, &value );
-		if( cryptStatusOK( status ) && \
-			value < 0 || value > MAX_INTLENGTH_SHORT )
-			status = CRYPT_ERROR_BADDATA;
-		}
-	if( cryptStatusError( status ) )
-		{
-		setErrorString( errorInfo, "Invalid PKI status value", 24 );
-		return( status );
-		}
-	errorInfo->errorCode = ( int ) value;
-	if( stell( stream ) < endPos && peekTag( stream ) == BER_SEQUENCE )
-		{
-		memcpy( errorMessage, "Server returned error: ", 23 );
-
-		/* Read the free-form text message data */
-		status = readFreeText( stream, errorMessage + 23,
-							   MAX_ERRMSG_SIZE - 32, &errorMessageLength );
-		if( cryptStatusError( status ) )
-			return( status );
-		errorMessageLength += 23;
-		}
-	if( stell( stream ) >= endPos )
-		{
-		/* If there was a problem but there's no extra error information
-		   present, return a "This page deliberately left blank" error */
-		if( errorMessageLength <= 0 && errorInfo->errorCode != PKISTATUS_OK )
-			{
-			setErrorString( errorInfo, 
-							"Server returned nonspecific error information", 
-							45 );
-			}
-
-		/* See the comment at end of this function for the translation of 
-		   error codes */
-		return( ( errorInfo->errorCode == PKISTATUS_OK || \
-				  errorInfo->errorCode == PKISTATUS_OK_WITHINFO ) ? \
-				CRYPT_OK : CRYPT_ERROR_FAILED );
-		}
-
-	/* Read the failure information and slot it into the error string */
-	status = readBitString( stream, &bitString );
-	if( cryptStatusError( status ) )
-		{
-		setErrorString( errorInfo, "Invalid PKI failure information", 24 );
-		return( status );
-		}
-	memcpy( textBitString, "Server returned status value ", 29 );
-	textBitStringLength = 29;
-	i = bitString;
-	for( noBits = 0; i > 0 && noBits < 32; noBits++ )
-		i >>= 1;
-	bitMask = 1 << ( noBits - 1 );
-	for( i = 0; i < noBits; i++ )
-		{
-		if( bitString & bitMask )
-			{
-			/* If there's no bit set yet, set it.  If there's already a bit 
-			   set, set it to a non-value that indicates that more than one 
-			   bit is set */
-			bitNo = ( bitNo == -1 ) ? ( noBits - 1 ) - i : -2;
-			textBitString[ textBitStringLength++ ] = '1';
-			}
-		else
-			textBitString[ textBitStringLength++ ] = '0';
-		bitMask >>= 1;
-		}
-	if( bitNo >= 0 )
-		{
-		textBitStringLength = \
-			sprintf_s( textBitString, 64,
-					   "Server returned status bit %d: ", bitNo );
-		}
-	else
-		{
-		memcpy( textBitString + textBitStringLength, "'B: ", 4 );
-		textBitStringLength += 4;
-		}
-	if( errorMessageLength > 0 )
-		{
-		/* There's error message text present, move it up to make room for 
-		   the bit string text */
-		if( errorMessageLength > MAX_ERRMSG_SIZE - textBitStringLength )
-			errorMessageLength = MAX_ERRMSG_SIZE - textBitStringLength;
-		memmove( errorMessage + textBitStringLength, 
-				 errorMessage, errorMessageLength );
-		memcpy( errorMessage, textBitString, textBitStringLength );
-		errorMessageLength += textBitStringLength;
-		}
-	else
-		{
-		/* If there's a failure code present, turn it into an error string */
-		if( bitString > 0 )
-			{
-			const char *failureString;
-			int failureStringLength;
-
-			memcpy( errorMessage, textBitString, textBitStringLength );
-			status = getFailureString( &failureString, &failureStringLength, 
-									   bitString );
-			if( cryptStatusError( status ) || \
-				textBitStringLength + failureStringLength >= MAX_ERRMSG_SIZE )
-				{
-				failureString = "[...]";
-				failureStringLength = 5;
-				}
-			memcpy( errorMessage + textBitStringLength, failureString,
-					failureStringLength );
-			errorMessageLength = textBitStringLength + failureStringLength;
-			}
-		}
-	if( errorMessageLength > 0 )
-		setErrorString( errorInfo, errorMessage, errorMessageLength );
-
-	/* If we can return something more useful than the generic "failed" 
-	   error code, try and do so */
-	if( bitString & CMPFAILINFO_BADALG )
-		return( CRYPT_ERROR_NOTAVAIL );
-	if( ( bitString & CMPFAILINFO_BADMESSAGECHECK ) || \
-		( bitString & CMPFAILINFO_BADPOP ) || \
-		( bitString & CMPFAILINFO_WRONGINTEGRITY ) )
-		return( CRYPT_ERROR_WRONGKEY );
-	if( ( bitString & CMPFAILINFO_BADREQUEST ) || \
-		( bitString & CMPFAILINFO_SIGNERNOTTRUSTED ) || \
-		( bitString & CMPFAILINFO_NOTAUTHORIZED ) )
-		return( CRYPT_ERROR_PERMISSION );
-	if( bitString & CMPFAILINFO_BADDATAFORMAT )
-		return( CRYPT_ERROR_BADDATA );
-	if( ( bitString & CMPFAILINFO_UNACCEPTEDPOLICY ) || \
-		( bitString & CMPFAILINFO_UNACCEPTEDEXTENSION ) || \
-		( bitString & CMPFAILINFO_BADCERTTEMPLATE ) )
-		return( CRYPT_ERROR_INVALID );
-	if( ( bitString & CMPFAILINFO_TRANSACTIONIDINUSE ) || \
-		( bitString & CMPFAILINFO_DUPLICATECERTREQ ) )
-		return( CRYPT_ERROR_DUPLICATE );
-
-	/* A PKI status code is a bit difficult to turn into anything useful,
-	   the best we can do is to report that the operation failed and let
-	   the user get the exact details from the PKI status information */
-	return( ( errorInfo->errorCode == PKISTATUS_OK || \
-			  errorInfo->errorCode == PKISTATUS_OK_WITHINFO ) ? \
-			CRYPT_OK : CRYPT_ERROR_FAILED );
-	}
-#else
-
 /* Read PKIStatus information:
 
 	PKIStatusInfo ::= SEQUENCE {
 		status			INTEGER,
 		dummy			SEQUENCE ... OPTIONAL,
 		failInfo		BIT STRING OPTIONAL
-		} */
+		} 
+
+   In the usual CMP weirdness the failure information is encoded as a BIT 
+   STRING instead of an ENUMERATED value, and comes with a side-order of an 
+   arbitrary number of free-format text strings of unknown type or 
+   function.  Although we could in theory jump through all sorts of hoops to 
+   try and handle the resulting multivalued status code and multivalued 
+   string data it doesn't make any sense to do so and just increases our 
+   attack surface significantly, so all we do is look for the first (and in 
+   all known implementations only) bit set and use that as the error value */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int readPkiStatusInfo( INOUT STREAM *stream, 
@@ -534,7 +320,6 @@ int readPkiStatusInfo( INOUT STREAM *stream,
 			  isServer ? "Client" : "Server", bitString, bitPos, 
 			  failureString ) );
 	}
-#endif /* 0 */
 
 /****************************************************************************
 *																			*

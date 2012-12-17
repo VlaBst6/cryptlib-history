@@ -65,11 +65,57 @@ static int checkPgpUsage( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   data, a follow-on from the way that nested sigs are handled */
 	if( envInfo == CRYPT_ENVINFO_HASH && \
 		envelopeInfoPtr->actionList != NULL )
+		{
+		/* The one exception to this occurs when we're using a detached 
+		   signature with an externally-provided hash value and the user 
+		   has added a signing key before adding the hash, in which case 
+		   a hash action will have been added automatically when the signing 
+		   key was added.  In this case the presence of an automatically-
+		   added hash action is OK since it'll be replaced with the hash
+		   value that we're now adding */
+		if( ( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG ) && \
+			envelopeInfoPtr->actionList->action == ACTION_HASH && \
+			( envelopeInfoPtr->actionList->flags & ACTION_ADDEDAUTOMATICALLY ) )
+			return( CRYPT_OK );
+
 		return( CRYPT_ERROR_INITED );
+		}
 
 	return( CRYPT_OK );
 	}
 #endif /* USE_PGP */
+
+/* Clone a context so that we can add the clone to an action list */
+
+static int cloneActionContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iClonedContext,
+							   IN_HANDLE const CRYPT_CONTEXT cryptContext,
+							   IN_ALGO const CRYPT_ALGO_TYPE algorithm )
+	{
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	int status;
+
+	assert( isWritePtr( iClonedContext, sizeof( CRYPT_CONTEXT ) ) );
+
+	REQUIRES( isHandleRangeValid( cryptContext ) );
+	REQUIRES( algorithm > CRYPT_ALGO_NONE && algorithm < CRYPT_ALGO_LAST );
+
+	setMessageCreateObjectInfo( &createInfo, algorithm );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
+							  OBJECT_TYPE_CONTEXT );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = krnlSendMessage( cryptContext, IMESSAGE_CLONE, NULL,
+							  createInfo.cryptHandle );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+	*iClonedContext = createInfo.cryptHandle;
+
+	return( CRYPT_OK );
+	}
 
 /****************************************************************************
 *																			*
@@ -211,7 +257,8 @@ static int checkSignatureActionFunction( const ACTION_LIST *actionListPtr,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int checkMissingInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+static int checkMissingInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+							 const BOOLEAN isFlush )
 	{
 	BOOLEAN signingKeyPresent = FALSE;
 
@@ -282,6 +329,26 @@ static int checkMissingInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 				return( CRYPT_ERROR_NOTINITED );
 				}
 			signingKeyPresent = TRUE;
+
+			/* If it's a detached signature and we're performing a flush (in
+			   other words we're wrapping up the enveloping with no data
+			   pushed) then there has to be an externally-supplied hash
+			   present */
+			if( ( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG ) && \
+				isFlush )
+				{
+				const ACTION_LIST *actionListPtr = \
+							findAction( envelopeInfoPtr->actionList, \
+										ACTION_HASH );
+								
+				if( actionListPtr == NULL || \
+					( actionListPtr->flags & ACTION_ADDEDAUTOMATICALLY ) )
+					{
+					setErrorInfo( envelopeInfoPtr, CRYPT_ENVINFO_HASH, 
+								  CRYPT_ERRTYPE_ATTR_ABSENT );
+					return( CRYPT_ERROR_NOTINITED );
+					}
+				}
 		}
 
 	REQUIRES( signingKeyPresent || \
@@ -371,8 +438,7 @@ int addKeysetInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int addPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 							IN_BUFFER( passwordLength ) const void *password, 
-							IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) \
-								const int passwordLength )
+							IN_LENGTH_TEXT const int passwordLength )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo = envelopeInfoPtr->defaultAlgo;
 	CRYPT_CONTEXT iCryptContext;
@@ -441,8 +507,7 @@ static int addPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int addPgpPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 							   IN_BUFFER( passwordLength ) const void *password, 
-							   IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) \
-								const int passwordLength )
+							   IN_LENGTH_TEXT const int passwordLength )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo = envelopeInfoPtr->defaultAlgo;
 	CRYPT_CONTEXT iCryptContext;
@@ -563,15 +628,53 @@ static int addContextInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	if( !envelopeInfoPtr->checkAlgo( algorithm, mode ) )
 		return( CRYPT_ARGERROR_NUM1 );
 
-	/* Find the insertion point for this action and make sure that it isn't
+	/* If we're adding a hash action and this is a detached signature (so 
+	   that the action contains the hash of the data to be signed by the 
+	   detached signature) then the presence of an automatically-added 
+	   existing hash action isn't a problem, but we need to replace it with 
+	   the explicitly-added action */
+	if( actionType == ACTION_HASH && \
+		( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG ) )
+		{
+		/* Check whether there's an automatically-added hash action present 
+		   that was created as a side-effect of adding a signature key.  If
+		   there is, we just replace the existing action context with the
+		   new one, leaving everything else unchanged */
+		hashActionPtr = findAction( *actionListHeadPtrPtr, ACTION_HASH );
+		if( hashActionPtr != NULL && \
+			( hashActionPtr->flags & ACTION_ADDEDAUTOMATICALLY ) )
+			{
+			status = cloneActionContext( &iCryptHandle, iCryptHandle, 
+										 algorithm );
+			if( cryptStatusError( status ) )
+				return( status );
+			status = replaceAction( hashActionPtr, iCryptHandle );
+			if( cryptStatusError( status ) )
+				{
+				krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+				return( status );
+				}
+
+			/* This is now an explicitly-added action rather than one that
+			   was added automatically, as well as one for which we don't
+			   need to explicitly complete the hashing */
+			hashActionPtr->flags &= ~ACTION_ADDEDAUTOMATICALLY;
+			hashActionPtr->flags |= ACTION_HASHCOMPLETE;
+
+			return( CRYPT_OK );
+			}
+		}
+
+	/* Find the insertion point for this action and make sure that it isn't 
 	   already present.  The difference between ACTION_RESULT_INITED and 
 	   ACTION_RESULT_PRESENT is that an inited response indicates that the 
 	   user explicitly added the action and can't add it again while a 
-	   present response indicates that the action was added automatically by 
-	   cryptlib in response to the user adding some other action and 
-	   shouldn't be reported as an error, to the user it doesn't make any 
-	   difference whether the same action was added automatically by 
-	   cryptlib or explicitly */
+	   present response indicates that the action was added automatically 
+	   (and transparently) by cryptlib in response to the user adding some 
+	   other action and so its presence shouldn't be reported as an error. 
+	   This is because to the user it doesn't make any difference whether 
+	   the same action was added automatically by cryptlib or explicitly by 
+	   the user */
 	actionResult = checkAction( *actionListHeadPtrPtr, actionType, 
 								iCryptHandle );
 	switch( actionResult )
@@ -598,22 +701,10 @@ static int addContextInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   for our own use, otherwise we just increment its reference count */
 	if( actionType == ACTION_HASH || actionType == ACTION_CRYPT )
 		{
-		MESSAGE_CREATEOBJECT_INFO createInfo;
-
-		setMessageCreateObjectInfo( &createInfo, algorithm );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
-								  OBJECT_TYPE_CONTEXT );
+		status = cloneActionContext( &iCryptHandle, iCryptHandle, 
+									 algorithm );
 		if( cryptStatusError( status ) )
 			return( status );
-		status = krnlSendMessage( iCryptHandle, IMESSAGE_CLONE, NULL,
-								  createInfo.cryptHandle );
-		if( cryptStatusError( status ) )
-			{
-			krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-			return( status );
-			}
-		iCryptHandle = createInfo.cryptHandle;
 		}
 	else
 		{
@@ -634,6 +725,12 @@ static int addContextInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		/* Remember that we need to hook the hash action up to a signature
 		   action before we start enveloping data */
 		actionListPtr->flags |= ACTION_NEEDSCONTROLLER;
+
+		/* If this is a detached signature for which the hash value was 
+		   added explicitly by the user, we don't need to complete the 
+		   hashing ourselves since it's already been done by the user */
+		if( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG )
+			actionListPtr->flags |= ACTION_HASHCOMPLETE;
 		}
 
 	/* If the newly-inserted action isn't a controlling action, we're done */
@@ -801,22 +898,31 @@ static int addEnvelopeInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 					return( CRYPT_OK );
 
 				case CRYPT_INTEGRITY_MACONLY:
+					if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
+						{
+						/* PGP doesn't have MAC-only integrity protection */
+						return( CRYPT_ARGERROR_VALUE );
+						}
 					envelopeInfoPtr->usage = ACTION_MAC;
 					return( CRYPT_OK );
 
 				case CRYPT_INTEGRITY_FULL:
 					/* If we're using authenticated encryption in the form
 					   of crypt + MAC (rather than a combined auth-enc 
-					   encryption mode) then we can't use a raw session key 
-					   because there are effectively two keys present, one 
-					   for the encryption and one for the MACing.  We 
-					   generalise the check here to make sure that there are
-					   no main envelope actions set, in practice this can't
-					   happen because setting e.g. a hash action will set
-					   the envelope usage to USAGE_SIGN which precludes then
-					   setting CRYPT_ENVINFO_INTEGRITY, but the more general
-					   check here can't hurt */
-					if( envelopeInfoPtr->actionList != NULL )
+					   encryption mode like GCM, or PGP's semi-keyed hash
+					   function that isn't really a MAC) then we can't use a 
+					   raw session key because there are effectively two 
+					   keys present, one for the encryption and one for the 
+					   MACing.
+					   
+					   We generalise the check here to make sure that there 
+					   are no main envelope actions set, in practice this 
+					   can't happen because setting e.g. a hash action will 
+					   set the envelope usage to USAGE_SIGN which precludes 
+					   then setting CRYPT_ENVINFO_INTEGRITY, but the more 
+					   general check here can't hurt */
+					if( envelopeInfoPtr->actionList != NULL && \
+						envelopeInfoPtr->type != CRYPT_FORMAT_PGP )
 						{
 						setErrorInfo( envelopeInfoPtr, 
 									  CRYPT_ENVINFO_SESSIONKEY,
@@ -922,10 +1028,13 @@ static int addEnvelopeInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				}
 
 			/* If we're using authenticated encryption in the form of crypt + 
-			   MAC (rather than a combined auth-enc encryption mode) then we 
-			   can't use a raw session key because there are effectively two 
-			   keys present, one for the encryption and one for the MACing */
-			if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+			   MAC (rather than a combined auth-enc encryption mode like GCM, 
+			   or PGP's semi-keyed hash function that isn't really a MAC) 
+			   then we can't use a raw session key because there are 
+			   effectively two keys present, one for the encryption and one 
+			   for the MACing */
+			if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC && \
+				envelopeInfoPtr->type != CRYPT_FORMAT_PGP )
 				{
 				setErrorInfo( envelopeInfoPtr, CRYPT_ENVINFO_INTEGRITY,
 							  CRYPT_ERRTYPE_ATTR_PRESENT );
@@ -956,8 +1065,7 @@ static int addEnvelopeInfoString( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 											CRYPT_ENVINFO_PASSWORD ) \
 									const CRYPT_ATTRIBUTE_TYPE envInfo,
 								  IN_BUFFER( valueLength ) const void *value, 
-								  IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) \
-									const int valueLength )
+								  IN_LENGTH_TEXT const int valueLength )
 	{
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isReadPtr( value, valueLength ) );

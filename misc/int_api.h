@@ -159,9 +159,9 @@ int getSysVar( const SYSVAR_TYPE type );
 	CHECK_RETVAL_PTR \
 	void *initACLInfo( const int access );
 	STDC_NONNULL_ARG( ( 1 ) ) \
-	void *getACLInfo( void *securityInfoPtr );
+	void *getACLInfo( INOUT void *securityInfoPtr );
 	STDC_NONNULL_ARG( ( 1 ) ) \
-	void freeACLInfo( void *securityInfoPtr );
+	void freeACLInfo( INOUT void *securityInfoPtr );
   #else
 	#define initACLInfo( x )	NULL
 	#define getACLInfo( x )		NULL
@@ -253,6 +253,15 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
 				   OUT_INT_Z int *numericValue, 
 				   IN_RANGE( 0, 100 ) const int minValue, 
 				   IN_RANGE( minValue, MAX_INTLENGTH ) const int maxValue );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int strGetHex( IN_BUFFER( strLen ) const char *str, 
+			   IN_LENGTH_SHORT const int strLen, 
+			   OUT_INT_Z int *numericValue, 
+			   IN_RANGE( 0, 100 ) const int minValue, 
+			   IN_RANGE( minValue, MAX_INTLENGTH ) const int maxValue );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN strIsPrintable( IN_BUFFER( strLen ) const void *str, 
+						IN_LENGTH_SHORT const int strLen );
 
 /****************************************************************************
 *																			*
@@ -298,7 +307,58 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
 		return( sSetError( stream, CRYPT_ERROR_INTERNAL ) ); \
 		}
 
-/* Symobolic defines to handle design-by-contract predicates */
+/* Check for an internal error.  This is required in situations where 
+   supplementary information is returned as a by-reference parameter but
+   we can't rely on the value of the by-reference parameter because it
+   isn't reset to its default value until the internal-error checks have
+   been performed.  For example if we have a function:
+
+	CHECK_RETVAL int foo( IN_HANDLE const CRYPT_HANDLE cryptHandle,
+						  OUT_INT_OPT int *errorInfo )
+		{
+		REQUIRES( isValidHandle( cryptHandle ) );
+
+		// Clear return value
+		*errorInfo = CRYPT_OK;
+
+		//...
+		}
+
+   which is called as:
+
+	status = foo( cryptHandle, &errorInfo );
+	if( cryptStatusError( status ) )
+		{
+		switch( errorInfo )
+			{
+			// ...
+			}
+		}
+
+   then we can't act on errorInfo if the returned status is 
+   CRYPT_ERROR_INTERNAL because the exception may have been triggered 
+   before the return value was cleared.
+
+   An alternative option to this explicit check would be to switch the order 
+   of the exception-throwing checks and the clearing of return values, but 
+   this both doesn't work in the case of wrapper functions where the check 
+   is performed in the wrapper but the return value isn't cleared until the 
+   actual function, and creates nasty catch-22's where we can't check the 
+   validity of the by-reference parameter until it's already been written 
+   to:
+
+	// Clear return value
+	*errorInfo = CRYPT_OK;
+
+	REQUIRES( errorInfo != NULL );
+
+   Both options are ugly and error-prone, but having a requirement for the 
+   caller to check for isInternalError() is relatively rare so it's the
+   one that we use here */
+
+#define isInternalError( status )	( ( status ) == CRYPT_ERROR_INTERNAL )
+
+/* Symbolic defines to handle design-by-contract predicates */
 
 #define REQUIRES( x )	if( !( x ) ) retIntError()
 #define REQUIRES_N( x )	if( !( x ) ) retIntError_Null()
@@ -378,6 +438,9 @@ void setErrorString( OUT ERROR_INFO *errorInfoPtr,
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 void copyErrorInfo( OUT ERROR_INFO *destErrorInfoPtr, 
 					const ERROR_INFO *srcErrorInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+int readErrorInfo( OUT ERROR_INFO *errorInfo, 
+				   IN_HANDLE const CRYPT_HANDLE objectHandle );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtFn( IN_ERROR const int status, 
 			  OUT ERROR_INFO *errorInfoPtr, 
@@ -404,7 +467,7 @@ int retExtErrFn( IN_ERROR const int status,
 				 FORMAT_STRING const char *format, ... );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtErrAltFn( IN_ERROR const int status, 
-					OUT ERROR_INFO *errorInfoPtr, 
+					INOUT ERROR_INFO *errorInfoPtr, 
 					FORMAT_STRING const char *format, ... );
 
 #ifdef USE_ERRMSGS
@@ -1107,23 +1170,26 @@ int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData,
 				  OUT_LENGTH_Z int *outDataLength, 
 				  IN_ENUM( CRYPT_FORMAT ) const CRYPT_FORMAT_TYPE formatType,
 				  IN_ENUM_OPT( CRYPT_CONTENT ) const CRYPT_CONTENT_TYPE contentType,
-				  IN_HANDLE_OPT const CRYPT_HANDLE iPublicKey );
+				  IN_HANDLE_OPT const CRYPT_HANDLE iPublicKey,
+				  OUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData, 
 					IN_LENGTH_MIN( 16 ) const int inDataLength,
 					OUT_BUFFER( outDataMaxLength, *outDataLength ) void *outData, 
 					IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
 					OUT_LENGTH_Z int *outDataLength, 
-					IN_HANDLE_OPT const CRYPT_CONTEXT iPrivKey );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
-int envelopeSign( IN_BUFFER( inDataLength ) const void *inData, 
-				  IN_LENGTH_MIN( 16 ) const int inDataLength,
+					IN_HANDLE_OPT const CRYPT_CONTEXT iPrivKey,
+					OUT ERROR_INFO *errorInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
+int envelopeSign( IN_BUFFER_OPT( inDataLength ) const void *inData, 
+				  IN_LENGTH_Z const int inDataLength,
 				  OUT_BUFFER( outDataMaxLength, *outDataLength ) void *outData, 
 				  IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
 				  OUT_LENGTH_Z int *outDataLength, 
 				  IN_ENUM_OPT( CRYPT_CONTENT ) const CRYPT_CONTENT_TYPE contentType,
 				  IN_HANDLE const CRYPT_CONTEXT iSigKey,
-				  IN_HANDLE_OPT const CRYPT_CERTIFICATE iCmsAttributes );
+				  IN_HANDLE_OPT const CRYPT_CERTIFICATE iCmsAttributes,
+				  OUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5, 7 ) ) \
 int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData, 
 					  IN_LENGTH_MIN( 16 ) const int inDataLength,
@@ -1133,7 +1199,8 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 					  IN_HANDLE_OPT const CRYPT_CONTEXT iSigCheckKey,
 					  OUT_STATUS int *sigResult, 
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iSigningCert,
-					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iCmsAttributes );
+					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iCmsAttributes,
+					  OUT ERROR_INFO *errorInfo );
 #endif /* USE_ENVELOPES */
 
 /****************************************************************************
@@ -1268,12 +1335,13 @@ int importECCPoint( INOUT void *bignumPtr1,
 					IN_OPT const void *maxRangePtr,
 					IN_ENUM( KEYSIZE_CHECK ) \
 						const KEYSIZE_CHECK_TYPE checkType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4, 5) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4, 5 ) ) \
 int exportECCPoint( OUT_BUFFER_OPT( dataMaxLength, *dataLength ) void *data, 
 					IN_LENGTH_SHORT_Z const int dataMaxLength, 
 					OUT_LENGTH_SHORT_Z int *dataLength,
-					const void *bignumPtr1, const void *bignumPtr2,
-					IN_LENGTH_SHORT_MIN( 16 ) const int fieldSize );
+					IN const void *bignumPtr1, 
+					IN const void *bignumPtr2,
+					IN_LENGTH_PKC const int fieldSize );
 #endif /* USE_ECDH || USE_ECDSA */
 
 #endif /* _INTAPI_DEFINED */

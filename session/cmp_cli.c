@@ -216,9 +216,6 @@ static int initClientInfo( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int clientStartup( INOUT SESSION_INFO *sessionInfoPtr )
 	{
-#ifdef USE_CMP_TRANSPORT
-	const PROTOCOL_INFO *protocolInfoPtr = sessionInfoPtr->protocolInfo;
-#endif /* USE_CMP_TRANSPORT */
 	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
 	NET_CONNECT_INFO connectInfo;
 	int status;
@@ -258,31 +255,8 @@ static int clientStartup( INOUT SESSION_INFO *sessionInfoPtr )
 	status = initSessionNetConnectInfo( sessionInfoPtr, &connectInfo );
 	if( cryptStatusError( status ) )
 		return( status );
-#ifdef USE_CMP_TRANSPORT
-	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
-		status = sNetConnect( &sessionInfoPtr->stream, STREAM_PROTOCOL_HTTP, 
-							  &connectInfo, &sessionInfoPtr->errorInfo );
-	else
-		{
-		const ALTPROTOCOL_INFO *altProtocolInfoPtr = \
-									protocolInfoPtr->altProtocolInfo;
-
-		REQUIRES( sessionInfoPtr->flags & SESSION_USEALTTRANSPORT );
-
-		/* If we're using the HTTP port for a session-specific protocol, 
-		   change it to the default port for the session-specific protocol 
-		   instead */
-		if( connectInfo.port == 80 )
-			connectInfo.port = altProtocolInfoPtr->port;
-		status = sNetConnect( &sessionInfoPtr->stream, 
-							  altProtocolInfoPtr->type, 
-							  &connectInfo, &sessionInfoPtr->errorInfo );
-		}
-	return( status );
-#else
 	return( sNetConnect( &sessionInfoPtr->stream, STREAM_PROTOCOL_HTTP, 
 						 &connectInfo, &sessionInfoPtr->errorInfo ) );
-#endif /* USE_CMP_TRANSPORT */
 	}
 
 /* Exchange data with a CMP server.  Since the plug-and-play PKI client 
@@ -337,7 +311,7 @@ static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 			sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, 
 					   TRUE );
 			}
-		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
+		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE, 
 								   CMP_CONTENT_TYPE_LEN );
 		}
 	if( cryptStatusError( status ) )
@@ -408,7 +382,7 @@ static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusOK( status ) )
 		{
 		DEBUG_DUMP_CMP( protocolInfo.operation, 3, sessionInfoPtr );
-		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
+		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE, 
 								   CMP_CONTENT_TYPE_LEN );
 		}
 	if( cryptStatusOK( status ) )

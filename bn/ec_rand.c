@@ -109,13 +109,13 @@
  *
  */
 
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "ec_lcl.h"
 #else
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#if defined( USE_ECDH ) || defined( USE_ECDSA )
+#if defined( USE_ECDH ) || defined( USE_ECDSA )	/* pcg */
 
 #if 1	/* pcg */
 
@@ -146,7 +146,7 @@ static int bnrand(int pseudorand, BIGNUM *rnd, int bits, int top, int bottom)
 	bit=(bits-1)%8;
 	mask=0xff<<(bit+1);
 
-	buf=(unsigned char *)clBnAlloc( "bnrand", bytes);
+	buf=(unsigned char *)clBnAlloc("bnrand",bytes);		/* pcg */
 	if (buf == NULL)
 		{
 		BNerr(BN_F_BNRAND,ERR_R_MALLOC_FAILURE);
@@ -222,7 +222,7 @@ err:
 	bn_check_top(rnd);
 	return(ret);
 	}
-#endif /* 1 */
+#endif /* 1 */		/* pcg */
 
 int     BN_rand(BIGNUM *rnd, int bits, int top, int bottom)
 	{
@@ -319,4 +319,5 @@ int	BN_pseudo_rand_range(BIGNUM *r, const BIGNUM *range)
 	{
 	return bn_rand_range(1, r, range);
 	}
-#endif /* USE_ECDH || USE_ECDSA */
+
+#endif /* USE_ECDH || USE_ECDSA */	/* pcg */

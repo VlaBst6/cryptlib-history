@@ -1,11 +1,16 @@
 /****************************************************************************
 *																			*
 *								cryptlib Test Code							*
-*						Copyright Peter Gutmann 1995-2011					*
+*						Copyright Peter Gutmann 1995-2012					*
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>	/* For toupper() */
+#if defined( __Nucleus__ )
+  #include <nu_ctype.h>
+  #include <nu_string.h>
+#else
+  #include <ctype.h>	/* For toupper() */
+#endif /* OS-specific includes */
 
 #include "cryptlib.h"
 #include "test/test.h"
@@ -65,13 +70,14 @@ int keyReadOK = TRUE, doubleCertOK = FALSE;
 /* Prototypes for general debug routines used to evaluate problems with certs
    and envelopes from other apps */
 
-void xxxCertImport( const char *fileName );
-void xxxCertCheck( const char *certFileName, const char *caFileNameOpt );
+int xxxCertImport( const char *fileName );
+int xxxCertCheck( const char *certFileName, const char *caFileNameOpt );
 void xxxPubKeyRead( const char *fileName, const char *keyName );
 void xxxPrivKeyRead( const char *fileName, const char *keyName, const char *password );
 void xxxDataImport( const char *fileName );
 void xxxSignedDataImport( const char *fileName );
-void xxxEncryptedDataImport( const char *fileName );
+void xxxEncryptedDataImport( const char *fileName, const char *keyset,
+							 const char *password );
 
 /* Prototype for custom key-creation routines */
 
@@ -95,6 +101,39 @@ int suiteBMain( int argc, char **argv );
 *																			*
 ****************************************************************************/
 
+/* The pseudo-CLI VC++ output windows are closed when the program exits so 
+   we have to explicitly wait to allow the user to read them */
+
+#if defined( __WINDOWS__ ) && !defined( NDEBUG )
+
+static void cleanExit( const int exitStatus )
+	{
+	puts( "\nHit a key..." );
+	getchar();
+	exit( exitStatus );
+	}
+static void cleanupAndExit( const int exitStatus )
+	{
+	int status;
+
+	status = cryptEnd();
+	if( status == CRYPT_ERROR_INCOMPLETE )
+		puts( "cryptEnd() failed with CRYPT_ERROR_INCOMPLETE." );
+	cleanExit( exitStatus );
+	}
+#else
+
+static void cleanExit( const int exitStatus )
+	{
+	exit( exitStatus );
+	}
+static void cleanupAndExit( const int exitStatus )
+	{
+	cryptEnd();
+	cleanExit( exitStatus );
+	}
+#endif /* __WINDOWS__ && !NDEBUG */
+
 /* Update the cryptlib config file.  This code can be used to set the
    information required to load PKCS #11 device drivers:
 
@@ -106,48 +145,49 @@ int suiteBMain( int argc, char **argv );
 	  The testDevices() call will report the results of trying to use your
 	  driver.
 
-   Note that under Windows XP the path name changes from 'WinNT' to just
-   'Windows' */
+  cryptlib's SafeLoadLibrary() will always load drivers from the Windows 
+  system directory / %SystemDirectory% unless given an absolute path */
 
 static void updateConfig( void )
 	{
 #if 0
-	const char *driverPath = "c:/winnt/system32/acospkcs11.dll";/* ACOS */
-	const char *driverPath = "c:/winnt/system32/aetpkss1.dll";	/* AET */
-	const char *driverPath = "c:/winnt/system32/aloaha_pkcs11.dll";	/* Aloaha */
-	const char *driverPath = "c:/winnt/system32/etpkcs11.dll";  /* Aladdin eToken */
-	const char *driverPath = "c:/winnt/system32/psepkcs11.dll";	/* A-Sign */
-	const char *driverPath = "c:/winnt/system32/asepkcs.dll";	/* Athena */
-	const char *driverPath = "c:/winnt/system32/cryst32.dll";	/* Chrysalis */
+	const char *driverPath = "acospkcs11.dll";		/* ACOS */
+	const char *driverPath = "aetpkss1.dll";		/* AET */
+	const char *driverPath = "aloaha_pkcs11.dll";	/* Aloaha */
+	const char *driverPath = "etpkcs11.dll";		/* Aladdin eToken */
+	const char *driverPath = "psepkcs11.dll";		/* A-Sign */
+	const char *driverPath = "asepkcs.dll";			/* Athena */
+	const char *driverPath = "c:/temp/bpkcs11.dll";	/* Bloomberg */
+	const char *driverPath = "cryst32.dll";			/* Chrysalis */
 	const char *driverPath = "c:/program files/luna/cryst201.dll";	/* Chrysalis */
-	const char *driverPath = "c:/winnt/system32/pkcs201n.dll";	/* Datakey */
-	const char *driverPath = "c:/winnt/system32/dkck201.dll";	/* Datakey (for Entrust) */
-	const char *driverPath = "c:/winnt/system32/dkck232.dll";	/* Datakey/iKey (NB: buggy, use 201) */
+	const char *driverPath = "pkcs201n.dll";		/* Datakey */
+	const char *driverPath = "dkck201.dll";			/* Datakey (for Entrust) */
+	const char *driverPath = "dkck232.dll";			/* Datakey/iKey (NB: buggy, use 201) */
 	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
 	const char *driverPath = "c:/program files/eracom/cprov runtime/cryptoki.dll";	/* Eracom (new, doesn't work) */
-	const char *driverPath = "c:/winnt/system32/sadaptor.dll";	/* Eutron */
-	const char *driverPath = "c:/winnt/system32/ngp11v211.dll";	/* Feitain Technology */
-	const char *driverPath = "c:/winnt/system32/pk2priv.dll";	/* Gemplus */
+	const char *driverPath = "sadaptor.dll";		/* Eutron */
+	const char *driverPath = "ngp11v211.dll";		/* Feitian Technology */
+	const char *driverPath = "pk2priv.dll";			/* Gemplus */
 	const char *driverPath = "c:/program files/gemplus/gclib.dll";	/* Gemplus */
-	const char *driverPath = "c:/winnt/system32/cryptoki.dll";	/* IBM */
-	const char *driverPath = "c:/winnt/system32/csspkcs11.dll";	/* IBM */
-	const char *driverPath = "c:/winnt/system32/ibmpkcss.dll";	/* IBM */
-	const char *driverPath = "c:/winnt/system32/id2cbox.dll";	/* ID2 */
-	const char *driverPath = "c:/winnt/system32/cknfast.dll";	/* nCipher */
+	const char *driverPath = "cryptoki.dll";		/* IBM */
+	const char *driverPath = "csspkcs11.dll";		/* IBM */
+	const char *driverPath = "ibmpkcss.dll";		/* IBM */
+	const char *driverPath = "id2cbox.dll";			/* ID2 */
+	const char *driverPath = "cknfast.dll";			/* nCipher */
 	const char *driverPath = "/opt/nfast/toolkits/pkcs11/libcknfast.so";/* nCipher under Unix */
-	const char *driverPath = "/usr/lib/libcknfast.so";			/* nCipher under Unix */
-	const char *driverPath = "softokn3.dll";					/* Netscape */
-	const char *driverPath = "c:/winnt/system32/nxpkcs11.dll";	/* Nexus */
-	const char *driverPath = "c:/winnt/system32/AuCryptoki2-0.dll";	/* Oberthur */
-	const char *driverPath = "c:/winnt/system32/opensc-pkcs11.dll";	/* OpenSC */
-	const char *driverPath = "c:/winnt/system32/micardoPKCS11.dll";	/* Orga Micardo */
-	const char *driverPath = "c:/winnt/system32/cryptoki22.dll";/* Rainbow HSM (for USB use Datakey dvr) */
-	const char *driverPath = "c:/winnt/system32/p11card.dll";	/* Safelayer HSM (for USB use Datakey dvr) */
-	const char *driverPath = "c:/winnt/system32/slbck.dll";		/* Schlumberger */
-	const char *driverPath = "c:/winnt/system32/SetTokI.dll";	/* SeTec */
-	const char *driverPath = "c:/winnt/system32/siecap11.dll";	/* Siemens */
-	const char *driverPath = "c:/winnt/system32/smartp11.dll";	/* SmartTrust */
-	const char *driverPath = "c:/winnt/system32/SpyPK11.dll";	/* Spyrus */
+	const char *driverPath = "/usr/lib/libcknfast.so";	/* nCipher under Unix */
+	const char *driverPath = "c:/program files/mozilla firefox/softokn3.dll";/* Netscape */
+	const char *driverPath = "nxpkcs11.dll";		/* Nexus */
+	const char *driverPath = "AuCryptoki2-0.dll";	/* Oberthur */
+	const char *driverPath = "opensc-pkcs11.dll";	/* OpenSC */
+	const char *driverPath = "micardoPKCS11.dll";	/* Orga Micardo */
+	const char *driverPath = "cryptoki22.dll";		/* Rainbow HSM (for USB use Datakey dvr) */
+	const char *driverPath = "p11card.dll";			/* Safelayer HSM (for USB use Datakey dvr) */
+	const char *driverPath = "slbck.dll";			/* Schlumberger */
+	const char *driverPath = "SetTokI.dll";			/* SeTec */
+	const char *driverPath = "siecap11.dll";		/* Siemens */
+	const char *driverPath = "smartp11.dll";		/* SmartTrust */
+	const char *driverPath = "SpyPK11.dll";			/* Spyrus */
 #endif /* 0 */
 	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
 	int status;
@@ -164,24 +204,21 @@ static void updateConfig( void )
 		{
 		printf( "\n\nError updating PKCS #11 device driver profile, "
 				"status %d.\n", status );
-		return;
+		cleanupAndExit( EXIT_FAILURE );
 		}
 
 	/* Flush the updated options to disk */
-	status = cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CONFIGCHANGED, FALSE );
+	status = cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CONFIGCHANGED, 
+								FALSE );
 	if( cryptStatusError( status ) )
 		{
 		printf( "\n\nError comitting device driver profile update to disk, "
 				"status %d.\n", status );
-		return;
+		cleanupAndExit( EXIT_FAILURE );
 		}
 
-	puts( " done.\n\nYou'll need to restart cryptlib for the changes to "
-		  "take effect." );
-	cryptEnd();
-	puts( "\nPress a key to exit." );
-	getchar();
-	exit( EXIT_SUCCESS );
+	puts( " done.\n" );
+	cleanupAndExit( EXIT_SUCCESS );
 	}
 
 /* Add trusted certs to the config file and make sure that they're
@@ -319,7 +356,7 @@ static int processArgs( int argc, char **argv,
 					break;
 
 				case 'C':
-					*argFlags |= DO_CONFIG;
+					*argFlags |= DO_CERT;
 					break;
 
 				case 'D':
@@ -424,6 +461,32 @@ static void testKludge( const char *argPtr )
 	testReadCorruptedKey();
 #endif /* 0 */
 
+	/* To test dodgy certificate collections */
+#if 0
+	int result;
+
+	if( argPtr == NULL )
+		{
+		printf( "Error: Missing argument.\n" );
+		exit( EXIT_FAILURE );
+		}
+	if( *argPtr == '@' )
+		{
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
+		argPtr++;
+		}
+	if( *argPtr == '#' )
+		{
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   CRYPT_COMPLIANCELEVEL_PKIX_FULL );
+		argPtr++;
+		}
+	result = xxxCertImport( argPtr );
+	cryptEnd();
+	exit( result ? EXIT_SUCCESS : EXIT_FAILURE );
+#endif /* 1 */
+
 	/* Performance-testing test harness */
 #if 0
 	void performanceTests( const CRYPT_DEVICE cryptDevice );
@@ -446,13 +509,10 @@ static void testKludge( const char *argPtr )
 		testSessionTSPServer();
 #endif /* 0 */
 
-	/* Shared exit point for the test harnesses above, used when we don't 
-	   want to fall through to the main test code */
+	/* Exit point for the test harnesses above, used when we don't want to 
+	   fall through to the main test code */
 #if 0
-	cryptEnd();
-	puts( "\nPress a key to exit." );
-	getchar();
-	exit( EXIT_SUCCESS );
+	cleanupAndExit( EXIT_SUCCESS );
 #endif /* 0 */
 	}
 
@@ -462,11 +522,12 @@ static void testKludge( const char *argPtr )
 *																			*
 ****************************************************************************/
 
-/* Comprehensive cryptlib stress test.  To get the following to run under
-   WinCE as a native console app it's necessary to change the entry point
-   in Settings | Link | Output from WinMainCRTStartup to the undocumented
-   mainACRTStartup, which calls main() rather than WinMain(), however this
-   only works if the system has a native console-mode driver (most don't) */
+/* Comprehensive cryptlib functionality test.  To get the following to run 
+   under WinCE as a native console app it's necessary to change the entry 
+   point in Settings | Link | Output from WinMainCRTStartup to the 
+   undocumented mainACRTStartup, which calls main() rather than WinMain(), 
+   however this only works if the system has a native console-mode driver 
+   (most don't) */
 
 int main( int argc, char **argv )
 	{
@@ -484,7 +545,7 @@ int main( int argc, char **argv )
 	/* Print a general banner to let the user know what's going on */
 	printf( "testlib - cryptlib %d-bit self-test framework.\n", 
 			( int ) sizeof( long ) * 8 );	/* Cast for gcc */
-	puts( "Copyright Peter Gutmann 1995 - 2011." );
+	puts( "Copyright Peter Gutmann 1995 - 2012." );
 	puts( "" );
 
 	/* Skip the program name and process any command-line arguments */
@@ -643,7 +704,6 @@ errorExit1:
 			  "firewall interfering with network connections.  This\nisn't a "
 			  "cryptlib error, and doesn't need to be reported." );
 		}
-#ifdef WINDOWS_THREADS
 	if( loopbackTestError )
 		{
 		puts( "\nThe error occurred during one of the multi-threaded network "
@@ -659,14 +719,9 @@ errorExit1:
 			  "type of error is non-fatal, and should disappear if the test is "
 			  "re-run." );
 		}
-#endif /* WINDOWS_THREADS */
-#if defined( __WINDOWS__ ) && !defined( NDEBUG )
-	/* The pseudo-CLI VC++ output windows are closed when the program exits
-	   so we have to explicitly wait to allow the user to read them */
-	puts( "\nHit a key..." );
-	getchar();
-#endif /* __WINDOWS__ && !NDEBUG */
-	return( EXIT_FAILURE );
+
+	cleanExit( EXIT_FAILURE );
+	return( EXIT_FAILURE );			/* Get rid of compiler warnings */
 	}
 
 /* PalmOS wrapper for main() */

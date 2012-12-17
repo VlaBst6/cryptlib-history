@@ -529,19 +529,30 @@ static int initParams( INOUT CONTEXT_INFO *contextInfoPtr,
 					   IN_OPT const void *data, 
 					   IN_INT const int dataLength )
 	{
-#ifdef USE_GCM
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
-#endif /* USE_GCM */
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	REQUIRES( contextInfoPtr->type == CONTEXT_CONV );
 	REQUIRES( paramType > KEYPARAM_NONE && paramType < KEYPARAM_LAST );
 
-#ifdef USE_GCM
+	/* Normally we implement the stream-cipher modes CFB and OFB ourselves,
+	   so an IV load/reload will also reset the CFB/OFB state, however the 
+	   AES code implements these modes natively and maintains its own 
+	   CFB/OFB state, so when we get an IV load/reload we have to explicitly
+	   reset the internal state before passing the load down to the global
+	   parameter-handling function */
+	if( paramType == KEYPARAM_IV && \
+		( convInfo->mode == CRYPT_MODE_CFB || \
+		  convInfo->mode == CRYPT_MODE_OFB ) )
+		{
+		aes_mode_reset( ENC_KEY( convInfo ) );
+		}
+
 	/* Handling of crypto parameters is normally done by a global generic
 	   function, however for AES-GCM we have to provide special handling
 	   for IV loading */
+#ifdef USE_GCM
 	if( paramType == KEYPARAM_IV && convInfo->mode == CRYPT_MODE_GCM )
 		{
 		if( gcm_init_message( data, dataLength, 

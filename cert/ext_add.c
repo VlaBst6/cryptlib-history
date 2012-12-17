@@ -243,7 +243,7 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICA
 				*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
 				return( CRYPT_ARGERROR_STR1 );
 				}
-			return( CRYPT_OK );
+			break;
 
 		case FIELDTYPE_BLOB_BITSTRING:
 		case FIELDTYPE_BLOB_SEQUENCE:
@@ -276,7 +276,7 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICA
 				*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
 				return( CRYPT_ARGERROR_STR1 );
 				}
-			return( CRYPT_OK );
+			break;
 			}
 
 		case BER_STRING_NUMERIC:
@@ -293,7 +293,7 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICA
 					return( CRYPT_ARGERROR_STR1 );
 					}
 				}
-			return( CRYPT_OK );
+			break;
 			}
 
 		case BER_STRING_IA5:
@@ -307,7 +307,30 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICA
 				*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
 				return( CRYPT_ARGERROR_STR1 );
 				}
-			return( CRYPT_OK );
+			break;
+		}
+
+	/* Finally, if there's any special-case validation function present, make
+	   sure that the value is valid */
+	if( attributeInfoPtr->extraData != NULL )
+		{
+		VALIDATION_FUNCTION validationFunction = \
+					( VALIDATION_FUNCTION ) attributeInfoPtr->extraData;
+		ATTRIBUTE_LIST checkAttribute;
+
+		/* Since the validation function expects an ATTRIBUTE_LIST entry,
+		   we have to create a dummy entry in order to check the raw
+		   attribute components */
+		memset( &checkAttribute, 0, sizeof( ATTRIBUTE_LIST ) );
+		checkAttribute.fieldID = fieldID;
+		checkAttribute.subFieldID = subFieldID;
+		checkAttribute.value = ( void * ) data;
+		checkAttribute.valueLength = dataLength;
+		checkAttribute.flags = flags;
+		checkAttribute.fieldType = attributeInfoPtr->fieldType;
+		*errorType = validationFunction( &checkAttribute );
+		if( *errorType != CRYPT_ERRTYPE_NONE )
+			return( CRYPT_ARGERROR_STR1 );
 		}
 
 	return( CRYPT_OK );
@@ -404,7 +427,10 @@ int addAttribute( IN_ATTRIBUTE const ATTRIBUTE_TYPE attributeType,
 	REQUIRES( oidLength >= MIN_OID_SIZE && oidLength <= MAX_OID_SIZE && \
 			  oidLength == sizeofOID( oid ) );
 	REQUIRES( data != NULL && \
-			  dataLength > 0 && dataLength <= MAX_ATTRIBUTE_SIZE );
+			  dataLength > 0 && dataLength <= MAX_INTLENGTH_SHORT );
+			  /* This has to be MAX_INTLENGTH_SHORT rather than 
+			     MAX_ATTRIBUTE_SIZE in order to handle RPKI certificates
+				 with monster ACLs pretending to be attribute certificates */
 assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_IGNORED | ATTR_FLAG_BLOB | ATTR_FLAG_MULTIVALUED ) ) == 0 );
 	REQUIRES( flags == ATTR_FLAG_NONE || flags == ATTR_FLAG_BLOB || \
 			  flags == ( ATTR_FLAG_BLOB | ATTR_FLAG_IGNORED ) );
@@ -611,7 +637,7 @@ int addAttributeFieldString( INOUT ATTRIBUTE_PTR **listHeadPtr,
 			  ( subFieldID >= CRYPT_CERTINFO_FIRST_NAME && \
 				subFieldID <= CRYPT_CERTINFO_LAST_GENERALNAME ) );
 	REQUIRES( dataLength > 0 && dataLength <= MAX_ATTRIBUTE_SIZE );
-assert( ( flags & ~( ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICAL | ATTR_FLAG_MULTIVALUED | ATTR_FLAG_BLOB_PAYLOAD ) ) == 0 );
+assert( ( flags & ~( ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICAL | ATTR_FLAG_MULTIVALUED ) ) == 0 );
 	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
 
 	/* Sanity-check the state */

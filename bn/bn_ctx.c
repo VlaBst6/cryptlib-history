@@ -8,7 +8,7 @@
  * are met:
  *
  * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
+ *    notice, this list of conditions and the following disclaimer. 
  *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in
@@ -60,12 +60,12 @@
 #include <stdio.h>
 #include <assert.h>
 
-#if defined( _WIN32_WCE ) && _WIN32_WCE < 400
+#if defined( _WIN32_WCE ) && _WIN32_WCE < 400	/* pcg */
   #define assert( x )
 #else
   #include <assert.h>
 #endif /* Systems without assert() */
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "bn_lcl.h"
 #else
   #include "bn/bn_lcl.h"
@@ -166,7 +166,7 @@ static void ctxdbg(BN_CTX *ctx)
 	fprintf(stderr,"(%08x): ", (unsigned int)ctx);
 	while(bnidx < ctx->used)
 		{
-		fprintf(stderr,"%02x ", item->vals[bnidx++ % BN_CTX_POOL_SIZE].dmax);
+		fprintf(stderr,"%03x ", item->vals[bnidx++ % BN_CTX_POOL_SIZE].dmax);
 		if(!(bnidx % BN_CTX_POOL_SIZE))
 			item = item->next;
 		}
@@ -176,8 +176,8 @@ static void ctxdbg(BN_CTX *ctx)
 	while(fpidx < stack->depth)
 		{
 		while(bnidx++ < stack->indexes[fpidx])
-			fprintf(stderr,"   ");
-		fprintf(stderr,"^^ ");
+			fprintf(stderr,"    ");
+		fprintf(stderr,"^^^ ");
 		bnidx++;
 		fpidx++;
 		}
@@ -368,7 +368,7 @@ static int BN_STACK_push(BN_STACK *st, unsigned int idx)
 		{
 		unsigned int newsize = (st->size ?
 				(st->size * 3 / 2) : BN_CTX_START_FRAMES);
-		unsigned int *newitems = clBnAlloc("BN_STACK_push",newsize *
+		unsigned int *newitems = clBnAlloc("BN_STACK_push",newsize *	/* pcg */
 						sizeof(unsigned int));
 		if(!newitems) return 0;
 		if(st->depth)
@@ -441,7 +441,7 @@ static BIGNUM *BN_POOL_get(BN_POOL *p)
 		{
 		BIGNUM *bn;
 		unsigned int loop = 0;
-		BN_POOL_ITEM *item = clBnAlloc("BN_POOL_get",sizeof(BN_POOL_ITEM));
+		BN_POOL_ITEM *item = clBnAlloc("BN_POOL_get",sizeof(BN_POOL_ITEM));	/* pcg */
 		if(!item) return NULL;
 		/* Initialise the structure */
 		bn = item->vals;

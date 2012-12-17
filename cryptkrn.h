@@ -30,7 +30,7 @@
 /* Sometimes we can't use the preprocessor tricks above because the value 
    being saved isn't a primitive type or the variable value isn't available 
    at the start of the block, in which case we have to use the somewhat less 
-   transaparent macros below.
+   transparent macros below.
    
    In a small number of cases the values declared by these macros are only
    used in debug builds, leading to unused-variable warnings in release 
@@ -923,7 +923,7 @@ typedef struct {
 typedef struct {
 	CRYPT_HANDLE cryptHandle;	/* Handle to created object */
 	CRYPT_USER cryptOwner;		/* New object's owner */
-	int arg1, arg2;				/* Integer args */
+	int arg1, arg2, arg3;		/* Integer args */
 	BUFFER_OPT_FIXED( strArgLen1 ) \
 	const void *strArg1;
 	BUFFER_OPT_FIXED( strArgLen2 ) \
@@ -1066,7 +1066,9 @@ typedef struct {
 
 /* cryptlib initialistion/shutdown functions */
 
+CHECK_RETVAL \
 int initCryptlib( void );
+CHECK_RETVAL \
 int endCryptlib( void );
 #if defined( __PALMOS__ ) || defined( __WIN32__ ) || defined( __WINCE__ )
   void preInit( void );

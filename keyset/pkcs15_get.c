@@ -280,9 +280,19 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   sure that the components that we need are present: Either a public 
 	   key or a certificate for any type of read, and a private key as well 
 	   for a private-key read */
-	pkcs15infoPtr = findEntry( keysetInfoPtr->keyData, 
-							   keysetInfoPtr->keyDataNoObjects, keyIDtype,
-							   keyID, keyIDlength, flags );
+	if( keyIDlength == 6 && !strCompare( keyID, "[none]", 6 ) )
+		{
+		/* It's a wildcard read, locate the first private-key object */
+		pkcs15infoPtr = findEntry( keysetInfoPtr->keyData, 
+								   keysetInfoPtr->keyDataNoObjects, 
+								   keyIDtype, NULL, 0, flags, TRUE );
+		}
+	else
+		{
+		pkcs15infoPtr = findEntry( keysetInfoPtr->keyData, 
+								   keysetInfoPtr->keyDataNoObjects, 
+								   keyIDtype, keyID, keyIDlength, flags, FALSE );
+		}
 	if( pkcs15infoPtr == NULL )
 		{
 		retExt( CRYPT_ERROR_NOTFOUND, 
@@ -525,11 +535,29 @@ static int getItem( INOUT_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info,
 	*stateInfo = CRYPT_ERROR;
 
 	/* Find the appropriate entry based on the ID */
-	pkcs15infoPtr = findEntry( pkcs15info, noPkcs15objects, keyIDtype, 
-							   keyID, keyIDlength, options );
+	if( keyIDtype != CRYPT_KEYIDEX_SUBJECTNAMEID && \
+		keyIDlength == 6 && !strCompare( keyID, "[none]", 6 ) )
+		{
+		/* It's a findFirst() called (findNext() always uses 
+		   CRYPT_KEYIDEX_SUBJECTNAMEID as the ID) and it's a wildcard 
+		   read, locate the first object associated with a private key */
+		pkcs15infoPtr = findEntry( pkcs15info, noPkcs15objects, keyIDtype, 
+								   NULL, 0, options, TRUE );
+		}
+	else
+		{
+		pkcs15infoPtr = findEntry( pkcs15info, noPkcs15objects, keyIDtype, 
+								   keyID, keyIDlength, options, FALSE );
+		}
 	if( pkcs15infoPtr == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
 	*stateInfo = pkcs15infoPtr->index;
+
+	/* When we get called it's via a callback from iCryptImportCertIndirect()
+	   that's called as part of a private-key read, and that only gets called
+	   if there's certificate data present, the following check ensures that 
+	   this is the case */
+	ENSURES( pkcs15infoPtr->certData != NULL );
 
 	/* Import the certificate.  This gets somewhat ugly because early drafts 
 	   of PKCS #15 wrote the certificate as is while the final version 

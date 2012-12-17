@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,7 +49,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
@@ -63,7 +63,7 @@
  * are met:
  *
  * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
+ *    notice, this list of conditions and the following disclaimer. 
  *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in
@@ -109,7 +109,7 @@
  *
  */
 
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "bn_lcl.h"
 #else
   #include "bn/bn_lcl.h"
@@ -127,22 +127,20 @@ int BN_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 	int i,bits,ret=0;
 	BIGNUM *v,*rr;
 
-	if (BN_get_flags(p, BN_FLG_EXP_CONSTTIME) != 0)
+	if (BN_get_flags(p, BN_FLG_CONSTTIME) != 0)
 		{
-		/* BN_FLG_EXP_CONSTTIME only supported by BN_mod_exp_mont() */
+		/* BN_FLG_CONSTTIME only supported by BN_mod_exp_mont() */
 		BNerr(BN_F_BN_EXP,ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
 		return -1;
 		}
 
 	BN_CTX_start(ctx);
 	if ((r == a) || (r == p))
-		{
 		rr = BN_CTX_get(ctx);
-		if( rr == NULL ) goto err;		/* pcg */
-		}
 	else
 		rr = r;
-	if ((v = BN_CTX_get(ctx)) == NULL) goto err;
+	v = BN_CTX_get(ctx);
+	if (rr == NULL || v == NULL) goto err;
 
 	if (BN_copy(v,a) == NULL) goto err;
 	bits=BN_num_bits(p);
@@ -194,7 +192,7 @@ int BN_mod_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, const BIGNUM *m,
 	 *   BN_mod_exp_mont   33 .. 40 %  [AMD K6-2, Linux, debug configuration]
          *                     55 .. 77 %  [UltraSparc processor, but
 	 *                                  debug-solaris-sparcv8-gcc conf.]
-	 *
+	 * 
 	 *   BN_mod_exp_recp   50 .. 70 %  [AMD K6-2, Linux, debug configuration]
 	 *                     62 .. 118 % [UltraSparc, debug-solaris-sparcv8-gcc]
 	 *
@@ -221,7 +219,7 @@ int BN_mod_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, const BIGNUM *m,
 	if (BN_is_odd(m))
 		{
 #  ifdef MONT_EXP_WORD
-		if (a->top == 1 && !a->neg && (BN_get_flags(p, BN_FLG_EXP_CONSTTIME) == 0))
+		if (a->top == 1 && !a->neg && (BN_get_flags(p, BN_FLG_CONSTTIME) == 0))
 			{
 			BN_ULONG A = a->d[0];
 			ret=BN_mod_exp_mont_word(r,A,p,m,ctx,NULL);
@@ -253,9 +251,9 @@ int BN_mod_exp_recp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
 	BIGNUM *val[TABLE_SIZE];
 	BN_RECP_CTX recp;
 
-	if (BN_get_flags(p, BN_FLG_EXP_CONSTTIME) != 0)
+	if (BN_get_flags(p, BN_FLG_CONSTTIME) != 0)
 		{
-		/* BN_FLG_EXP_CONSTTIME only supported by BN_mod_exp_mont() */
+		/* BN_FLG_CONSTTIME only supported by BN_mod_exp_mont() */
 		BNerr(BN_F_BN_MOD_EXP_RECP,ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
 		return -1;
 		}
@@ -308,7 +306,7 @@ int BN_mod_exp_recp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
 				goto err;
 			}
 		}
-
+		
 	start=1;	/* This is used to avoid multiplication etc
 			 * when there is only the value '1' in the
 			 * buffer. */
@@ -356,7 +354,7 @@ int BN_mod_exp_recp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
 				if (!BN_mod_mul_reciprocal(r,r,r,&recp,ctx))
 					goto err;
 				}
-
+		
 		/* wvalue will be an odd number < 2^window */
 		if (!BN_mod_mul_reciprocal(r,r,val[wvalue>>1],&recp,ctx))
 			goto err;
@@ -387,7 +385,7 @@ int BN_mod_exp_mont(BIGNUM *rr, const BIGNUM *a, const BIGNUM *p,
 	BIGNUM *val[TABLE_SIZE];
 	BN_MONT_CTX *mont=NULL;
 
-	if (BN_get_flags(p, BN_FLG_EXP_CONSTTIME) != 0)
+	if (BN_get_flags(p, BN_FLG_CONSTTIME) != 0)
 		{
 		return BN_mod_exp_mont_consttime(rr, a, p, m, ctx, in_mont);
 		}
@@ -503,7 +501,7 @@ int BN_mod_exp_mont(BIGNUM *rr, const BIGNUM *a, const BIGNUM *p,
 				if (!BN_mod_mul_montgomery(r,r,r,mont,ctx))
 					goto err;
 				}
-
+		
 		/* wvalue will be an odd number < 2^window */
 		if (!BN_mod_mul_montgomery(r,r,val[wvalue>>1],mont,ctx))
 			goto err;
@@ -539,7 +537,7 @@ static int MOD_EXP_CTIME_COPY_TO_PREBUF(BIGNUM *b, int top, unsigned char *buf, 
 		{
 		b->d[b->top++] = 0;
 		}
-
+	
 	for (i = 0, j=idx; i < top * sizeof b->d[0]; i++, j+=width)
 		{
 		buf[j] = ((unsigned char*)b->d)[i];
@@ -564,7 +562,7 @@ static int MOD_EXP_CTIME_COPY_FROM_PREBUF(BIGNUM *b, int top, unsigned char *buf
 	b->top = top;
 	bn_correct_top(b);
 	return 1;
-	}
+	}	
 
 /* Given a pointer value, compute the next address that is a cache line multiple. */
 #define MOD_EXP_CTIME_ALIGN(x_) \
@@ -633,10 +631,10 @@ int BN_mod_exp_mont_consttime(BIGNUM *rr, const BIGNUM *a, const BIGNUM *p,
 	 */
 	numPowers = 1 << window;
 	powerbufLen = sizeof(m->d[0])*top*numPowers;
-	if ((powerbufFree=(unsigned char*)clBnAlloc("BN_mod_exp_mont_consttime",
+	if ((powerbufFree=(unsigned char*)clBnAlloc("BN_mod_exp_mont_consttime",	/* pcg */
 												powerbufLen+MOD_EXP_CTIME_MIN_CACHE_LINE_WIDTH)) == NULL)
 		goto err;
-
+		
 	powerbuf = MOD_EXP_CTIME_ALIGN(powerbufFree);
 	memset(powerbuf, 0, powerbufLen);
 
@@ -699,14 +697,14 @@ int BN_mod_exp_mont_consttime(BIGNUM *rr, const BIGNUM *a, const BIGNUM *p,
  	while (idx >= 0)
   		{
  		wvalue=0; /* The 'value' of the window */
-
+ 		
  		/* Scan the window, squaring the result as we go */
  		for (i=0; i<window; i++,idx--)
  			{
 			if (!BN_mod_mul_montgomery(r,r,r,mont,ctx))	goto err;
 			wvalue = (wvalue<<1)+BN_is_bit_set(p,idx);
   			}
-
+ 		
 		/* Fetch the appropriate pre-computed value from the pre-buf */
 		if (!MOD_EXP_CTIME_COPY_FROM_PREBUF(computeTemp, top, powerbuf, wvalue, numPowers)) goto err;
 
@@ -754,9 +752,9 @@ int BN_mod_exp_mont_word(BIGNUM *rr, BN_ULONG a, const BIGNUM *p,
 #define BN_TO_MONTGOMERY_WORD(r, w, mont) \
 		(BN_set_word(r, (w)) && BN_to_montgomery(r, r, (mont), ctx))
 
-	if (BN_get_flags(p, BN_FLG_EXP_CONSTTIME) != 0)
+	if (BN_get_flags(p, BN_FLG_CONSTTIME) != 0)
 		{
-		/* BN_FLG_EXP_CONSTTIME only supported by BN_mod_exp_mont() */
+		/* BN_FLG_CONSTTIME only supported by BN_mod_exp_mont() */
 		BNerr(BN_F_BN_MOD_EXP_MONT_WORD,ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
 		return -1;
 		}
@@ -890,9 +888,9 @@ int BN_mod_exp_simple(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
 	/* Table of variables obtained from 'ctx' */
 	BIGNUM *val[TABLE_SIZE];
 
-	if (BN_get_flags(p, BN_FLG_EXP_CONSTTIME) != 0)
+	if (BN_get_flags(p, BN_FLG_CONSTTIME) != 0)
 		{
-		/* BN_FLG_EXP_CONSTTIME only supported by BN_mod_exp_mont() */
+		/* BN_FLG_CONSTTIME only supported by BN_mod_exp_mont() */
 		BNerr(BN_F_BN_MOD_EXP_SIMPLE,ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
 		return -1;
 		}
@@ -979,7 +977,7 @@ int BN_mod_exp_simple(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
 				if (!BN_mod_mul(r,r,r,m,ctx))
 					goto err;
 				}
-
+		
 		/* wvalue will be an odd number < 2^window */
 		if (!BN_mod_mul(r,r,val[wvalue>>1],m,ctx))
 			goto err;

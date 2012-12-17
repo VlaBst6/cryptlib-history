@@ -86,21 +86,21 @@ static const CERTMGMT_ACL FAR_BSS certMgmtACLTbl[] = {
 	/* Confirmation of cert creation */
 	{ CRYPT_CERTACTION_CERT_CREATION_COMPLETE,
 	  ACTION_PERM_NONE_EXTERNAL,		/* Cert mgmt.use only */
-	  { MKACP_UNUSED(),
+	  { MKACP_N_FIXED( CRYPT_UNUSED ),
 		MKACP_O( ST_CERT_CERT,			/* Completed cert */
 				 ACL_FLAG_HIGH_STATE ) } },
 
 	/* Cancellation of cert creation */
 	{ CRYPT_CERTACTION_CERT_CREATION_DROP,
 	  ACTION_PERM_NONE_EXTERNAL,		/* Cert mgmt.use only */
-	  { MKACP_UNUSED(),
+	  { MKACP_N_FIXED( CRYPT_UNUSED ),
 		MKACP_O( ST_CERT_CERT,			/* Completed cert */
 				 ACL_FLAG_HIGH_STATE ) } },
 
 	/* Cancel of creation w.revocation */
 	{ CRYPT_CERTACTION_CERT_CREATION_REVERSE,
 	  ACTION_PERM_NONE_EXTERNAL,		/* Cert mgmt.use only */
-	  { MKACP_UNUSED(),
+	  { MKACP_N_FIXED( CRYPT_UNUSED ),
 		MKACP_O( ST_CERT_CERT,			/* Completed cert */
 				 ACL_FLAG_HIGH_STATE ) } },
 
@@ -129,14 +129,14 @@ static const CERTMGMT_ACL FAR_BSS certMgmtACLTbl[] = {
 	  ACTION_PERM_ALL,					/* Any access */
 	  { MKACP_O( ST_CTX_PKC,			/* CA key w/cert (see below) */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED() },
+		MKACP_N_FIXED( CRYPT_UNUSED ) },
 	  { MKACP_O( ST_CERT_CERT | ST_CERT_CERTCHAIN,	/* CA cert */
 				 ACL_FLAG_HIGH_STATE ) } },
 
 	/* Cert revocation */
 	{ CRYPT_CERTACTION_REVOKE_CERT,
 	  ACTION_PERM_ALL,					/* Any access */
-	  { MKACP_UNUSED(),
+	  { MKACP_N_FIXED( CRYPT_UNUSED ),
 		MKACP_O( ST_CERT_REQ_REV,		/* Rev.request.  Rev.reqs are usually */
 				 ACL_FLAG_ANY_STATE ) } },/* unsigned, but may be in the high
 										   state if imported from an external
@@ -145,14 +145,14 @@ static const CERTMGMT_ACL FAR_BSS certMgmtACLTbl[] = {
 	/* Cert expiry */
 	{ CRYPT_CERTACTION_EXPIRE_CERT,
 	  ACTION_PERM_ALL,					/* Any access */
-	  { MKACP_UNUSED(),
-		MKACP_UNUSED() } },
+	  { MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* Clean up on restart */
 	{ CRYPT_CERTACTION_CLEANUP,
 	  ACTION_PERM_ALL,					/* Any access */
-	  { MKACP_UNUSED(),
-		MKACP_UNUSED() } },
+	  { MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* End-of-ACL marker */
 	{ CRYPT_CERTACTION_NONE,
@@ -231,7 +231,8 @@ int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 				}
 			continue;
 			}
-		ENSURES( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_UNUSED );
+		ENSURES( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_NUMERIC && \
+				 paramInfo( certMgmtACL, 0 ).lowRange == CRYPT_UNUSED );
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ) );
 
@@ -341,7 +342,8 @@ int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
 		}
 	else
 		{
-		REQUIRES( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_UNUSED );
+		REQUIRES( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_NUMERIC && \
+				  paramInfo( certMgmtACL, 0 ).lowRange == CRYPT_UNUSED );
 
 		if( mechanismInfo->caKey != CRYPT_UNUSED )
 			return( CRYPT_ARGERROR_NUM1 );
@@ -357,7 +359,8 @@ int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
 		}
 	else
 		{
-		REQUIRES( paramInfo( certMgmtACL, 1 ).valueType == PARAM_VALUE_UNUSED );
+		REQUIRES( paramInfo( certMgmtACL, 1 ).valueType == PARAM_VALUE_NUMERIC && \
+				  paramInfo( certMgmtACL, 1 ).lowRange == CRYPT_UNUSED );
 
 		if( mechanismInfo->request != CRYPT_UNUSED )
 			return( CRYPT_ARGERROR_NUM2 );

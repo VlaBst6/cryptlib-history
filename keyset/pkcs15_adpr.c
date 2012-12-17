@@ -29,8 +29,10 @@
 /* The minimum number of keying iterations to use when deriving a key wrap
    key from a password */
 
-#ifdef CONFIG_SLOW_CPU
+#if defined( CONFIG_SLOW_CPU )
   #define MIN_KEYING_ITERATIONS	800
+#elif defined( CONFIG_FAST_CPU )
+  #define MIN_KEYING_ITERATIONS	20000
 #else
   #define MIN_KEYING_ITERATIONS	5000
 #endif /* CONFIG_SLOW_CPU */
@@ -938,7 +940,7 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 	if( cryptStatusError( status ) )
 		{
 		if( newPrivKeyData != origPrivKeyData )
-			clFree( "writePrivateKey", newPrivKeyData );
+			clFree( "writePrivateKey", *newPrivKeyData );
 		retExt( status, 
 				( status, errorInfo, 
 				  "Couldn't MAC encryption attributes" ) );
@@ -963,7 +965,7 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 		{
 		sMemClose( &stream );
 		if( newPrivKeyData != origPrivKeyData )
-			clFree( "writePrivateKey", newPrivKeyData );
+			clFree( "writePrivateKey", *newPrivKeyData );
 		retExt( status, 
 				( status, errorInfo, 
 				  "Couldn't write private key attributes" ) );
@@ -997,7 +999,7 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 		{
 		sMemClose( &stream );
 		if( newPrivKeyData != origPrivKeyData )
-			clFree( "writePrivateKey", newPrivKeyData );
+			clFree( "writePrivateKey", *newPrivKeyData );
 		retExt( status, 
 				( status, errorInfo, 
 				  "Couldn't write wrapped private key" ) );
@@ -1015,7 +1017,7 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 		{
 		sMemClose( &stream );
 		if( newPrivKeyData != origPrivKeyData )
-			clFree( "writePrivateKey", newPrivKeyData );
+			clFree( "writePrivateKey", *newPrivKeyData );
 		retExt( status, 
 				( status, errorInfo, 
 				  "Couldn't write integrity check value for wrapped private "
@@ -1145,6 +1147,7 @@ int pkcs15AddPrivateKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 	krnlSendNotifier( iMacContext, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( newPrivKeyData != NULL );
 
 	/* Replace the old data with the newly-written data */
 	replacePrivkeyData( pkcs15infoPtr, newPrivKeyData, 

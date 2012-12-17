@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								cryptlib Test Code							*
-*						Copyright Peter Gutmann 1995-2009					*
+*						Copyright Peter Gutmann 1995-2011					*
 *																			*
 ****************************************************************************/
 
@@ -677,6 +677,8 @@ BOOLEAN testCert( void )
 		return( FALSE );
 	if( !testComplexCertRequest() )
 		return( FALSE );
+	if( !testCertRequestAttrib() )
+		return( FALSE );
 	if( !testCRMFRequest() )
 		return( FALSE );
 	if( !testComplexCRMFRequest() )
@@ -937,6 +939,8 @@ BOOLEAN testEnveloping( void )
 	if( !testEnvelopeCrypt() )
 		return( FALSE );
 	if( !testEnvelopePasswordCrypt() )
+		return( FALSE );
+	if( !testEnvelopePasswordCryptBoundary() )
 		return( FALSE );
 	if( !testEnvelopePasswordCryptImport() )
 		return( FALSE );

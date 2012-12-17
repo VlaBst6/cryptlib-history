@@ -117,7 +117,10 @@ static int deleteCertAttribute( INOUT CERT_INFO *certInfoPtr,
 		/* This is an ID for an entire (constructed) attribute, delete the 
 		   attribute */
 		if( isRevocationEntry )
+			{
 			attributeListHeadPtrPtr = getEntryAttributeListHead( certInfoPtr );
+			ENSURES( attributeListHeadPtrPtr != NULL );
+			}
 		else
 			attributeListHeadPtrPtr = &certInfoPtr->attributes;
 		return( deleteCompleteAttribute( attributeListHeadPtrPtr, 
@@ -132,7 +135,10 @@ static int deleteCertAttribute( INOUT CERT_INFO *certInfoPtr,
 
 	/* It's a single field, delete that */
 	if( isRevocationEntry )
+		{
 		attributeListHeadPtrPtr = getEntryAttributeListHead( certInfoPtr );
+		ENSURES( attributeListHeadPtrPtr != NULL );
+		}
 	else
 		attributeListHeadPtrPtr = &certInfoPtr->attributes;
 	status = deleteAttributeField( attributeListHeadPtrPtr,

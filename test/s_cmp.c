@@ -80,7 +80,7 @@
 
 typedef struct {
 	const char FAR_BSS *name;
-	const C_CHR FAR_BSS *url, FAR_BSS *user, FAR_BSS *password;
+	const C_CHR FAR_BSS *url, FAR_BSS *user, FAR_BSS *password, FAR_BSS *revPassword;
 	} CA_INFO;
 
 static const CA_INFO FAR_BSS caInfoTbl[] = {
@@ -127,6 +127,9 @@ static const CA_INFO FAR_BSS caInfoTbl[] = {
   #define TEST_KUR
   #define TEST_CR
   #define TEST_RR
+
+  /* Set the following to FALSE to use a MAC'd rr instead of a signed one */
+  #define USE_SIGNED_RR		TRUE
 
   /* 4 certificate reqs (two ir variants), 1 rev.req (kur = impl.rev).  
 	 
@@ -331,8 +334,8 @@ static int createCmpNewKeyRequest( const CERT_DATA *requestData,
 			loadRSAContextsEx( CRYPT_UNUSED, NULL, &cryptContext, NULL,
 							   USER_PRIVKEY_LABEL, FALSE, FALSE );
 		else
-			loadDSAContextsEx( CRYPT_UNUSED, &cryptContext, NULL,
-							   USER_PRIVKEY_LABEL, NULL );
+			loadDSAContextsEx( CRYPT_UNUSED, NULL, &cryptContext, NULL, 
+							   USER_PRIVKEY_LABEL );
 		status = CRYPT_OK;
 		}
 	else
@@ -357,7 +360,7 @@ static int createCmpNewKeyRequest( const CERT_DATA *requestData,
 		status = CRYPT_ERROR_FAILED;
 	if( cryptStatusOK( status ) )
 		status = cryptSignCert( cryptRequest, cryptContext );
-	if( cryptKeyset != CRYPT_UNUSED )
+	if( cryptStatusOK( status ) && cryptKeyset != CRYPT_UNUSED )
 		{
 		if( cryptStatusError( \
 				cryptAddPrivateKey( cryptKeyset, cryptContext,
@@ -557,16 +560,18 @@ static int requestCert( const char *description, const CA_INFO *caInfoPtr,
 	CRYPT_SESSION cryptSession;
 	CRYPT_KEYSET cryptKeyset = CRYPT_UNUSED;
 	CRYPT_CONTEXT privateKey = CRYPT_UNUSED;
-	CRYPT_CERTIFICATE cryptCmpRequest, cryptCmpResponse;
+	CRYPT_CERTIFICATE cryptCmpResponse;
 	const BOOLEAN useExistingKey = ( requestData == NULL ) ? TRUE : FALSE;
 	BOOLEAN hasC = FALSE, hasCN = FALSE;
-	int i, status;
+	int status;
 
 	assert( !isPKIBoot || !isPnPPKI );
 	assert( !( isPnPPKI && writeKeysetName == NULL ) );
 
 	if( requestData != NULL )
 		{
+		int i;
+
 		for( i = 0; requestData[ i ].type != CRYPT_ATTRIBUTE_NONE; i++ )
 			{
 			if( requestData[ i ].type == CRYPT_CERTINFO_COUNTRYNAME )
@@ -644,6 +649,8 @@ static int requestCert( const char *description, const CA_INFO *caInfoPtr,
 	   CA */
 	if( !isPKIBoot )
 		{
+		CRYPT_CERTIFICATE cryptCmpRequest;
+
 #if defined( SERVER_IS_CRYPTLIB ) || defined( SERVER_FIXED_DN )
 		cryptCmpRequest = createCmpRequest( requestData,
 								useExistingKey ? privateKey : CRYPT_UNUSED,
@@ -702,17 +709,14 @@ static int requestCert( const char *description, const CA_INFO *caInfoPtr,
 				return( CRYPT_ERROR_FAILED );
 				}
 			}
-		else
 #endif /* SERVER_IS_CRYPTLIB */
-			cryptDestroySession( cryptSession );
-		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_READ )
+		if( isServerDown( cryptSession, status ) )
 			{
-			/* These servers are constantly appearing and disappearing so if
-			   we get a straight connect error we don't treat it as a serious
-			   failure */
 			puts( "  (Server could be down, faking it and continuing...)\n" );
+			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_FAILED );
 			}
+		cryptDestroySession( cryptSession );
 		if( status == CRYPT_ERROR_FAILED )
 			{
 			/* A general failed response is more likely to be due to the
@@ -777,18 +781,39 @@ static int revokeCert( const char *description, const CA_INFO *caInfoPtr,
 					   const BOOLEAN signRequest )
 	{
 	CRYPT_SESSION cryptSession;
-	CRYPT_CONTEXT privateKey = CRYPT_UNUSED;
 	CRYPT_CERTIFICATE cryptCmpRequest, cryptCert = certToRevoke;
 	int status;
 
 	printf( "Testing %s revocation processing...\n", description );
 
-	/* Get the certificate to revoke if necessary.  In some cases the server 
-	   won't accept a revocation password, so we have to get the private key 
-	   as well to sign the request */
-	if( signRequest || cryptCert == CRYPT_UNUSED )
+	/* Get the certificate to revoke if necessary.  This may have been 
+	   obtained as part of the issue process, so it's stored with the key
+	   rather than being directly present */
+	if( cryptCert == CRYPT_UNUSED )
 		{
 		CRYPT_KEYSET cryptKeyset;
+
+		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
+								  CRYPT_KEYSET_FILE, keysetName,
+								  CRYPT_KEYOPT_READONLY );
+		if( cryptStatusOK( status ) )
+			status = cryptGetPublicKey( cryptKeyset, &cryptCert,
+										CRYPT_KEYID_NAME,
+										USER_PRIVKEY_LABEL );
+		cryptKeysetClose( cryptKeyset );
+		if( cryptStatusError( status ) )
+			{
+			puts( "Couldn't fetch certificate to revoke.\n" );
+			return( FALSE );
+			}
+		}
+
+	/* In some cases the server won't accept a revocation password so we 
+	   have to get the private key and then sign the request */
+	if( signRequest )
+		{
+		CRYPT_KEYSET cryptKeyset;
+		CRYPT_CONTEXT privateKey = CRYPT_UNUSED;
 
 		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
 								  CRYPT_KEYSET_FILE, keysetName,
@@ -797,25 +822,28 @@ static int revokeCert( const char *description, const CA_INFO *caInfoPtr,
 			status = getPrivateKey( &privateKey, keysetName,
 									USER_PRIVKEY_LABEL,
 									TEST_PRIVKEY_PASSWORD );
-		if( cryptStatusOK( status ) && cryptCert == CRYPT_UNUSED )
-			status = cryptGetPublicKey( cryptKeyset, &cryptCert,
-										CRYPT_KEYID_NAME,
-										USER_PRIVKEY_LABEL );
 		cryptKeysetClose( cryptKeyset );
 		if( cryptStatusError( status ) )
 			{
 			puts( "Couldn't fetch certificate/key to revoke.\n" );
 			return( FALSE );
 			}
-		}
 
-	/* Create the CMP session and revocation request */
-	cryptSession = createCmpSession( cryptCACert, caInfoPtr->url,
-									 caInfoPtr->user, caInfoPtr->password,
-									 privateKey, TRUE, FALSE, FALSE,
-									 CRYPT_UNUSED );
-	if( privateKey != CRYPT_UNUSED )
-		cryptDestroyContext( privateKey );
+		/* Create the CMP session and revocation request */
+		cryptSession = createCmpSession( cryptCACert, caInfoPtr->url, NULL, 
+										 NULL, privateKey, TRUE, FALSE, 
+										 FALSE, CRYPT_UNUSED );
+		if( privateKey != CRYPT_UNUSED )
+			cryptDestroyContext( privateKey );
+		}
+	else
+		{
+		/* Create the CMP session and revocation request */
+		cryptSession = createCmpSession( cryptCACert, caInfoPtr->url,
+										 caInfoPtr->user, caInfoPtr->revPassword,
+										 CRYPT_UNUSED, TRUE, FALSE, FALSE,
+										 CRYPT_UNUSED );
+		}
 	if( cryptSession <= 0 )
 		return( cryptSession );
 	cryptCmpRequest = createCmpRevRequest( cryptCert );
@@ -837,15 +865,12 @@ static int revokeCert( const char *description, const CA_INFO *caInfoPtr,
 		{
 		printExtError( cryptSession, "Attempt to activate CMP client session",
 					   status, __LINE__ );
-		cryptDestroySession( cryptSession );
 		if( cryptCert != certToRevoke )
 			cryptDestroyCert( cryptCert );
-		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_READ )
+		if( isServerDown( cryptSession, status ) )
 			{
-			/* These servers are constantly appearing and disappearing so if
-			   we get a straight connect error we don't treat it as a serious
-			   failure */
 			puts( "  (Server could be down, faking it and continuing...)\n" );
+			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_FAILED );
 			}
 		if( status == CRYPT_ERROR_FAILED )
@@ -871,14 +896,15 @@ static int revokeCert( const char *description, const CA_INFO *caInfoPtr,
 /* Get the user name and password for a PKI user */
 
 static int getPkiUserInfo( const C_STR pkiUserName,
-						   CA_INFO *caInfoPtr, C_STR userID, C_STR issuePW )
+						   CA_INFO *caInfoPtr, C_STR userID, 
+						   C_STR issuePW, C_STR revPW  )
 	{
 	int status;
 
 	/* cryptlib implements per-user (rather than shared interop) IDs and 
 	   passwords so we have to read the user ID and password information 
 	   before we can perform any operations */
-	status = pkiGetUserInfo( userID, issuePW, NULL, pkiUserName );
+	status = pkiGetUserInfo( userID, issuePW, revPW, pkiUserName );
 	if( status == CRYPT_ERROR_NOTAVAIL )
 		return( status );
 	if( !status )
@@ -887,6 +913,7 @@ static int getPkiUserInfo( const C_STR pkiUserName,
 	caInfoPtr->name = "cryptlib";
 	caInfoPtr->user = userID;
 	caInfoPtr->password = issuePW;
+	caInfoPtr->revPassword = revPW;
 
 	return( TRUE );
 	}
@@ -924,7 +951,7 @@ static int connectCryptlibCMP( const BOOLEAN usePKIBoot,
 	C_CHR readFileName[ FILENAME_BUFFER_SIZE ];
 	C_CHR writeFileName[ FILENAME_BUFFER_SIZE ];
 	CA_INFO caInfo;
-	C_CHR userID[ 64 ], issuePW[ 64 ];
+	C_CHR userID[ 64 ], issuePW[ 64 ], revPW[ 64 ];
 	int status;
 
 	/* Wait for the server to finish initialising */
@@ -977,7 +1004,7 @@ static int connectCryptlibCMP( const BOOLEAN usePKIBoot,
 	   because the first one doesn't allow anything other than a kur since 
 	   the DN is fixed */
 	status = getPkiUserInfo( TEXT( "Test PKI user" ), &caInfo, 
-							 userID, issuePW );
+							 userID, issuePW, revPW );
 	if( status != TRUE )
 		{
 		if( !usePKIBoot )
@@ -1005,7 +1032,7 @@ static int connectCryptlibCMP( const BOOLEAN usePKIBoot,
 		}
 	delayThread( 2 );	/* Wait for server to recycle */
 	status = getPkiUserInfo( TEXT( "Procurement" ), &caInfo, userID, 
-							 issuePW );
+							 issuePW, revPW );
 	if( status != TRUE )
 		{
 		if( !usePKIBoot )
@@ -1101,7 +1128,7 @@ static int connectCryptlibCMP( const BOOLEAN usePKIBoot,
 	   since the first one was the implicitly-revoked kur'd one */
 	filenameParamFromTemplate( readFileName, CMP_PRIVKEY_FILE_TEMPLATE, 2 );
 	status = revokeCert( "RSA signing certificate", &caInfo, readFileName,
-						 CRYPT_UNUSED, cryptCACert, TRUE );
+						 CRYPT_UNUSED, cryptCACert, USE_SIGNED_RR );
 	if( status != TRUE )
 		{
 		cryptDestroyCert( cryptCACert );
@@ -1319,7 +1346,7 @@ static int connectCMPFail( const int count )
 	CRYPT_CERTIFICATE cryptCACert = CRYPT_UNUSED, cryptCert;
 	C_CHR writeFileName[ FILENAME_BUFFER_SIZE ];
 	CA_INFO caInfo;
-	C_CHR userID[ 64 ], issuePW[ 64 ];
+	C_CHR userID[ 64 ], issuePW[ 64 ], revPW[ 64 ];
 	char message[ 128 ];
 	int status;
 
@@ -1342,7 +1369,7 @@ static int connectCMPFail( const int count )
 		return( FALSE );
 		}
 	status = getPkiUserInfo( TEXT( "Test PKI user" ), &caInfo, 
-							 userID, issuePW );
+							 userID, issuePW, revPW );
 	if( status != TRUE )
 		{
 		cryptDestroyCert( cryptCACert );
@@ -1386,7 +1413,7 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice,
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_KEYSET cryptKeyset;
-	C_CHR userID[ 64 ], issuePW[ 64 ];
+	C_CHR userID[ 64 ], issuePW[ 64 ], revPW[ 64 ];
 	int status;
 
 	/* Create the CMP session */
@@ -1457,7 +1484,7 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice,
 		}
 
 	/* Get information needed for enrolment */
-	status = pkiGetUserInfo( userID, issuePW, NULL, isCaUser ? \
+	status = pkiGetUserInfo( userID, issuePW, revPW, isCaUser ? \
 								TEXT( "Test CA PKI user" ) : \
 								TEXT( "Test PKI user" ) );
 	if( status == CRYPT_ERROR_NOTAVAIL )

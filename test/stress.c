@@ -16,7 +16,8 @@
 /* Define the following to perform a smoke test on the cryptlib kernel.
    This includes:
 
-	Stress test: Create 10K objects and read/write some attributes
+	Stress test 1: Create 12K objects and read/write some attributes
+	Stress test 2: Create and destroy 20K objects in alternating pairs.
 	Data processing test: Encrypt/hash/MAC a buffer in a variable number
 		of variable-size blocks, then decrypt/hash/MAC with different
 		blocks and make sure the results match.
@@ -30,7 +31,7 @@
    or parameter types and combinations so they can take some time to run to
    completion */
 
-/* #define SMOKE_TEST */
+/* #define SMOKE_TEST /**/
 
 /****************************************************************************
 *																			*
@@ -40,57 +41,133 @@
 
 #ifdef SMOKE_TEST
 
-#define NO_OBJECTS	10000		/* Can't exceed MAX_OBJECTS in cryptkrn.h */
+#define NO_OBJECTS	14000		/* Can't exceed MAX_OBJECTS in cryptkrn.h */
 
-static void testStressObjects( void )
+static void testStressObjects1( void )
 	{
 	CRYPT_HANDLE *handleArray = malloc( NO_OBJECTS * sizeof( CRYPT_HANDLE ) );
 	BYTE hash[ CRYPT_MAX_HASHSIZE ];
 	int i, length, status;
 
-	printf( "Running object stress test." );
+	printf( "Running object stress test 1." );
 	assert( handleArray  != NULL );
 	for( i = 0; i < NO_OBJECTS; i++ )
 		{
 		status = cryptCreateContext( &handleArray[ i ], CRYPT_UNUSED,
-									 CRYPT_ALGO_SHA );
+									 CRYPT_ALGO_SHA1 );
 		if( cryptStatusError( status ) )
-			printf( "cryptEncrypt() failed at %d with status %d.\n", i,
-					status );
+			printf( "cryptCreateContext() #%d failed with status %d.\n", 
+					i, status );
+
+		/* Destroy an earlier object to make sure that there are gaps in the
+		   LFSR coverage */
+		if( i > 1000 && ( i % 500 ) == 0 )
+			{
+			status = cryptDestroyContext( handleArray[ i - 600 ] );
+			if( cryptStatusError( status ) )
+				printf( "cryptDestroyContext() #%d failed with status %d.\n", 
+						i, status );
+			handleArray[ i - 600 ] = -1;
+			}
 		}
 	printf( "." );
 	for( i = 0; i < NO_OBJECTS; i++ )
 		{
+		if( handleArray[ i ] == -1 )
+			continue;
 		status = cryptEncrypt( handleArray[ i ], "12345678", 8 );
 		if( cryptStatusError( status ) )
-			printf( "cryptEncrypt() failed at %d with status %d.\n", i, status );
+			printf( "cryptEncrypt() #%d failed with status %d.\n", 
+					i, status );
 		}
 	printf( "." );
 	for( i = 0; i < NO_OBJECTS; i++ )
 		{
+		if( handleArray[ i ] == -1 )
+			continue;
 		status = cryptEncrypt( handleArray[ i ], "", 0 );
 		if( cryptStatusError( status ) )
-			printf( "cryptEncrypt() failed at %d with status %d.\n", i,
-					status );
+			printf( "cryptEncrypt() #%d failed with status %d.\n", 
+					i, status );
 		}
 	printf( "." );
 	for( i = 0; i < NO_OBJECTS; i++ )
 		{
+		if( handleArray[ i ] == -1 )
+			continue;
 		status = cryptGetAttributeString( handleArray[ i ],
 								CRYPT_CTXINFO_HASHVALUE, hash, &length );
 		if( cryptStatusError( status ) )
-			printf( "cryptEncrypt() failed at %d with status %d.\n", i,
-					status );
+			printf( "cryptEncrypt() (len.0) #%d failed with status %d.\n", 
+					i, status );
 		}
 	printf( "." );
 	for( i = 0; i < NO_OBJECTS; i++ )
 		{
+		if( handleArray[ i ] == -1 )
+			continue;
 		status = cryptDestroyContext( handleArray[ i ] );
 		if( cryptStatusError( status ) )
-			printf( "cryptEncrypt() failed at %d with status %d.\n", i,
-					status );
+			printf( "cryptDestroyContext() #%d failed with status %d.\n", 
+					i, status );
 		}
 	free( handleArray );
+	puts( "." );
+	}
+
+static void testStressObjects2( void )
+	{
+	CRYPT_HANDLE handleArray[ 2 ];
+	BYTE hash[ CRYPT_MAX_HASHSIZE ];
+	int handleIndex = 0;
+	int i, length, status;
+
+	printf( "Running object stress test 2." );
+	handleArray[ 0 ] = handleArray[ 1 ] = -1;
+	for( i = 0; i < 20000; i++ )
+		{
+		CRYPT_CONTEXT cryptContext;
+
+		if( handleArray[ handleIndex ] != -1 )
+			{
+			status = cryptDestroyContext( handleArray[ handleIndex ] );
+			if( cryptStatusError( status ) )
+				printf( "cryptDestroyContext() #%d failed with status %d.\n", 
+						i, status );
+			}
+		status = cryptCreateContext( &cryptContext, CRYPT_UNUSED,
+									 CRYPT_ALGO_SHA1 );
+		if( cryptStatusError( status ) )
+			printf( "cryptCreateContext() #%d failed with status %d.\n", 
+					i, status );
+		handleArray[ handleIndex ] = cryptContext;
+
+		handleIndex = ( handleIndex + 1 ) & 1;
+
+		if( handleArray[ handleIndex ] != -1 )
+			{
+			status = cryptEncrypt( handleArray[ handleIndex ], "12345678", 8 );
+			if( cryptStatusError( status ) )
+				printf( "cryptEncrypt() #%d failed with status %d.\n", 
+						i, status );
+			status = cryptEncrypt( handleArray[ handleIndex ], "", 0 );
+			if( cryptStatusError( status ) )
+				printf( "cryptEncrypt() #%d failed with status %d.\n", 
+						i, status );
+			status = cryptGetAttributeString( handleArray[ handleIndex ],
+									CRYPT_CTXINFO_HASHVALUE, hash, &length );
+			if( cryptStatusError( status ) )
+				printf( "cryptEncrypt() (len.0) #%d failed with status %d.\n", 
+						i, status );
+			}
+		}
+	for( i = 0; i < 2; i++ )
+		{
+		status = cryptDestroyContext( handleArray[ i ] );
+		if( cryptStatusError( status ) )
+			printf( "cryptDestroyContext() #%d failed with status %d.\n", 
+					i, status );
+		}
 	puts( "." );
 	}
 
@@ -118,7 +195,7 @@ static void testStressObjects( void )
 
 static int processData( const CRYPT_CONTEXT cryptContext, BYTE *buffer,
 						const int noBlocks, const int blockSize,
-						CRYPT_FUNCTION cryptFunction )
+						CRYPT_FUNCTION cryptFunction, const BOOLEAN isHash )
 	{
 	int offset = 0, i, status;
 
@@ -141,7 +218,7 @@ static int processData( const CRYPT_CONTEXT cryptContext, BYTE *buffer,
 		}
 	status = cryptFunction( cryptContext, buffer + offset,
 							DATABUFFER_SIZE - offset );
-	if( cryptStatusOK( status ) )
+	if( cryptStatusOK( status ) && isHash )
 		status = cryptFunction( cryptContext, "", 0 );
 	return( status );
 	}
@@ -155,6 +232,10 @@ static int testProcessing( const CRYPT_ALGO_TYPE cryptAlgo,
 	const int blockSize = ( cryptMode == CRYPT_MODE_ECB || \
 							cryptMode == CRYPT_MODE_CBC ) ? \
 						  cryptQueryInfo.blockSize : 1;
+	const BOOLEAN isHash = ( cryptAlgo >= CRYPT_ALGO_FIRST_HASH && \
+							 cryptAlgo <= CRYPT_ALGO_LAST_HASH ) || \
+						   ( cryptAlgo >= CRYPT_ALGO_FIRST_MAC && \
+							 cryptAlgo <= CRYPT_ALGO_LAST_MAC );
 	int length1, length2, i;
 
 	/* Initialise the buffers with a known data pattern */
@@ -201,7 +282,7 @@ static int testProcessing( const CRYPT_ALGO_TYPE cryptAlgo,
 				return( status );
 			}
 		status = processData( cryptContext, buffer1, i, blockSize,
-							  cryptEncrypt );
+							  cryptEncrypt, isHash );
 		if( cryptStatusError( status ) )
 			return( status );
 		if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH )
@@ -242,7 +323,7 @@ static int testProcessing( const CRYPT_ALGO_TYPE cryptAlgo,
 				return( status );
 			}
 		status = processData( cryptContext, buffer1, i, blockSize,
-							  cryptDecrypt );
+							  isHash ? cryptEncrypt : cryptDecrypt, isHash );
 		if( cryptStatusError( status ) )
 			return( status );
 		if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH )
@@ -476,11 +557,6 @@ unsigned __stdcall processDataThread( void *arg )
 	if( cryptStatusOK( status ) )
 		{
 		randSleep();
-		status = cryptEncrypt( cryptContext, buffer, 0 );
-		}
-	if( cryptStatusOK( status ) )
-		{
-		randSleep();
 		status = cryptDestroyContext( cryptContext );
 		}
 	if( cryptStatusError( status ) )
@@ -492,7 +568,7 @@ unsigned __stdcall processDataThread( void *arg )
 	return( 0 );
 	}
 
-static void testStressThreads( void )
+static void testStressThreadsSimple( void )
 	{
 	HANDLE hThreadArray[ NO_SIMPLE_THREADS ];
 	int i;
@@ -699,7 +775,7 @@ unsigned __stdcall encTest( void *arg )
 			}
 
 		status = cryptImportCert( buffer, certSize, CRYPT_UNUSED, 
-								  &certificate );
+								  &cryptCert );
 		if( cryptStatusOK( status ) )
 			status = cryptCreateEnvelope( &cryptEnvelope, CRYPT_UNUSED, 
 										  CRYPT_FORMAT_CMS );
@@ -771,7 +847,8 @@ void smokeTest( void )
 	{
 	testDataProcessing();
 	testKernelChecks();
-	testStressObjects();
+	testStressObjects1();
+	testStressObjects2();
 #if defined( UNIX_THREADS ) || defined( WINDOWS_THREADS )
 	testStressThreadsSimple();
 	testStressThreadsComplex();

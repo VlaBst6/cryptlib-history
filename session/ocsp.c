@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib OCSP Session Management					*
-*						Copyright Peter Gutmann 1999-2008					*
+*						Copyright Peter Gutmann 1999-2011					*
 *																			*
 ****************************************************************************/
 
@@ -40,13 +40,6 @@ typedef enum {
 enum { OCSP_RESP_SUCCESSFUL, OCSP_RESP_MALFORMEDREQUEST,
 	   OCSP_RESP_INTERNALERROR, OCSP_RESP_TRYLATER, OCSP_RESP_DUMMY,
 	   OCSP_RESP_SIGREQUIRED, OCSP_RESP_UNAUTHORISED };
-
-/* OCSP protocol state information.  This is passed around various
-   subfunctions that handle individual parts of the protocol */
-
-typedef struct {
-	OCSPRESPONSE_TYPE responseType;		/* Response type to return */
-	} OCSP_PROTOCOL_INFO;
 
 /****************************************************************************
 *																			*
@@ -91,6 +84,7 @@ static int checkNonce( IN_HANDLE const CRYPT_CERTIFICATE iCertResponse,
 	{
 	MESSAGE_DATA responseMsgData;
 	BYTE responseNonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
+	int status;
 
 	assert( isReadPtr( requestNonce, requestNonceLength ) );
 
@@ -105,24 +99,24 @@ static int checkNonce( IN_HANDLE const CRYPT_CERTIFICATE iCertResponse,
 	/* Try and read the nonce from the response */
 	setMessageData( &responseMsgData, responseNonceBuffer,
 					CRYPT_MAX_HASHSIZE );
-	if( cryptStatusError( \
-			krnlSendMessage( iCertResponse, IMESSAGE_GETATTRIBUTE_S,
-							 &responseMsgData, CRYPT_CERTINFO_OCSP_NONCE ) ) )
+	status = krnlSendMessage( iCertResponse, IMESSAGE_GETATTRIBUTE_S,
+							  &responseMsgData, CRYPT_CERTINFO_OCSP_NONCE );
+	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_NOTFOUND );
 
 	/* Make sure that the two nonces match.  The comparison is in theory 
 	   somewhat complex because OCSP never specifies how the nonce is meant 
 	   to be encoded so it's possible that some implementations will use 
 	   things like TSP's bizarre INTEGER rather than the obvious and logical 
-	   OCTET STRING.  In theory this means we might need to check for the 
-	   INTEGER-encoding alternatives that arise due to sign bits, but this 
-	   doesn't seem to be required in practice since everyone use a de facto 
-	   encoding of OCTET STRING */
-	if( requestNonceLength == responseMsgData.length && \
-		!memcmp( requestNonce, responseMsgData.data, requestNonceLength ) )
-		return( TRUE );
+	   OCTET STRING.  In theory this means that we might need to check for 
+	   the INTEGER-encoding alternatives that arise due to sign bits, but 
+	   this doesn't seem to be required in practice since everyone use a de 
+	   facto encoding of OCTET STRING */
+	if( requestNonceLength != responseMsgData.length || \
+		memcmp( requestNonce, responseMsgData.data, requestNonceLength ) )
+		return( CRYPT_ERROR_SIGNATURE );
 
-	return( CRYPT_ERROR_SIGNATURE );
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -289,12 +283,14 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 			/* The response doesn't contain a nonce or it doesn't match what 
 			   we sent, we can't trust it.  The best error that we can return 
 			   here is a signature error to indicate that the integrity 
-			   check failed (note that a later modification to OCSP, in an 
-			   attempt to make it scale, removed the nonce, thus breaking 
-			   the security of the protocol against replay attack.  Since 
-			   the protocol is now broken against attack we treat a nonce-
-			   less response from one of these responders as a failure, 
-			   since it's indistinguishable from an actual attack */
+			   check failed.
+			   
+			   Note that a later modification to OCSP, in an attempt to make 
+			   it scale, removed the nonce, thus breaking the security of 
+			   the protocol against replay attack.  Since the protocol is 
+			   now broken against attack we treat a nonce-less response from 
+			   one of these responders as a failure, since it's 
+			   indistinguishable from an actual attack */
 			krnlSendNotifier( iCertResponse, IMESSAGE_DECREFCOUNT );
 			retExt( CRYPT_ERROR_SIGNATURE,
 					( CRYPT_ERROR_SIGNATURE, SESSION_ERRINFO, 
@@ -373,8 +369,10 @@ static int readClientRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	status = readSequence( &stream, NULL );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
+		{
 		retExt( status, 
 				( status, SESSION_ERRINFO, "Invalid OCSP request header" ) );
+		}
 
 	/* Import the request as a cryptlib object */
 	setMessageCreateObjectIndirectInfo( &createInfo,
@@ -473,8 +471,14 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	writeConstructed( &stream, sizeofObject( responseLength ), 0 );
 	writeSequence( &stream, responseLength );		/* respBytes */
 	writeOID( &stream, OID_OCSP_RESPONSE_OCSP );	/* respType */
-	writeOctetStringHole( &stream, responseDataLength, DEFAULT_TAG );
-													/* response */
+	status = writeOctetStringHole( &stream, responseDataLength, 
+								   DEFAULT_TAG );	/* response */
+	if( cryptStatusError( status ) )
+		{
+		sMemDisconnect( &stream );
+		return( status );
+		}
+
 	/* Get the encoded response data */
 	status = exportCertToStream( &stream, sessionInfoPtr->iCertResponse,
 								 CRYPT_CERTFORMAT_CERTIFICATE );

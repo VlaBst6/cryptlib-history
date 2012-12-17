@@ -230,6 +230,27 @@ int addAction( OUT_PTR ACTION_LIST **actionListHeadPtrPtr,
 							 actionType, cryptHandle ) );
 	}
 
+/* Replace a context in an action with a different one, used to update an
+   existing action when circumstances change */
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+int replaceAction( INOUT ACTION_LIST *actionListItem,
+				   IN_HANDLE const CRYPT_HANDLE cryptHandle )
+	{
+	assert( isWritePtr( actionListItem, sizeof( ACTION_LIST ) ) );
+
+	REQUIRES( isHandleRangeValid( cryptHandle ) );
+	REQUIRES( actionListItem->iCryptHandle != CRYPT_ERROR && \
+			  actionListItem->iExtraData == CRYPT_ERROR && \
+			  actionListItem->iTspSession == CRYPT_ERROR );
+
+	/* Delete the existing action context and replace it with the new one */
+	krnlSendNotifier( actionListItem->iCryptHandle, IMESSAGE_DECREFCOUNT );
+	actionListItem->iCryptHandle = cryptHandle;
+
+	return( CRYPT_OK );
+	}
+
 /* Delete an action from an action list */
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -749,12 +770,18 @@ BOOLEAN checkActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			return( FALSE );
 
 		/* If we're performing authenticated encryption then the encryption
-		   action has to be followed by a MAC action */
+		   action has to be followed by a MAC action (CMS) or a hash action
+		   (PGP, which is encrypted and sort-of keyed so it's a sort-of 
+		   MAC) */
 		if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
 			{
+			const ACTION_TYPE requiredActionType = \
+				( envelopeInfoPtr->type == CRYPT_FORMAT_PGP ) ? \
+				ACTION_HASH : ACTION_MAC;
+
 			actionListPtr = actionListPtr->next;
 			if( actionListPtr == NULL || \
-				actionListPtr->action != ACTION_MAC || \
+				actionListPtr->action != requiredActionType || \
 				actionListPtr->next != NULL )
 				return( FALSE );
 
@@ -804,7 +831,7 @@ BOOLEAN checkActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		return( TRUE );
 		}
 
-	/* If it's a MACd envelope there can only be a single MAC action 
+	/* If it's a MACd envelope then there can only be a single MAC action 
 	   present */
 	if( envelopeInfoPtr->usage == ACTION_MAC )
 		{

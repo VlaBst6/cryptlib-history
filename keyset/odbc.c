@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib ODBC Mapping Routines						*
-*						Copyright Peter Gutmann 1996-2007					*
+*						Copyright Peter Gutmann 1996-2012					*
 *																			*
 ****************************************************************************/
 
@@ -38,11 +38,11 @@ typedef enum { SQL_ERRLVL_NONE, SQL_ERRLVL_STMT, SQL_ERRLVL_DBC,
 
 #define SQL_QUERY_BUFSIZE	( MAX_SQL_QUERY_SIZE + 64 )
 
-/* Some ODBC functions take either pointers or small integer values cast to
-pointers to indicate certain magic values.  This causes problems in 64-bit
-environments because the LLP64 model means that pointers are 64 bits while
-ints and longs are 32 bits.  To deal with this we define the following data-
-conversion macros for 32- and 64-bit environments */
+/* Some ODBC functions take either pointers or small integer values cast to 
+   pointers to indicate certain magic values.  This causes problems in 
+   64-bit environments because the LLP64 model means that pointers are 64 
+   bits while ints and longs are 32 bits.  To deal with this we define the 
+   following data-conversion macros for 32- and 64-bit environments */
 
 #ifdef __WIN64__
   #define VALUE_TO_PTR	ULongToPtr
@@ -364,6 +364,10 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 	REQUIRES( errorLevel == SQL_ERRLVL_STMT || \
 			  errorLevel == SQL_ERRLVL_DBC || \
 			  errorLevel == SQL_ERRLVL_ENV );
+	REQUIRES( ( errorLevel == SQL_ERRLVL_STMT && \
+				hStmt != SQL_NULL_HSTMT ) || \
+			  ( errorLevel != SQL_ERRLVL_STMT && \
+				hStmt == SQL_NULL_HSTMT ) );
 	REQUIRES( cryptStatusError( defaultStatus ) );
 
 	/* Set up the handle information for the diagnostic information that we 
@@ -462,6 +466,39 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 
 	return( defaultStatus );
 	}
+
+/* Dump debugging information on an ODBC error to the error log.  This is 
+   used to record oddball errors during debugging that don't necessarily
+   affect overall operation but that should be fixed anyway */
+
+#if !defined( NDEBUG ) && defined( DEBUG_DIAGNOSTIC_ENABLE )
+
+#define DUMP_ODBCERROR	debugDiagOdbcError
+
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void debugDiagOdbcError( IN_STRING const char *functionName,
+						 INOUT DBMS_STATE_INFO *dbmsInfo, 
+						 IN_ENUM( SQL_ERRLVL ) const SQL_ERRLVL_TYPE errorLevel, 
+						 const SQLHSTMT hStmt )
+	{
+	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
+	assert( isReadPtr( functionName, 8 ) );
+	assert( errorLevel == SQL_ERRLVL_STMT || \
+			errorLevel == SQL_ERRLVL_DBC || \
+			errorLevel == SQL_ERRLVL_ENV );
+	assert( ( errorLevel == SQL_ERRLVL_STMT && \
+			hStmt != SQL_NULL_HSTMT ) || \
+		  ( errorLevel != SQL_ERRLVL_STMT && \
+			hStmt == SQL_NULL_HSTMT ) );
+
+	( void * ) getErrorInfo( dbmsInfo, errorLevel, hStmt, 
+							 CRYPT_ERROR_INTERNAL );
+	DEBUG_DIAG(( "%s reports: %s.\n", functionName,
+				 getErrorInfoString( &dbmsInfo->errorInfo ) ));
+	}
+#else
+  #define DUMP_ODBCERROR( dbmsInfo, functionName, errorLevel, hStmt );
+#endif /* !NDEBUG */
 
 /* Rewrite the SQL query to handle the back-end specific blob and date type, 
    and to work around problems with some back-end types (and we're 
@@ -809,10 +846,14 @@ static int getBlobInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 	   transaction.  If the database doesn't support this we'll get an 
 	   SQL_NO_DATA status */
 	sqlStatus = SQLGetTypeInfo( hStmt, type );
-	if( sqlStatusOK( sqlStatus ) )
-		sqlStatus = SQLFetch( hStmt );
 	if( !sqlStatusOK( sqlStatus ) )
 		return( CRYPT_ERROR );
+	sqlStatus = SQLFetch( hStmt );
+	if( !sqlStatusOK( sqlStatus ) )
+		{
+		SQLCloseCursor( hStmt );
+		return( CRYPT_ERROR );
+		}
 
 	/* Get the type name (result column 1) and column size (= maximum
 	   possible field length, result column 3).  We only check the second
@@ -1155,6 +1196,7 @@ static int getBackendInfo( INOUT DBMS_STATE_INFO *dbmsInfo )
 STDC_NONNULL_ARG( ( 1 ) ) \
 static void closeDatabase( INOUT DBMS_STATE_INFO *dbmsInfo )
 	{
+	SQLRETURN sqlStatus;
 	int i;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
@@ -1164,7 +1206,13 @@ static void closeDatabase( INOUT DBMS_STATE_INFO *dbmsInfo )
 	   safe anyway */
 	if( dbmsInfo->needsUpdate )
 		{
-		SQLEndTran( SQL_HANDLE_DBC, dbmsInfo->hDbc, SQL_COMMIT );
+		sqlStatus = SQLEndTran( SQL_HANDLE_DBC, dbmsInfo->hDbc, SQL_COMMIT );
+		if( !sqlStatusOK( sqlStatus ) )
+			{
+			DUMP_ODBCERROR( "SQLEndTran()", dbmsInfo, SQL_ERRLVL_DBC, 
+							SQL_NULL_HSTMT );
+			assert( DEBUG_WARN );	/* Catch this if it ever occurs */
+			}
 		dbmsInfo->needsUpdate = FALSE;
 		}
 
@@ -1173,14 +1221,37 @@ static void closeDatabase( INOUT DBMS_STATE_INFO *dbmsInfo )
 		{
 		if( dbmsInfo->hStmt[ i ] != NULL )
 			{
-			SQLFreeHandle( SQL_HANDLE_STMT, dbmsInfo->hStmt[ i ] );
+			sqlStatus = SQLFreeHandle( SQL_HANDLE_STMT, dbmsInfo->hStmt[ i ] );
+			if( !sqlStatusOK( sqlStatus ) )
+				{
+				DUMP_ODBCERROR( "SQLFreeHandle()", dbmsInfo, 
+								SQL_ERRLVL_STMT, dbmsInfo->hStmt[ i ] );
+				assert( DEBUG_WARN );	/* Catch this if it ever occurs */
+				}
 			dbmsInfo->hStmtPrepared[ i ] = FALSE;
 			dbmsInfo->hStmt[ i ] = NULL;
 			}
 		}
-	SQLDisconnect( dbmsInfo->hDbc );
-	SQLFreeHandle( SQL_HANDLE_DBC, dbmsInfo->hDbc );
-	SQLFreeHandle( SQL_HANDLE_ENV, dbmsInfo->hEnv );
+	if( dbmsInfo->connectionOpen )
+		{
+		sqlStatus = SQLDisconnect( dbmsInfo->hDbc );
+		if( !sqlStatusOK( sqlStatus ) )
+			{
+			DUMP_ODBCERROR( "SQLDisconnect()", dbmsInfo, SQL_ERRLVL_DBC, 
+							SQL_NULL_HSTMT );
+			assert( DEBUG_WARN );	/* Catch this if it ever occurs */
+			}
+		dbmsInfo->connectionOpen = FALSE;
+		}
+	sqlStatus = SQLFreeHandle( SQL_HANDLE_DBC, dbmsInfo->hDbc );
+	if( !sqlStatusOK( sqlStatus ) )
+		{
+		DUMP_ODBCERROR( "SQLFreeHandle()", dbmsInfo, SQL_ERRLVL_DBC, 
+						SQL_NULL_HSTMT );
+		assert( DEBUG_WARN );	/* Catch this if it ever occurs */
+		}
+	sqlStatus = SQLFreeHandle( SQL_HANDLE_ENV, dbmsInfo->hEnv );
+	assert( sqlStatusOK( sqlStatus ) );			/* Warn of potential errors */
 	dbmsInfo->hDbc = NULL;
 	dbmsInfo->hEnv = NULL;
 	}
@@ -1290,6 +1361,7 @@ static int openDatabase( INOUT DBMS_STATE_INFO *dbmsInfo,
 		closeDatabase( dbmsInfo );
 		return( status );
 		}
+	dbmsInfo->connectionOpen = TRUE;
 
 	/* Now that the connection is open, allocate the statement handles */
 	for( i = 0; i < NO_CACHED_QUERIES && sqlStatusOK( sqlStatus ); i++ )
@@ -1683,6 +1755,19 @@ static int performUpdate( INOUT DBMS_STATE_INFO *dbmsInfo,
 	sqlStatus = SQLExecDirect( hStmt, query, queryLength );
 	if( !sqlStatusOK( sqlStatus ) )
 		{
+		/* If we were supposed to begin a transaction but it failed, reset
+		   the autocommit state.  This is necessary because the 
+		   DBMS_FLAG_UPDATEACTIVE flag won't be set if the transaction
+		   isn't started and therefore the DBMS_UPDATE_COMMIT/
+		   DBMS_UPDATE_ABORT action that has to eventually follow a 
+		   DBMS_UPDATE_BEGIN will never be performed */
+		if( updateType == DBMS_UPDATE_BEGIN )
+			{
+			( void ) SQLSetConnectAttr( dbmsInfo->hDbc, SQL_ATTR_AUTOCOMMIT,
+										VALUE_TO_PTR( SQL_AUTOCOMMIT_ON ),
+										SQL_IS_UINTEGER );
+			}
+
 		/* The return status from a delete operation can be reported in
 		   several ways at the whim of the driver.  Some drivers always
 		   report success even though nothing was found to delete (more

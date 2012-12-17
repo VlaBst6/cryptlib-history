@@ -1187,6 +1187,8 @@ static int encodeDLValuesFunction( OUT_BUFFER( bufMaxSize, \
 	return( CRYPT_OK );
 	}
 
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
 static int encodeECDLValuesFunction( OUT_BUFFER( bufMaxSize, \
 												 *bufSize ) BYTE *buffer, 
@@ -1235,6 +1237,7 @@ static int encodeECDLValuesFunction( OUT_BUFFER( bufMaxSize, \
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_ECDH || USE_ECDSA */
 
 /****************************************************************************
 *																			*

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 Enveloping Routines Header File					*
-*						Copyright Peter Gutmann 1996-2009					*
+*						Copyright Peter Gutmann 1996-2011					*
 *																			*
 ****************************************************************************/
 
@@ -77,20 +77,28 @@ typedef enum {
    would point to one encryption action, with the export actions exporting
    the session key for the encryption action.
 
-   The ACTION_NEEDSCONTROLLER flag records whether this is a subject action 
-   that still requires a controlling action.  This allows us to identify 
-   unused subject actions more easily than by scanning all controller->
-   subject relationships.
+   The flags are:
 
-   The ACTION_ADDEDAUTOMATICALLY flag records whether a subject action was 
-   added automatically and invisibly to the caller as a result of adding a 
-   controlling action, for example a hash action created when a signing 
-   action is added.  This is to ensure that we don't return an error the 
-   first time the caller adds an action which is identical to an 
-   automatically added action */
+	ACTION_ADDEDAUTOMATICALLY: Whether a subject action was added 
+			automatically and invisibly to the caller as a result of adding 
+			a controlling action, for example a hash action created when a 
+			signing action is added.  This is to ensure that we don't return 
+			an error the first time the caller adds an action which is 
+			identical to an automatically added action.
+
+	ACTION_HASHCOMPLETE: Whether the hashing for a hash action has already
+			been completed and we don't need to do it ourselves.  If we're 
+			using a detached signature then the hash value will be supplied
+			externally and there's no need to complete the hashing.
+   
+	ACTION_NEEDSCONTROLLER: Whether this is a subject action that still 
+			requires a controlling action.  This allows us to identify 
+			unused subject actions more easily than by scanning all 
+			controller->subject relationships */
 
 #define ACTION_NEEDSCONTROLLER	0x01	/* Whether action reqs.controller */
 #define ACTION_ADDEDAUTOMATICALLY 0x02	/* Whether action added automat.*/
+#define ACTION_HASHCOMPLETE		0x04	/* Whether hash is complete */
 
 typedef struct AI {
 	/* Control and status information */
@@ -167,6 +175,7 @@ typedef enum {
 typedef struct {
 	/* Signature algorithm/key information */
 	CRYPT_ALGO_TYPE hashAlgo;		/* Hash algo.for signed data */
+	int hashAlgoParam;				/* Optional algorithm parameter */
 	CRYPT_HANDLE iSigCheckKey;		/* Signature check key */
 
 	/* Authenticated/unauthenticated attribute information */
@@ -439,6 +448,25 @@ typedef enum {
 	ENVDATA_NOSEGMENT: The payload data shouldn't be segmented because a
 			definite-length encoding is being used.
 
+	ENVDATA_NOFIRSTSEGMENT: The payload data is segmented but the first 
+			segment doesn't have an explicit length, being defined as 
+			"whatever's left after the data at the start has been 
+			processed".  This is used to handle PGP's indefinite-length
+			encoding, which unlike ASN.1's 
+			
+				[indef.marker][segment][segment]...[EOC]
+
+			is encoded as:
+
+				[length+cont,segment'][length+cont,segment]...[length,segment]
+
+			so the initial length has already been read when the packet
+			header was read.  We can't undo the read of the start of the 
+			first packet and treat it as a standard segement because the 
+			encoding for the first segment (denoted by segment' in the 
+			diagram above) and the remaining segments is different so an 
+			attempt to treat them identically will lead to a decoding error.
+
 	ENVDATA_SEGMENTCOMPLETE: An indefinite-length segment has been completed
 			an another one must be begun before more payload data can be
 			emitted.
@@ -461,10 +489,11 @@ typedef enum {
 #define ENVDATA_AUTHENCACTIONSACTIVE 0x0004	/* Payload ciphertext hashing active */
 #define ENVDATA_NOLENGTHINFO	0x0008	/* No length info for payload avail.*/
 #define ENVDATA_NOSEGMENT		0x0010	/* Don't segment payload data */
-#define ENVDATA_SEGMENTCOMPLETE	0x0020	/* Current segment has been completed */
-#define ENVDATA_ENDOFCONTENTS	0x0040	/* EOC reached */
-#define ENVDATA_NEEDSPADDING	0x0080	/* Whether to add PKCS #5 padding */
-#define ENVDATA_HASATTACHEDOOB	0x0100	/* Whether data has attached OOB extra */
+#define ENVDATA_NOFIRSTSEGMENT	0x0020	/* No first segment length */
+#define ENVDATA_SEGMENTCOMPLETE	0x0040	/* Current segment has been completed */
+#define ENVDATA_ENDOFCONTENTS	0x0080	/* EOC reached */
+#define ENVDATA_NEEDSPADDING	0x0100	/* Whether to add PKCS #5 padding */
+#define ENVDATA_HASATTACHEDOOB	0x0200	/* Whether data has attached OOB extra */
 
 /* Envelope data-copy flags.  These are:
 
@@ -701,7 +730,8 @@ typedef struct EI {
 							IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) \
 							const int valueLength );
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
-	int ( *checkMissingInfo )( INOUT struct EI *envelopeInfoPtr );
+	int ( *checkMissingInfo )( INOUT struct EI *envelopeInfoPtr,
+							   const BOOLEAN isFlush );
 	CHECK_RETVAL_FNPTR \
 	BOOLEAN ( *checkAlgo )( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo, 
 							IN_MODE_OPT const CRYPT_MODE_TYPE cryptMode );
@@ -789,6 +819,9 @@ int addActionEx( OUT_OPT_PTR_OPT ACTION_LIST **newActionPtrPtr,
 				 INOUT MEMPOOL_STATE memPoolState,
 				 IN_ENUM( ACTION ) const ACTION_TYPE actionType,
 				 IN_HANDLE const CRYPT_HANDLE cryptHandle );
+STDC_NONNULL_ARG( ( 1 ) ) \
+int replaceAction( INOUT ACTION_LIST *actionListItem,
+				   IN_HANDLE const CRYPT_HANDLE cryptHandle );
 CHECK_RETVAL_ENUM( ACTION ) \
 ACTION_RESULT checkAction( IN_OPT const ACTION_LIST *actionListStart,
 						   IN_ENUM( ACTION ) const ACTION_TYPE actionType, 

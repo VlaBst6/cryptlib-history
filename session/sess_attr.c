@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Session Attribute Routines					*
-*						Copyright Peter Gutmann 1998-2008					*
+*						Copyright Peter Gutmann 1998-2011					*
 *																			*
 ****************************************************************************/
 
@@ -107,11 +107,7 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 								 CRYPT_SESSINFO_NETWORKSOCKET ) );
 
 	/* Parse the server name.  The PKI protocols all use HTTP as their 
-	   substrate so if it's not SSH or SSL/TLS we require HTTP.  For TSP
-	   and CMP the user can also specify the braindamaged "TCP transport"
-	   protocol but luckily this seems to have sunk without trace, other 
-	   portions of the session-handling code also discourage its use so we 
-	   don't encourate it here */
+	   substrate so if it's not SSH or SSL/TLS we require HTTP */
 	status = sNetParseURL( &urlInfo, url, urlLength,
 						   ( sessionInfoPtr->type == CRYPT_SESSION_SSH ) ? \
 								URL_TYPE_SSH : \
@@ -137,16 +133,16 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 		return( exitError( sessionInfoPtr, CRYPT_SESSINFO_SERVER_NAME, 
 						   CRYPT_ERRTYPE_ATTR_VALUE, CRYPT_ARGERROR_STR1 ) );
 		}
-	if( urlInfo.locationLen <= 0 )
-		{
-		status = addSessionInfoS( &sessionInfoPtr->attributeList,
-								  CRYPT_SESSINFO_SERVER_NAME, 
-								  urlInfo.host, urlInfo.hostLen );
-		}
-	else
+	if( ( sessionInfoPtr->protocolInfo->flags & SESSION_ISHTTPTRANSPORT ) && \
+		urlInfo.locationLen > 0 )
 		{
 		char urlBuffer[ MAX_URL_SIZE + 8 ];
 
+		/* We only remember the location if the session uses HTTP transport.  
+		   This is to deal with situations where the caller specifies a URL
+		   like https://www.server.com/index.html for an SSL session, which 
+		   should be treated as valid even though it's not really a pure 
+		   FQDN */
 		ENSURES( rangeCheck( urlInfo.hostLen, urlInfo.locationLen,
 							 MAX_URL_SIZE ) );
 		memcpy( urlBuffer, urlInfo.host, urlInfo.hostLen );
@@ -155,6 +151,12 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 		status = addSessionInfoS( &sessionInfoPtr->attributeList,
 								  CRYPT_SESSINFO_SERVER_NAME, urlBuffer, 
 								  urlInfo.hostLen + urlInfo.locationLen );
+		}
+	else
+		{
+		status = addSessionInfoS( &sessionInfoPtr->attributeList,
+								  CRYPT_SESSINFO_SERVER_NAME, 
+								  urlInfo.host, urlInfo.hostLen );
 		}
 	if( cryptStatusError( status ) )
 		return( exitError( sessionInfoPtr, CRYPT_SESSINFO_SERVER_NAME, 
@@ -192,28 +194,8 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 						   CRYPT_ERRTYPE_ATTR_VALUE, CRYPT_ARGERROR_STR1 ) );
 
 	/* Remember the transport type */
-#ifdef USE_CMP_TRANSPORT
-	if( protocolInfoPtr->altProtocolInfo != NULL && \
-		urlInfo.schemaLen == \
-					protocolInfoPtr->altProtocolInfo->uriTypeLen && \
-		!strCompare( urlInfo.schema, 
-					 protocolInfoPtr->altProtocolInfo->uriType,
-					 protocolInfoPtr->altProtocolInfo->uriTypeLen ) )
-		{
-		/* The caller has specified the use of the alternate transport 
-		   protocol type, switch to that instead of HTTP */
-		sessionInfoPtr->flags &= ~protocolInfoPtr->altProtocolInfo->oldFlagsMask;
-		sessionInfoPtr->flags |= protocolInfoPtr->altProtocolInfo->newFlags;
-		}
-	else
-#endif /* USE_CMP_TRANSPORT */
-		{
-		if( sessionInfoPtr->protocolInfo->flags & SESSION_ISHTTPTRANSPORT )
-			{
-			sessionInfoPtr->flags &= ~SESSION_USEALTTRANSPORT;
-			sessionInfoPtr->flags |= SESSION_ISHTTPTRANSPORT;
-			}
-		}
+	if( sessionInfoPtr->protocolInfo->flags & SESSION_ISHTTPTRANSPORT )
+		sessionInfoPtr->flags |= SESSION_ISHTTPTRANSPORT;
 
 	return( CRYPT_OK );
 	}

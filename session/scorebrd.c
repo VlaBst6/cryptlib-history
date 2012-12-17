@@ -796,6 +796,8 @@ static BOOLEAN selfTest( INOUT SCOREBOARD_INFO *scoreboardInfo )
 	SCOREBOARD_LOOKUP_RESULT lookupResult;
 	int uniqueID1, uniqueID2, foundUniqueID;
 
+	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
+	 
 	uniqueID1 = addScoreboardEntry( scoreboardInfo, "test key 1", 10,
 									"test value 1", 12 );
 	if( cryptStatusError( uniqueID1 ) )

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib External API Interface					*
-*						Copyright Peter Gutmann 1997-2008					*
+*						Copyright Peter Gutmann 1997-2011					*
 *																			*
 ****************************************************************************/
 
@@ -4015,10 +4015,71 @@ C_RET cryptDeleteCertExtension( C_IN CRYPT_CERTIFICATE certificate,
    purposes.  It's normally not used, and isn't present in the standard
    distribution */
 
-#if !defined( NDEBUG ) && 0
+#if !defined( NDEBUG ) && 1
 
-#include "docs/cryptapi_ext.c"
+C_RET cryptImportCertChainExt( C_IN void C_PTR certObject,
+							   C_IN int certObjectLength,
+							   C_IN CRYPT_USER cryptUser,
+							   C_IN BOOLEAN isEncryptionCert,
+							   C_OUT CRYPT_CERTIFICATE C_PTR certificate )
+	{
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	int status;
 
+	*certificate = CRYPT_ERROR;
+
+	setMessageCreateObjectIndirectInfo( &createInfo, certObject,
+										certObjectLength,
+										CRYPT_CERTTYPE_CERTCHAIN );
+	createInfo.arg3 = isEncryptionCert ? \
+					  KEYMGMT_FLAG_USAGE_CRYPT : KEYMGMT_FLAG_USAGE_SIGN;
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
+							  &createInfo, OBJECT_TYPE_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Make the newly-created object externally visible */
+	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
+							  MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_INTERNAL );
+	*certificate = createInfo.cryptHandle;
+
+	return( status );
+	}
+
+C_RET cryptCreateSHA2ExtContext( C_OUT CRYPT_CONTEXT C_PTR cryptContext,
+								 const BOOLEAN isSHA512 )
+	{
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	static const int sha384BlockSize = bitsToBytes( 384 );
+	static const int sha512BlockSize = bitsToBytes( 512 );
+	int status;
+
+	*cryptContext = CRYPT_ERROR;
+
+	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA2 );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_CREATEOBJECT,
+							  &createInfo, OBJECT_TYPE_CONTEXT );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE, 
+							  ( MESSAGE_CAST ) ( isSHA512 ? \
+									&sha512BlockSize : &sha384BlockSize ),
+							  CRYPT_CTXINFO_BLOCKSIZE );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+
+	/* Make the newly-created object externally visible */
+	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
+							  MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_INTERNAL );
+	*cryptContext = createInfo.cryptHandle;
+
+	return( status );
+	}
 #endif /* Debug-mode only test code */
 
 #ifdef CONFIG_SUITEB_TESTS 

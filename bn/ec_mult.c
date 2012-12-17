@@ -61,7 +61,7 @@
  * and contributed to the OpenSSL project.
  */
 
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "ec_lcl.h"
 #else
   #include "bn/ec_lcl.h"
@@ -71,7 +71,7 @@
   #pragma warning( disable: 4267 )
 #endif /* _MSC_VER */
 
-#if defined( USE_ECDH ) || defined( USE_ECDSA )
+#if defined( USE_ECDH ) || defined( USE_ECDSA )		/* pcg */
 
 /*
  * This file implements the wNAF-based interleaving multi-exponentation method
@@ -107,7 +107,7 @@ static EC_PRE_COMP *ec_pre_comp_new(const EC_GROUP *group)
 	if (!group)
 		return NULL;
 
-	ret = (EC_PRE_COMP *)clBnAlloc( "ec_pre_comp_new", sizeof(EC_PRE_COMP));
+	ret = (EC_PRE_COMP *)clBnAlloc("ec_pre_comp_new",sizeof(EC_PRE_COMP));		/* pcg */
 	if (!ret)
 		{
 		ECerr(EC_F_EC_PRE_COMP_NEW, ERR_R_MALLOC_FAILURE);
@@ -125,6 +125,10 @@ static EC_PRE_COMP *ec_pre_comp_new(const EC_GROUP *group)
 
 static void *ec_pre_comp_dup(void *src_)
 	{
+#if 0	/* pcg */
+	EC_PRE_COMP *src = src_;
+#endif /* 0 */
+
 	/* no need to actually copy, these objects never change! */
 
 	CRYPTO_add(&src->references, 1, CRYPTO_LOCK_EC_PRE_COMP);
@@ -172,11 +176,13 @@ static void ec_pre_comp_clear_free(void *pre_)
 		EC_POINT **p;
 
 		for (p = pre->points; *p != NULL; p++)
+			{
 			EC_POINT_clear_free(*p);
-		OPENSSL_cleanse(pre->points, sizeof pre->points);
+			OPENSSL_cleanse(p, sizeof *p);
+			}
 		OPENSSL_free(pre->points);
 		}
-	OPENSSL_cleanse(pre, sizeof pre);
+	OPENSSL_cleanse(pre, sizeof *pre);
 	OPENSSL_free(pre);
 	}
 
@@ -202,7 +208,7 @@ static signed char *compute_wNAF(const BIGNUM *scalar, int w, size_t *ret_len)
 	
 	if (BN_is_zero(scalar))
 		{
-		r = clBnAlloc( "compute_wNAF", 1);
+		r = clBnAlloc("compute_wNAF",1);	/* pcg */
 		if (!r)
 			{
 			ECerr(EC_F_COMPUTE_WNAF, ERR_R_MALLOC_FAILURE);
@@ -227,20 +233,20 @@ static signed char *compute_wNAF(const BIGNUM *scalar, int w, size_t *ret_len)
 		sign = -1;
 		}
 
+	if (scalar->d == NULL || scalar->top == 0)
+		{
+		ECerr(EC_F_COMPUTE_WNAF, ERR_R_INTERNAL_ERROR);
+		goto err;
+		}
+
 	len = BN_num_bits(scalar);
-	r = clBnAlloc( "compute_wNAF",
-					len + 1); /* modified wNAF may be one digit longer than binary representation
+	r = clBnAlloc("compute_wNAF",		/* pcg */
+				  len + 1); /* modified wNAF may be one digit longer than binary representation
 	                              * (*ret_len will be set to the actual length, i.e. at most
 	                              * BN_num_bits(scalar) + 1) */
 	if (r == NULL)
 		{
 		ECerr(EC_F_COMPUTE_WNAF, ERR_R_MALLOC_FAILURE);
-		goto err;
-		}
-
-	if (scalar->d == NULL || scalar->top == 0)
-		{
-		ECerr(EC_F_COMPUTE_WNAF, ERR_R_INTERNAL_ERROR);
 		goto err;
 		}
 	window_val = scalar->d[0] & mask;
@@ -423,7 +429,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 			if (numblocks > pre_comp->numblocks)
 				numblocks = pre_comp->numblocks;
 
-			pre_points_per_block = 1u << (pre_comp->w - 1);
+			pre_points_per_block = (size_t)1 << (pre_comp->w - 1);
 
 			/* check that pre_comp looks sane */
 			if (pre_comp->num != (pre_comp->numblocks * pre_points_per_block))
@@ -443,10 +449,10 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 	
 	totalnum = num + numblocks;
 
-	wsize    = clBnAlloc( "ec_wNAF_mul", totalnum * sizeof wsize[0]);
-	wNAF_len = clBnAlloc( "ec_wNAF_mul", totalnum * sizeof wNAF_len[0]);
-	wNAF     = clBnAlloc( "ec_wNAF_mul", (totalnum + 1) * sizeof wNAF[0]); /* includes space for pivot */
-	val_sub  = clBnAlloc( "ec_wNAF_mul", totalnum * sizeof val_sub[0]);
+	wsize    = clBnAlloc("ec_wNAF_mul",totalnum * sizeof wsize[0]);		/* pcg */
+	wNAF_len = clBnAlloc("ec_wNAF_mul",totalnum * sizeof wNAF_len[0]);	/* pcg */
+	wNAF     = clBnAlloc("ec_wNAF_mul",(totalnum + 1) * sizeof wNAF[0]); /* includes space for pivot */
+	val_sub  = clBnAlloc("ec_wNAF_mul",totalnum * sizeof val_sub[0]);	/* pcg */
 		 
 	if (!wsize || !wNAF_len || !wNAF || !val_sub)
 		{
@@ -465,7 +471,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 
 		bits = i < num ? BN_num_bits(scalars[i]) : BN_num_bits(scalar);
 		wsize[i] = EC_window_bits_for_scalar_size(bits);
-		num_val += 1u << (wsize[i] - 1);
+		num_val += (size_t)1 << (wsize[i] - 1);
 		wNAF[i + 1] = NULL; /* make sure we always have a pivot */
 		wNAF[i] = compute_wNAF((i < num ? scalars[i] : scalar), wsize[i], &wNAF_len[i]);
 		if (wNAF[i] == NULL)
@@ -562,7 +568,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 						wNAF_len[i] = tmp_len;
 					
 					wNAF[i + 1] = NULL;
-					wNAF[i] = clBnAlloc( "ec_wNAF_mul", wNAF_len[i]);
+					wNAF[i] = clBnAlloc("ec_wNAF_mul",wNAF_len[i]);		/* pcg */
 					if (wNAF[i] == NULL)
 						{
 						ECerr(EC_F_EC_WNAF_MUL, ERR_R_MALLOC_FAILURE);
@@ -591,7 +597,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 	/* All points we precompute now go into a single array 'val'.
 	 * 'val_sub[i]' is a pointer to the subarray for the i-th point,
 	 * or to a subarray of 'pre_comp->points' if we already have precomputation. */
-	val = clBnAlloc( "ec_wNAF_mul", (num_val + 1) * sizeof val[0]);
+	val = clBnAlloc("ec_wNAF_mul",(num_val + 1) * sizeof val[0]);	/* pcg */
 	if (val == NULL)
 		{
 		ECerr(EC_F_EC_WNAF_MUL, ERR_R_MALLOC_FAILURE);
@@ -604,7 +610,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 	for (i = 0; i < num + num_scalar; i++)
 		{
 		val_sub[i] = v;
-		for (j = 0; j < (1u << (wsize[i] - 1)); j++)
+		for (j = 0; j < ((size_t)1 << (wsize[i] - 1)); j++)
 			{
 			*v = EC_POINT_new(group);
 			if (*v == NULL) goto err;
@@ -617,7 +623,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 		goto err;
 		}
 
-	if ((tmp = EC_POINT_new(group)) == 0 )
+	if ((tmp = EC_POINT_new(group)) == 0 )		/* pcg */
 		goto err;
 
 	/* prepare precomputed values:
@@ -640,7 +646,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 		if (wsize[i] > 1)
 			{
 			if (!EC_POINT_dbl(group, tmp, val_sub[i][0], ctx)) goto err;
-			for (j = 1; j < (1u << (wsize[i] - 1)); j++)
+			for (j = 1; j < ((size_t)1 << (wsize[i] - 1)); j++)
 				{
 				if (!EC_POINT_add(group, val_sub[i][j], val_sub[i][j - 1], tmp, ctx)) goto err;
 				}
@@ -824,10 +830,10 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
 
 	numblocks = (bits + blocksize - 1) / blocksize; /* max. number of blocks to use for wNAF splitting */
 	
-	pre_points_per_block = 1u << (w - 1);
+	pre_points_per_block = (size_t)1 << (w - 1);
 	num = pre_points_per_block * numblocks; /* number of points to compute and store */
 
-	points = clBnAlloc( "ec_wNAF_precompute_mult", sizeof (EC_POINT*)*(num + 1));
+	points = clBnAlloc("ec_wNAF_precompute_mult",sizeof (EC_POINT*)*(num + 1));		/* pcg */
 	if (!points)
 		{
 		ECerr(EC_F_EC_WNAF_PRECOMPUTE_MULT, ERR_R_MALLOC_FAILURE);
@@ -845,7 +851,7 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
 			}
 		}
 
-	if ( (tmp_point = EC_POINT_new(group)) == 0 || (base = EC_POINT_new(group)) == 0 )
+	if ( (tmp_point = EC_POINT_new(group)) == 0 || (base = EC_POINT_new(group)) == 0 )	/* pcg */
 		{
 		ECerr(EC_F_EC_WNAF_PRECOMPUTE_MULT, ERR_R_MALLOC_FAILURE);
 		goto err;
@@ -941,4 +947,4 @@ int ec_wNAF_have_precompute_mult(const EC_GROUP *group)
 		return 0;
 	}
 
-#endif /* USE_ECDH || USE_ECDSA */
+#endif /* USE_ECDH || USE_ECDSA */	/* pcg */

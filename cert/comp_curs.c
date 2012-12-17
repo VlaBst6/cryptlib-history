@@ -397,7 +397,7 @@ int selectGeneralName( INOUT CERT_INFO *certInfoPtr,
 	   the kernel ACLs.  Before we can continue we verify that the attribute
 	   containing the GeneralName that we want to use is actually available */
 	if( option == MAY_BE_ABSENT && !checkAttributeAvailable( certInfoType ) )
-		return( CRYPT_ARGERROR_NUM1 );
+		return( CRYPT_ARGERROR_VALUE );
 
 	certInfoPtr->currentSelection.updateCursor = FALSE;
 
@@ -1109,6 +1109,8 @@ int setAttributeCursor( INOUT CERT_INFO *certInfoPtr,
 						IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE certInfoType,
 						IN const int value )
 	{
+	int status;
+
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
 	REQUIRES( certInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
@@ -1173,11 +1175,24 @@ int setAttributeCursor( INOUT CERT_INFO *certInfoPtr,
 	   which GeneralName we want to work with, including potentially 
 	   creating it when we set the first field in it while for a 
 	   GeneralName component we're merely selecting a field in an already-
-	   existing GeneralName */
+	   existing GeneralName.
+	   
+	   If the returned status is a parameter error then we have to translate 
+	   it from the form { certInfoPtr, value } in selectXXX() to 
+	   { certInfoPtr, attribute_cursor, value } in this function, so it goes
+	   from being a CRYPT_ARGERROR_VALUE to a CRYPT_ARGERROR_NUM1 */
 	if( isGeneralNameSelectionComponent( value ) )
-		return( selectGeneralName( certInfoPtr, value, MAY_BE_ABSENT ) );
+		{
+		status = selectGeneralName( certInfoPtr, value, MAY_BE_ABSENT );
+		return( ( status == CRYPT_ARGERROR_VALUE ) ? \
+				CRYPT_ARGERROR_NUM1 : status );
+		}
 	if( isGeneralNameComponent( value ) )
-		return( selectGeneralNameComponent( certInfoPtr, value ) );
+		{
+		status = selectGeneralNameComponent( certInfoPtr, value );
+		return( ( status == CRYPT_ARGERROR_VALUE ) ? \
+				CRYPT_ARGERROR_NUM1 : status );
+		}
 
 	/* If it's a DN, select it.  If it's a DN component, locate the RDN that 
 	   it corresponds to */

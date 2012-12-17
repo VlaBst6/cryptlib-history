@@ -608,7 +608,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int setChannelAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 						  IN_BUFFER( dataLength ) const void *data, 
-						  IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) const int dataLength )
+						  IN_LENGTH_TEXT const int dataLength )
 	{
 	SSH_CHANNEL_INFO *channelInfoPtr;
 

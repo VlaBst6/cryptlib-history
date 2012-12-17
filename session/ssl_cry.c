@@ -68,7 +68,7 @@ static int writePacketMetadata( OUT_BUFFER( dataMaxLength, *dataLength ) \
 	REQUIRES( seqNo >= 0 );
 	REQUIRES( version >= SSL_MINOR_VERSION_TLS && \
 			  version <= SSL_MINOR_VERSION_TLS12 );
-	REQUIRES( payloadLength > 0 && payloadLength <= MAX_PACKET_SIZE );
+	REQUIRES( payloadLength >= 0 && payloadLength <= MAX_PACKET_SIZE );
 
 	/* Clear return values */
 	memset( data, 0, min( 16, dataMaxLength ) );
@@ -1519,16 +1519,22 @@ int checkKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr,
 	/* TLS 1.2+ precedes the signature itself with an indication of the hash
 	   and signature algorithm that's required to verify it, so if we're 
 	   using this format then we have to process the identifiers before we
-	   can create the signature-verification hashes */
+	   can create the signature-verification hashes.
+
+	   We disallow SHA1 since the whole point of TLS 1.2 was to move away 
+	   from it, and a poll on the ietf-tls list indicated that all known 
+	   implementations (both of them) work fine with this configuration */
 	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
 		{
 		static const MAP_TABLE hashAlgoIDTbl[] = {
+			{ 1000, CRYPT_ALGO_SHAng },
 #ifdef CONFIG_SUITEB
 			{ TLS_HASHALGO_SHA384, CRYPT_ALGO_SHA2 },
 #endif /* CONFIG_SUITEB */
 			{ TLS_HASHALGO_SHA2, CRYPT_ALGO_SHA2 },
+#if 0	/* 2/11/11 Disabled option for SHA1 after poll on ietf-tls list */
 			{ TLS_HASHALGO_SHA1, CRYPT_ALGO_SHA1 },
-			{ TLS_HASHALGO_MD5, CRYPT_ALGO_MD5 },
+#endif /* 0 */
 			{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 			};
 		int cryptHashAlgo, tlsHashAlgo;

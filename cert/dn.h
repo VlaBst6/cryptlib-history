@@ -106,7 +106,7 @@ int insertDNstring( INOUT DN_COMPONENT **dnComponentListPtrPtr,
 					OUT_ENUM_OPT( CRYPT_ERRTYPE_TYPE ) \
 						CRYPT_ERRTYPE_TYPE *errorType );
 
-/* Prototypes for functions in dn_string.c */
+/* Prototypes for functions in dnstring.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
 int getAsn1StringInfo( IN_BUFFER( stringLen ) const void *string, 

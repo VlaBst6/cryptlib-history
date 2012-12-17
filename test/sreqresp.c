@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Request/Response Session Test Routines				*
-*						Copyright Peter Gutmann 1998-2008					*
+*						Copyright Peter Gutmann 1998-2011					*
 *																			*
 ****************************************************************************/
 
@@ -435,18 +435,13 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 					   "SVR: Attempt to activate RTCS server session" : \
 					   "Attempt to activate RTCS client session", status,
 					   __LINE__ );
-		cryptDestroySession( cryptSession );
-		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND || \
-			status == CRYPT_ERROR_TIMEOUT || status == CRYPT_ERROR_PERMISSION )
+		if( !isServer && isServerDown( cryptSession, status ) )
 			{
-			/* These servers are constantly appearing and disappearing so if
-			   we get a straight connect error we don't treat it as a serious
-			   failure.  In addition we can get server busy and no permission
-			   to access errors that are also treated as soft errors */
-			puts( "  (Server could be down or busy or unavailable, faking it "
-				  "and continuing...)\n" );
+			puts( "  (Server could be down, faking it and continuing...)\n" );
+			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_FAILED );
 			}
+		cryptDestroySession( cryptSession );
 		return( FALSE );
 		}
 
@@ -611,7 +606,14 @@ int testSessionRTCSClientServer( void )
 	#6 - Diginotar
 			Have an invalid CA certificate, and (apparently) a broken OCSP
 			implementation that gets the IDs wrong (this is par for the
-			course for this particular CA) */
+			course for this particular CA).
+	#7 - Windows Server 2008
+			Returns a permission-denied error with the default server 
+			configuration.  This is because Windows Server by default doesn't 
+			allow nonces, and responds to any request containing a nonce 
+			with a permission-denied error.  Enabling nonces via Revocation 
+			Configurations | Action | Edit Properties | Allow Nonce requests 
+			corrects this */
 
 #define OCSP_SERVER_NO		5
 #if OCSP_SERVER_NO == 2
@@ -622,6 +624,8 @@ int testSessionRTCSClientServer( void )
   #define OCSP_SERVER_NAME	TEXT( "http://ocsp2.valicert.net" )
 #elif OCSP_SERVER_NO == 5
   #define OCSP_SERVER_NAME	TEXT( "http://ocsp.verisign.com/ocsp/status" )
+#elif OCSP_SERVER_NO == 7
+  #define OCSP_SERVER_NAME	TEXT( "http://142.176.86.157/ocsp" )
 #endif /* OCSP server name kludge */
 
 /* Perform an OCSP test */
@@ -638,6 +642,9 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
 #endif /* UNICODE_STRINGS */
 	void *fileNamePtr = filenameBuffer;
+#if OCSP_SERVER_NO == 7
+	int complianceValue;
+#endif /* OCSP servers that return broken resposnes */
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_OCSP_SERVER ) ? \
 							   TRUE : FALSE;
 	int status;
@@ -763,6 +770,14 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 				return( attrErrorExit( cryptSession, "cryptSetAttribute()",
 									   status, __LINE__ ) );
 			}
+#if OCSP_SERVER_NO == 7
+		/* Some OCSP server's responses are broken so we have to turn down 
+		   the compliance level to allow them to be processed */
+		cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   &complianceValue );
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
+#endif /* OCSP servers that return broken resposnes */
 
 		/* Wait for the server to finish initialising */
 		if( localSession && waitMutex() == CRYPT_ERROR_TIMEOUT )
@@ -773,6 +788,11 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			}		
 		}
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
+#if OCSP_SERVER_NO == 7
+	/* Restore normal certificate processing */
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+					   complianceValue );
+#endif /* OCSP servers that return broken resposnes */
 	if( isServer )
 		printConnectInfo( cryptSession );
 	if( cryptStatusError( status ) )
@@ -800,19 +820,13 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 				}
 			}
 #endif /* Verisign's broken OCSP responder */
-		cryptDestroySession( cryptSession );
-		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND || \
-			status == CRYPT_ERROR_TIMEOUT || status == CRYPT_ERROR_PERMISSION )
+		if( !isServer && isServerDown( cryptSession, status ) )
 			{
-
-			/* These servers are constantly appearing and disappearing so if
-			   we get a straight connect error we don't treat it as a serious
-			   failure.  In addition we can get server busy and no permission
-			   to access errors that are also treated as soft errors */
-			puts( "  (Server could be down or busy or unavailable, faking it "
-				  "and continuing...)\n" );
+			puts( "  (Server could be down, faking it and continuing...)\n" );
+			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_FAILED );
 			}
+		cryptDestroySession( cryptSession );
 		return( FALSE );
 		}
 
@@ -992,7 +1006,21 @@ int testSessionOCSPClientServer( void )
 	#11 - nCipher
 			Very slow TSP, requires extended read timeout to get response.
 	#12 - Comodo
-			None */
+			None.
+	#13 - Verisign 
+			This "TSA" doesn't support TSP but uses an AuthentiCode-specific 
+			mechanism documented at 
+			http://msdn.microsoft.com/en-us/library/windows/desktop/bb931395%28v=vs.85%29.aspx. 
+			Submitting a TSP request returns the text message "error 
+			handling request, status = 0x9300" 
+	#14 - SecureSoft 
+			None (but uses an invalid policy OID '1 2' in the response).
+	#15 - OpenTSA 
+			Currently not active, info at http://opentsa.org/#service 
+
+   Note that this only tests the low-level raw TSP mechanism, timestamps are 
+   usually used in conjunction with signed (enveloped) data, for which see 
+   testSessionEnvTSP() */
 
 #define TSP_SERVER1_NAME	TEXT( "localhost" )
 #define TSP_SERVER2_NAME	TEXT( "http://timestamping.edelweb.fr/service/tsp" )
@@ -1006,6 +1034,9 @@ int testSessionOCSPClientServer( void )
 #define TSP_SERVER10_NAME	TEXT( "http://vsinterop.entrust.com:7001/verificationserver/rfc3161timestamp" )
 #define TSP_SERVER11_NAME	TEXT( "tcp://dse200.ncipher.com" )
 #define TSP_SERVER12_NAME	TEXT( "http://timestamp.comodoca.com/rfc3161" )
+#define TSP_SERVER13_NAME	TEXT( "http://timestamp.verisign.com/scripts/timstamp.dll" )
+#define TSP_SERVER14_NAME	TEXT( "http://ca.signfiles.com/TSAServer.aspx" )
+#define TSP_SERVER15_NAME	TEXT( "http://ns.szikszi.hu:8080/tsa" )
 
 #define TSP_SERVER_NAME		TSP_SERVER2_NAME
 #define TSP_SERVER_NO		2	/* Only used to identify slow-timeout server #11 */
@@ -1095,17 +1126,13 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 					   "SVR: Attempt to activate TSP server session" : \
 					   "Attempt to activate TSP client session", status,
 					   __LINE__ );
-		cryptDestroySession( cryptSession );
-		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND || \
-			status == CRYPT_ERROR_TIMEOUT || status == CRYPT_ERROR_PERMISSION )
+		if( !isServer && isServerDown( cryptSession, status ) )
 			{
-			/* These servers are constantly appearing and disappearing so if 
-			   we get a straight connect error we don't treat it as a serious 
-			   failure.  In addition we can get server busy and no permission 
-			   to access errors that are also treated as soft errors */
 			puts( "  (Server could be down, faking it and continuing...)\n" );
+			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_FAILED );
 			}
+		cryptDestroySession( cryptSession );
 		return( FALSE );
 		}
 

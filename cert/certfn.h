@@ -19,6 +19,13 @@
 *																			*
 ****************************************************************************/
 
+/* Get information about a DN string */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int getAsn1StringType( IN_BUFFER( stringLen ) const void *string, 
+					   IN_LENGTH_SHORT const int stringLen,
+					   OUT_RANGE( 0, 20 ) int *stringType );
+
 /* DN manipulation routines */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
@@ -39,8 +46,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int getDNComponentInfo( INOUT const DN_PTR *dnComponentList,
 						OUT_ATTRIBUTE_Z CRYPT_ATTRIBUTE_TYPE *type,
 						OUT_BOOL BOOLEAN *dnContinues );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
-int getDNComponentValue( const DN_PTR *dnComponentList,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 6 ) ) \
+int getDNComponentValue( IN_OPT const DN_PTR *dnComponentList,
 						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type,
 						 IN_RANGE( 0, 100 ) const int count,
 						 OUT_BUFFER_OPT( valueMaxLength, \
@@ -110,8 +117,8 @@ int writeDNstring( INOUT STREAM *stream,
 
 /* Find an attribute */
 
-CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
-ATTRIBUTE_PTR *findAttributeByOID( const ATTRIBUTE_PTR *attributePtr,
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
+ATTRIBUTE_PTR *findAttributeByOID( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 								   IN_BUFFER( oidLength ) const BYTE *oid, 
 								   IN_LENGTH_OID const int oidLength );
 CHECK_RETVAL_PTR \
@@ -648,7 +655,7 @@ int readCertChain( INOUT STREAM *stream,
 				   IN_KEYID_OPT const CRYPT_KEYID_TYPE keyIDtype,
 				   IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
 				   IN_LENGTH_KEYID_Z const int keyIDlength,
-				   const BOOLEAN dataOnlyCert );
+				   IN_FLAGS( KEYMGMT ) const int options );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int writeCertChain( INOUT STREAM *stream, 
 					const CERT_INFO *certInfoPtr );
@@ -741,6 +748,7 @@ int importCert( IN_BUFFER( certObjectLength ) const void *certObject,
 				IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
 				IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
 				IN_LENGTH_KEYID_Z const int keyIDlength,
+				IN_FLAGS( KEYMGMT ) const int options,
 				IN_ENUM_OPT( CRYPT_CERTTYPE ) \
 					const CRYPT_CERTTYPE_TYPE formatHint );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
@@ -776,8 +784,7 @@ BOOLEAN compareSerialNumber( IN_BUFFER( canonSerialNumberLength ) \
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int textToOID( IN_BUFFER( textOidLength ) const char *textOID, 
-			   IN_RANGE( MIN_ASCII_OIDSIZE, CRYPT_MAX_TEXTSIZE ) \
-					const int textOidLength, 
+			   IN_LENGTH_TEXT const int textOidLength, 
 			   OUT_BUFFER( binaryOidMaxLen, *binaryOidLen ) BYTE *binaryOID, 
 			   IN_LENGTH_SHORT const int binaryOidMaxLen, 
 			   OUT_LENGTH_SHORT_Z int *binaryOidLen );

@@ -275,6 +275,21 @@ int getCertComponent( INOUT CERT_INFO *certInfoPtr,
 
 		return( status );
 		}
+	if( isGeneralNameComponent( certInfoType ) )
+		{
+		SELECTION_STATE savedState;
+
+		/* Find the requested GeneralName component and return and 
+		   indication of its presence to the caller.  Since 
+		   selectGeneralNameComponent() changes the current selection within 
+		   the GeneralName, we save the selection state around the call */
+		saveSelectionState( savedState, certInfoPtr );
+		status = selectGeneralNameComponent( certInfoPtr, certInfoType );
+		restoreSelectionState( savedState, certInfoPtr );
+		*certInfo = cryptStatusOK( status ) ? TRUE : FALSE;
+
+		return( status );
+		}
 
 	/* If it's standard certificate or CMS attribute, return it */
 	if( ( certInfoType >= CRYPT_CERTINFO_FIRST_EXTENSION && \

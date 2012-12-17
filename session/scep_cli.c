@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib SCEP Client Management					*
-*						Copyright Peter Gutmann 1999-2008					*
+*						Copyright Peter Gutmann 1999-2011					*
 *																			*
 ****************************************************************************/
 
@@ -26,33 +26,212 @@ int pnpPkiSession( INOUT SESSION_INFO *sessionInfoPtr );
 
 /****************************************************************************
 *																			*
+*								Utility Routines							*
+*																			*
+****************************************************************************/
+
+/* Import a SCEP CA certificate */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int importCACertificate( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCryptCert,
+								IN_BUFFER( certLength ) const void *certificate,
+								IN_LENGTH_SHORT const int certLength,
+								IN_FLAGS( KEYMGMT ) const int options )
+	{
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	STREAM stream;
+	BOOLEAN isCertChain = FALSE;
+	int status;
+
+	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( isReadPtr( certificate, certLength ) );
+
+	REQUIRES( certLength > 4 && certLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( options == KEYMGMT_FLAG_USAGE_CRYPT || \
+			  options == KEYMGMT_FLAG_USAGE_SIGN );
+
+	/* Clear return value */
+	*iCryptCert = CRYPT_ERROR;
+
+	/* Depending on what the server feels like it can return either a single
+	   certificate or a complete certificate chain, with the type denoted
+	   by the HTTP-transport content type.  Because we have no easy way of
+	   getting at this, we sniff the payload data to see what it contains.
+	   The two objects begin with:
+
+		Cert:		SEQUENCE { SEQUENCE ...
+		Cert.chain:	SEQNEUCE { OID ...
+
+	   so we can use the second tag to determine what we've got */
+	sMemConnect( &stream, certificate, certLength );
+	status = readSequence( &stream, NULL );
+	if( cryptStatusOK( status ) && \
+		peekTag( &stream ) == BER_OBJECT_IDENTIFIER )
+		isCertChain = TRUE;
+	sMemDisconnect( &stream );
+
+	/* Import the certificate */
+	setMessageCreateObjectIndirectInfo( &createInfo, certificate, certLength,
+			isCertChain ? CRYPT_CERTTYPE_CERTCHAIN : CRYPT_CERTTYPE_CERTIFICATE );
+	if( isCertChain )
+		createInfo.arg3 = options;
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
+							  &createInfo, OBJECT_TYPE_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		return( status );
+	*iCryptCert = createInfo.cryptHandle;
+
+	return( CRYPT_OK );
+	}
+
+/* Some broken servers (and we're specifically talking Microsoft's one here) 
+   don't handle POST but require the use of a POST disguised as a GET, for 
+   which we provide the following variant of writePkiDatagram() that sends
+   the POST as an HTTP GET */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writePkiDatagramAsGet( INOUT SESSION_INFO *sessionInfoPtr )
+	{
+	HTTP_DATA_INFO httpDataInfo;
+	HTTP_URI_INFO httpReqInfo;
+	const int dataSize = sessionInfoPtr->receiveBufEnd;
+	int fullEncodedLength, encodedLength, i, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( dataSize > 4 && dataSize < MAX_INTLENGTH );
+
+	/* The way that we do the encoding is to move the raw data up in the 
+	   buffer to make room for the encoded form and then encode it into the 
+	   freed-up room:
+
+				+---------------+
+				v	  Encode	|
+		+---------------+---------------+
+		| base64'd data	|	Raw data	|
+		+---------------+---------------+
+		|<-fullEncLen ->|<- dataSize -->|
+
+	   First we have to determine how long the base64-encoded form of the 
+	   message will be and make sure that it fits into the buffer */
+	status = base64encodeLen( dataSize, &fullEncodedLength, 
+							  CRYPT_CERTTYPE_NONE );
+	ENSURES( cryptStatusOK( status ) );
+	if( fullEncodedLength + dataSize >= sessionInfoPtr->receiveBufSize )
+		return( CRYPT_ERROR_OVERFLOW );
+
+	/* Move the message up in the buffer to make room for its encoded form 
+	   and encode it */
+	memmove( sessionInfoPtr->receiveBuffer + fullEncodedLength,
+			 sessionInfoPtr->receiveBuffer, dataSize );
+	status = base64encode( sessionInfoPtr->receiveBuffer, fullEncodedLength, 
+						   &encodedLength, 
+						   sessionInfoPtr->receiveBuffer + fullEncodedLength,
+						   dataSize, CRYPT_CERTTYPE_NONE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* The base64 encoding in the form that we're calling it produces raw 
+	   output without the trailing '=' padding bytes so we have to manually
+	   insert the required padding in based on the calculated vs.actual
+	   encoded length.  This can't overflow because we're simply padding the 
+	   data out to the fullEncodedLength size that was calculated earlier */
+	if( encodedLength < fullEncodedLength )
+		{
+		const int delta = fullEncodedLength - encodedLength;
+
+		REQUIRES( delta > 0 && delta < 3 );
+		memcpy( sessionInfoPtr->receiveBuffer + encodedLength,
+				"========", delta );
+		}
+
+	/* Now that it's base64-encoded it can no longer be sent as is because 
+	   some base64 values, specifically '/', '+' and '=', are used for other
+	   purposes in URLs.  Because of this we have to make another pass over
+	   the data escaping these characters into the '%xx' form */
+	for( i = 0; i < fullEncodedLength; i++ )
+		{
+		char escapeBuffer[ 8 + 8 ];
+		const int ch = sessionInfoPtr->receiveBuffer[ i ];
+
+		/* If this isn't a special character, there's nothing to do */
+		if( ch != '/' && ch != '+' && ch != '=' )
+			continue;
+
+		/* Make room for the escaped form and encode the value */
+		if( fullEncodedLength + 2 >= sessionInfoPtr->receiveBufSize )
+			return( CRYPT_ERROR_OVERFLOW );
+		memmove( sessionInfoPtr->receiveBuffer + i + 2, 
+				 sessionInfoPtr->receiveBuffer + i, fullEncodedLength - i );
+		sprintf_s( escapeBuffer, 8, "%%%02X", ch );
+		memcpy( sessionInfoPtr->receiveBuffer + i, escapeBuffer, 3 );
+		fullEncodedLength += 2;
+		} 
+
+	/* Send the POST as an HTTP GET */
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
+			   STREAM_HTTPREQTYPE_POST_AS_GET );
+	initHttpDataInfoEx( &httpDataInfo, sessionInfoPtr->receiveBuffer,
+						fullEncodedLength, &httpReqInfo );
+	memcpy( httpReqInfo.attribute, "operation", 9 );
+	httpReqInfo.attributeLen = 9;
+	memcpy( httpReqInfo.value, "PKIOperation", 12 );
+	httpReqInfo.valueLen = 12;
+	memcpy( httpReqInfo.extraData, "message=", 8 );
+	httpReqInfo.extraDataLen = 8;
+	status = swrite( &sessionInfoPtr->stream, &httpDataInfo,
+					 sizeof( HTTP_DATA_INFO ) );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
+			   STREAM_HTTPREQTYPE_POST );
+	if( cryptStatusError( status ) )
+		{
+		sNetGetErrorInfo( &sessionInfoPtr->stream,
+						  &sessionInfoPtr->errorInfo );
+		}
+	else
+		status = CRYPT_OK;	/* swrite() returns a byte count */
+	sessionInfoPtr->receiveBufEnd = 0;
+
+	return( status );
+	}
+
+/****************************************************************************
+*																			*
 *					Additional Request Management Functions					*
 *																			*
 ****************************************************************************/
 
-/* Process one of the bolted-on additions to the basic SCEP protocol */
+/* Process the various bolted-on additions to the basic SCEP protocol */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int createAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int sendGetRequest( INOUT SESSION_INFO *sessionInfoPtr,
+						   IN_BUFFER( commandLen ) const char *command, 
+						   IN_LENGTH_SHORT const int commandLen )
 	{
-	MESSAGE_CREATEOBJECT_INFO createInfo;
 	HTTP_DATA_INFO httpDataInfo;
 	HTTP_URI_INFO httpReqInfo;
-	int length, status;
+	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isReadPtr( command, commandLen ) );
 	
-	REQUIRES( sessionInfoPtr->iAuthInContext == CRYPT_ERROR );
+	REQUIRES( commandLen > 0 && commandLen < MAX_INTLENGTH_SHORT );
 
-	/* Perform an HTTP GET with arguments "operation=GetCACert&message=*" */
+	/* Perform an HTTP GET with arguments "operation=<command>&message=*".
+	   The "message=" portion is rather unclear, according to the spec
+	   it's "a string that represents the certification authority issuer 
+	   identifier" but no-one (including the spec's authors) seem to know
+	   what this is supposed to be.  We use '*' on the basis that it's
+	   better than nothing */
 	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
 			   STREAM_HTTPREQTYPE_GET );
 	initHttpDataInfoEx( &httpDataInfo, sessionInfoPtr->receiveBuffer,
 						sessionInfoPtr->receiveBufSize, &httpReqInfo );
 	memcpy( httpReqInfo.attribute, "operation", 9 );
 	httpReqInfo.attributeLen = 9;
-	memcpy( httpReqInfo.value, "GetCACert", 9 );
-	httpReqInfo.valueLen = 9;
+	memcpy( httpReqInfo.value, command, commandLen );
+	httpReqInfo.valueLen = commandLen;
 	memcpy( httpReqInfo.extraData, "message=*", 9 );
 	httpReqInfo.extraDataLen = 9;
 	status = sread( &sessionInfoPtr->stream, &httpDataInfo,
@@ -60,56 +239,148 @@ static int createAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
 			   STREAM_HTTPREQTYPE_POST );
 	if( cryptStatusError( status ) )
+		{
+		sNetGetErrorInfo( &sessionInfoPtr->stream,
+						  &sessionInfoPtr->errorInfo );
 		return( status );
-	length = httpDataInfo.bytesAvail;
+		}
+	sessionInfoPtr->receiveBufEnd = httpDataInfo.bytesAvail;
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int getCACapabilities( INOUT SESSION_INFO *sessionInfoPtr )
+	{
+	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* Get the CA capabilities */
+	status = sendGetRequest( sessionInfoPtr, "GetCACaps", 9 );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* We currently don't do much more with this because there's only one
+	   server that doesn't support the capabilities that we need and that's
+	   IIS, and that has a broken GetCACaps implementation which means that
+	   we'll never get to this point anyway.  What the (effectively) dummy
+	   read does is allow us to fingerprint IIS so that we can work around 
+	   its bugs later on */
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int getCACertificate( INOUT SESSION_INFO *sessionInfoPtr )
+	{
+	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( sessionInfoPtr->iAuthInContext == CRYPT_ERROR );
+
+	/* Get the CA certificate */
+	status = sendGetRequest( sessionInfoPtr, "GetCACert", 9 );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Since we can't use readPkiDatagram() because of the weird dual-
-	   purpose HTTP transport used in SCEP we have to duplicate portions of 
-	   readPkiDatagram() here.  See the readPkiDatagram() function for code 
-	   comments explaining the following operations */
-	if( length < 4 || length >= MAX_INTLENGTH )
+	   purpose HTTP transport used in SCEP where the main protocol uses
+	   POST + read response while the bolted-on portions use various GET
+	   variations, we have to duplicate portions of readPkiDatagram() here.  
+	   See the readPkiDatagram() function for code comments explaining the 
+	   following operations */
+	if( sessionInfoPtr->receiveBufEnd < 4 || \
+		sessionInfoPtr->receiveBufEnd >= MAX_INTLENGTH )
 		{
 		retExt( CRYPT_ERROR_UNDERFLOW,
 				( CRYPT_ERROR_UNDERFLOW, SESSION_ERRINFO, 
-				  "Invalid PKI message length %d", length ) );
+				  "Invalid CA certificate size %d", 
+				  sessionInfoPtr->receiveBufEnd ) );
 		}
-	status = length = \
-		checkObjectEncoding( sessionInfoPtr->receiveBuffer, length );
+	status = sessionInfoPtr->receiveBufEnd = \
+		checkObjectEncoding( sessionInfoPtr->receiveBuffer, 
+							 sessionInfoPtr->receiveBufEnd );
 	if( cryptStatusError( status ) )
 		{
 		retExt( status, 
 				( status, SESSION_ERRINFO, 
-				  "Invalid PKI message encoding" ) );
+				  "Invalid CA certificate encoding" ) );
 		}
+	DEBUG_DUMP_FILE( "scep_cacrt", sessionInfoPtr->receiveBuffer, 
+					 sessionInfoPtr->receiveBufEnd );
 
-	/* Import the CA certificate and save it for later use */
-	setMessageCreateObjectIndirectInfo( &createInfo,
-								sessionInfoPtr->receiveBuffer, length,
-								CRYPT_CERTTYPE_CERTIFICATE );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
-							  &createInfo, OBJECT_TYPE_CERTIFICATE );
+	/* Import the CA/RA certificates and save it/them for later use.  There
+	   may be distinct signature and encryption certificates stuffed into 
+	   the same chain so we first try for a signature certificate */
+	status = importCACertificate( &sessionInfoPtr->iAuthInContext,
+								  sessionInfoPtr->receiveBuffer, 
+								  sessionInfoPtr->receiveBufEnd,
+								  KEYMGMT_FLAG_USAGE_SIGN );
 	if( cryptStatusError( status ) )
 		{
-		retExt( length, 
-				( length, SESSION_ERRINFO, 
+		retExt( status, 
+				( status, SESSION_ERRINFO, 
 				  "Invalid SCEP CA certificate" ) );
 		}
-	sessionInfoPtr->iAuthInContext = createInfo.cryptHandle;
+
+	/* Now that we've got a signing certificate, check whether this single
+	   certificate has the unusual additional capabilities that are required
+	   for SCEP */
+	if( !checkSCEPCACert( sessionInfoPtr->iAuthInContext, 
+						  KEYMGMT_FLAG_NONE ) )
+		{
+		/* It doesn't have the required capabilities, assume that it's a
+		   signature-only certificate and try again for an encryption
+		   certificate */
+		status = importCACertificate( &sessionInfoPtr->iCryptOutContext,
+									  sessionInfoPtr->receiveBuffer, 
+									  sessionInfoPtr->receiveBufEnd,
+									  KEYMGMT_FLAG_USAGE_CRYPT );
+		if( cryptStatusError( status ) )
+			{
+			retExt( status, 
+					( status, SESSION_ERRINFO, 
+					  "Invalid SCEP CA certificate" ) );
+			}
+		}
 
 	/* Process the server's key fingerprint */
 	status = processKeyFingerprint( sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Make sure that the CA certificate meets the SCEP protocol 
+	/* Make sure that the CA certificate has the unusual additional 
+	   capabilities that are required to meet the SCEP protocol 
 	   requirements */
-	if( !checkCACert( sessionInfoPtr->iAuthInContext ) )
+	if( sessionInfoPtr->iCryptOutContext != CRYPT_ERROR )
 		{
-		retExt( CRYPT_ERROR_INVALID, 
-				( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
-				  "CA certificate usage restrictions prevent it from being "
-				  "used for SCEP" ) );
+		/* There are distinct encryption and signing certificates (probably
+		   from an RA) present, make sure that they meet the necessary
+		   requirements */
+		if( !checkSCEPCACert( sessionInfoPtr->iAuthInContext, 
+							  KEYMGMT_FLAG_USAGE_SIGN ) || \
+			!checkSCEPCACert( sessionInfoPtr->iCryptOutContext, 
+							  KEYMGMT_FLAG_USAGE_CRYPT ) )
+			{
+			retExt( CRYPT_ERROR_INVALID, 
+					( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+					  "CA/RA certificate usage restrictions prevent them "
+					  "from being used for SCEP" ) );
+			}
+		}
+	else
+		{
+		/* There's a single multipurpose certificate present, make sure that 
+		   it meets all of the requirements for SCEP use */
+		if( !checkSCEPCACert( sessionInfoPtr->iAuthInContext, 
+							  KEYMGMT_FLAG_NONE ) )
+			{
+			retExt( CRYPT_ERROR_INVALID, 
+					( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+					  "CA certificate usage restrictions prevent it from being "
+					  "used for SCEP" ) );
+			}
 		}
 
 	return( CRYPT_OK );
@@ -137,8 +408,9 @@ static int createScepCert( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( SCEP_PROTOCOL_INFO ) ) );
 
-#if 0	/* 20/9/10 This is problematic because if the certificate request 
-				   contains attributes then setting the 
+#if 0	/* 20/9/10 Older versions of SCEP required the use of X.509v1
+				   certificates, this is problematic because if the 
+				   certificate request contains attributes then setting the 
 				   CRYPT_CERTINFO_CERTREQUEST copies them across to the 
 				   certificate, making it an X.509v3 certificate rather than 
 				   an X.509v1 one.  To avoid this problem for now we stay 
@@ -185,7 +457,7 @@ static int createScepCert( INOUT SESSION_INFO *sessionInfoPtr,
 	   necessary to get around time-zone issues in which the CA checks the 
 	   expiry time relative to the time zone that it's in rather than GMT 
 	   (although given some of the broken certificates used with SCEP it 
-	   seems likely that many CAs do little to no checking at all) 
+	   seems likely that many CAs do little to no checking at all).
 	   
 	   SCEP requires that the certificate serial number match the user name/
 	   transaction ID, the spec actually says that the transaction ID should 
@@ -201,10 +473,11 @@ static int createScepCert( INOUT SESSION_INFO *sessionInfoPtr,
 	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
 							  &sessionInfoPtr->iCertRequest,
 							  CRYPT_CERTINFO_CERTREQUEST );
-#if 0	/* 3/8/10 This seems to have vanished from SCEP drafts after about 
-				  draft 16.  When restoring this functionality the special-
-				  case attribute handling for SCEP in attr_acl.c has to be 
-				  restored as well */
+#if 0	/* 3/8/10 The requirement to set the certificate's serial number to 
+				  the transaction ID seems to have vanished from SCEP drafts 
+				  after about draft 16.  When restoring this functionality 
+				  the special-case attribute handling for SCEP in attr_acl.c 
+				  has to be restored as well */
 	if( cryptStatusOK( status ) )
 		{
 		const ATTRIBUTE_LIST *userNamePtr = \
@@ -344,49 +617,134 @@ static int createScepCertRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	return( CRYPT_OK );
 	}
 
+/* Create the request type needed to continue after the server responds with
+   an issue-pending response:
+
+	issuerAndSubject ::= SEQUENCE {
+		issuer		Name,
+		subject		Name
+		} */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int createScepPendingRequest( INOUT SESSION_INFO *sessionInfoPtr,
+									 OUT_LENGTH_SHORT_Z int *dataLength )
+	{
+	STREAM stream;
+	int issuerAndSubjectLen = DUMMY_INIT, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( dataLength, sizeof( int ) ) );
+
+	/* Clear return value */
+	*dataLength = 0;
+
+	/* Determine the overall length of the issuer and subject DNs */
+	sMemNullOpen( &stream );
+	status = exportAttributeToStream( &stream, 
+									  sessionInfoPtr->iAuthInContext, 
+									  CRYPT_IATTRIBUTE_SUBJECT );
+	if( cryptStatusOK( status ) )
+		{
+		status = exportAttributeToStream( &stream, 
+										  sessionInfoPtr->iCertRequest, 
+										  CRYPT_IATTRIBUTE_SUBJECT );
+		}
+	if( cryptStatusOK( status ) )
+		issuerAndSubjectLen = stell( &stream );
+	sMemClose( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Write the issuerAndSubject to the session buffer */
+	sMemOpen( &stream, sessionInfoPtr->receiveBuffer, 
+			  sessionInfoPtr->receiveBufSize );
+	writeSequence( &stream, issuerAndSubjectLen );
+	status = exportAttributeToStream( &stream, 
+									  sessionInfoPtr->iAuthInContext, 
+									  CRYPT_IATTRIBUTE_SUBJECT );
+	if( cryptStatusOK( status ) )
+		{
+		status = exportAttributeToStream( &stream, 
+										  sessionInfoPtr->iCertRequest, 
+										  CRYPT_IATTRIBUTE_SUBJECT );
+		}
+	if( cryptStatusOK( status ) )
+		*dataLength = stell( &stream );
+	sMemDisconnect( &stream );
+
+	return( status );
+	}
+
 /* Create a SCEP request message */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int createScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 							  INOUT SCEP_PROTOCOL_INFO *protocolInfo )
 	{
+	const CRYPT_CERTIFICATE iCACryptContext = \
+		( sessionInfoPtr->iCryptOutContext != CRYPT_ERROR ) ? \
+		sessionInfoPtr->iCryptOutContext : sessionInfoPtr->iAuthInContext;
 	CRYPT_CERTIFICATE iCmsAttributes;
-	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
+	const BOOLEAN isPendingRequest = \
+		( sessionInfoPtr->sessionSCEP->flags & SCEP_PFLAG_PENDING ) ? \
+		TRUE : FALSE;
 	int dataLength, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( SCEP_PROTOCOL_INFO ) ) );
 
-	/* Extract the request data into the session buffer */
-	setMessageData( &msgData, sessionInfoPtr->receiveBuffer,
-					sessionInfoPtr->receiveBufSize );
-	status = krnlSendMessage( sessionInfoPtr->iCertRequest,
-							  IMESSAGE_CRT_EXPORT, &msgData,
-							  CRYPT_CERTFORMAT_CERTIFICATE );
-	if( cryptStatusError( status ) )
+	/* If it's a straight issue operation, extract the request data into the 
+	   session buffer */
+	if( !isPendingRequest )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't get PKCS #10 request data from SCEP request "
-				  "object" ) );
+		MESSAGE_DATA msgData;
+
+		setMessageData( &msgData, sessionInfoPtr->receiveBuffer,
+						sessionInfoPtr->receiveBufSize );
+		status = krnlSendMessage( sessionInfoPtr->iCertRequest,
+								  IMESSAGE_CRT_EXPORT, &msgData,
+								  CRYPT_CERTFORMAT_CERTIFICATE );
+		if( cryptStatusError( status ) )
+			{
+			retExt( status,
+					( status, SESSION_ERRINFO, 
+					  "Couldn't get PKCS #10 request data from SCEP request "
+					  "object" ) );
+			}
+		dataLength = msgData.length;
 		}
-	DEBUG_DUMP_FILE( "scep_req0", sessionInfoPtr->receiveBuffer, 
-					 msgData.length );
+	else
+		{
+		/* It's a continuation of a previous issue operation whose status 
+		   the server has reported as pending, encode the special-case form
+		   that's required for this operation */
+		status = createScepPendingRequest( sessionInfoPtr, &dataLength );
+		if( cryptStatusError( status ) )
+			{
+			retExt( status,
+					( status, SESSION_ERRINFO, 
+					  "Couldn't create SCEP request needed to continue from "
+					  "an issue-pending response" ) );
+			}
+		}
+	DEBUG_DUMP_FILE( isPendingRequest ? "scep_req0pend" : "scep_req0", 
+					 sessionInfoPtr->receiveBuffer, dataLength );
 
 	/* Phase 1: Encrypt the data using the CA's key */
-	status = envelopeWrap( sessionInfoPtr->receiveBuffer, msgData.length,
+	status = envelopeWrap( sessionInfoPtr->receiveBuffer, dataLength,
 						   sessionInfoPtr->receiveBuffer, 
 						   sessionInfoPtr->receiveBufSize, &dataLength, 
 						   CRYPT_FORMAT_CMS, CRYPT_CONTENT_NONE, 
-						   sessionInfoPtr->iAuthInContext );
+						   iCACryptContext, &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't encrypt SCEP request data with CA key" ) );
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Couldn't encrypt SCEP request data with CA key: " ) );
 		}
-	DEBUG_DUMP_FILE( "scep_req1", sessionInfoPtr->receiveBuffer, 
-					 dataLength );
+	DEBUG_DUMP_FILE( isPendingRequest ? "scep_req1pend" : "scep_req1", 
+					 sessionInfoPtr->receiveBuffer, dataLength );
 
 	/* Create the SCEP signing attributes */
 	status = createScepAttributes( sessionInfoPtr, protocolInfo,  
@@ -405,16 +763,17 @@ static int createScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 						   sessionInfoPtr->receiveBufSize, 
 						   &sessionInfoPtr->receiveBufEnd, 
 						   CRYPT_CONTENT_NONE, sessionInfoPtr->privateKey, 
-						   iCmsAttributes );
+						   iCmsAttributes, &errorInfo );
 	krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't sign request data with ephemeral SCEP "
-				  "certificate" ) );
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Couldn't sign request data with ephemeral SCEP "
+					 "certificate: " ) );
 		}
-	DEBUG_DUMP_FILE( "scep_req2", sessionInfoPtr->receiveBuffer, 
+	DEBUG_DUMP_FILE( isPendingRequest ? "scep_req2pend" : "scep_req2", 
+					 sessionInfoPtr->receiveBuffer, 
 					 sessionInfoPtr->receiveBufEnd );
 
 	return( CRYPT_OK );
@@ -435,11 +794,16 @@ static int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
 	BYTE buffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int dataLength, sigResult, value, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( SCEP_PROTOCOL_INFO ) ) );
+
+	/* Reset any issue-pending status that may have been set from a previous
+	   operation */
+	sessionInfoPtr->sessionSCEP->flags &= ~SCEP_PFLAG_PENDING;
 
 	/* Phase 1: Sig-check the data using the CA's key */
 	DEBUG_DUMP_FILE( "scep_resp2", sessionInfoPtr->receiveBuffer, 
@@ -449,14 +813,14 @@ static int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 							   sessionInfoPtr->receiveBuffer, 
 							   sessionInfoPtr->receiveBufSize, &dataLength, 
 							   sessionInfoPtr->iAuthInContext, &sigResult,
-							   NULL, &iCmsAttributes );
+							   NULL, &iCmsAttributes, &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status, 
-				( status, SESSION_ERRINFO, 
-				  "Invalid CMS signed data in CA response" ) );
+		retExtErr( status, 
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Invalid CMS signed data in CA response: " ) );
 		}
-	DEBUG_DUMP_FILE( "scep_res1", sessionInfoPtr->receiveBuffer, 
+	DEBUG_DUMP_FILE( "scep_resp1", sessionInfoPtr->receiveBuffer, 
 					 dataLength );
 	if( cryptStatusError( sigResult ) )
 		{
@@ -496,6 +860,20 @@ static int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		int extValue;
 
+		/* If we get a MESSAGESTATUS_PENDING result then we can't go any 
+		   further until the CA makes up its mind about issuing us a
+		   certificate */
+		if( value == MESSAGESTATUS_PENDING_VALUE )
+			{
+			krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
+			sessionInfoPtr->sessionSCEP->flags |= SCEP_PFLAG_PENDING;
+			retExt( CRYPT_ENVELOPE_RESOURCE, 
+					( CRYPT_ENVELOPE_RESOURCE, SESSION_ERRINFO, 
+					  "SCEP server reports that certificate status is "
+					  "pending, try again later" ) );
+			}
+
+		/* It's some other sort of error, report the details to the user */
 		status = getScepStatusValue( iCmsAttributes,
 									 CRYPT_CERTINFO_SCEP_FAILINFO, &extValue );
 		if( cryptStatusOK( status ) )
@@ -515,14 +893,15 @@ static int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	status = envelopeUnwrap( sessionInfoPtr->receiveBuffer, dataLength,
 							 sessionInfoPtr->receiveBuffer, 
 							 sessionInfoPtr->receiveBufSize, &dataLength, 
-							 sessionInfoPtr->privateKey );
+							 sessionInfoPtr->privateKey, &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status, 
-				( status,  SESSION_ERRINFO, 
-				  "Couldn't decrypt CMS enveloped data in CA response" ) );
+		retExtErr( status, 
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Couldn't decrypt CMS enveloped data in CA "
+					 "response: " ) );
 		}
-	DEBUG_DUMP_FILE( "scep_res0", sessionInfoPtr->receiveBuffer, 
+	DEBUG_DUMP_FILE( "scep_resp0", sessionInfoPtr->receiveBuffer, 
 					 dataLength );
 
 	/* Finally, import the returned certificate(s) as a PKCS #7 chain */
@@ -555,27 +934,70 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	SCEP_PROTOCOL_INFO protocolInfo;
+	STREAM_PEER_TYPE peerSystemType;
+	BOOLEAN sendPostAsGet = FALSE;
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* Try and find out which extended SCEP capabilities the CA supports */
+	if( !( sessionInfoPtr->sessionSCEP->flags & SCEP_PFLAG_GOTCACAPS ) )
+		{
+		status = getCACapabilities( sessionInfoPtr );
+		
+		/* The returned information isn't currently used, the only system 
+		   for which we need it is IIS and that has a broken implementation 
+		   of it, a nice catch-22 where we can't identify the broken system 
+		   because the mechanism used to identify its brokenness is in turn 
+		   broken.  We do however use it indirectly by using the HTTP GET
+		   that it's sent as to fingerprint the remote server, which
+		   (usually) allows us to tell whether we're talking to IIS */
+
+		/* We've got the CA capabilities, don't try and read them again */
+		sessionInfoPtr->sessionSCEP->flags |= SCEP_PFLAG_GOTCACAPS;
+		}
+
+	/* See whether we can determine the remote system type, used to work 
+	   around bugs in implementations */
+	status = sioctlGet( &sessionInfoPtr->stream, STREAM_IOCTL_GETPEERTYPE, 
+						&peerSystemType, sizeof( STREAM_PEER_TYPE ) );
+	if( cryptStatusOK( status ) && peerSystemType != STREAM_PEER_NONE )
+		{
+		switch( peerSystemType )
+			{
+			case STREAM_PEER_MICROSOFT:
+				/* Microsoft doesn't support HTTP POST, but then it also 
+				   doesn't have a working implementation of GetCACaps that
+				   would indicate that it doesn't support HTTP POST either */
+				sendPostAsGet = TRUE;
+				break;
+
+			default:
+				retIntError();
+			}
+		}
 
 	/* Get the issuing CA certificate via SCEP's bolted-on HTTP GET facility 
 	   if necessary */
 	if( sessionInfoPtr->iAuthInContext == CRYPT_ERROR )
 		{
-		status = createAdditionalScepRequest( sessionInfoPtr );
+		status = getCACertificate( sessionInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 
 	/* Create the self-signed certificate that we need in order to sign and 
-	   decrypt messages */
+	   decrypt messages, unless we're still waiting for a previous pending 
+	   issue operation to complete */
 	initSCEPprotocolInfo( &protocolInfo );
-	status = createScepCertRequest( sessionInfoPtr );
-	if( cryptStatusOK( status ) )
-		status = createScepCert( sessionInfoPtr, &protocolInfo );
-	if( cryptStatusError( status ) )
-		return( status );
+	if( !( sessionInfoPtr->sessionSCEP->flags & SCEP_PFLAG_PENDING ) )
+		{
+		status = createScepCertRequest( sessionInfoPtr );
+		if( cryptStatusOK( status ) )
+			status = createScepCert( sessionInfoPtr, &protocolInfo );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Get a new certificate from the server */
 	status = createScepRequest( sessionInfoPtr, &protocolInfo );
@@ -585,8 +1007,13 @@ static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 		sioctlSetString( &sessionInfoPtr->stream, STREAM_IOCTL_QUERY,
 						 "operation=PKIOperation", 22 );
 #endif
-		status = writePkiDatagram( sessionInfoPtr, SCEP_CONTENT_TYPE,
-								   SCEP_CONTENT_TYPE_LEN );
+		if( sendPostAsGet )
+			status = writePkiDatagramAsGet( sessionInfoPtr );
+		else
+			{
+			status = writePkiDatagram( sessionInfoPtr, SCEP_CONTENT_TYPE,
+									   SCEP_CONTENT_TYPE_LEN );
+			}
 		}
 	if( cryptStatusOK( status ) )
 		status = readPkiDatagram( sessionInfoPtr );

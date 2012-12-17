@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Message ACLs Handlers							*
-*						Copyright Peter Gutmann 1997-2007					*
+*						Copyright Peter Gutmann 1997-2011					*
 *																			*
 ****************************************************************************/
 
@@ -393,20 +393,26 @@ static const ATTRIBUTE_ACL_ALT FAR_BSS formatPseudoACL[] = {
 
 /* Create-object ACLs */
 
-static const CREATE_ACL FAR_BSS deviceSpecialACL = {
-	OBJECT_TYPE_DEVICE,
-		/* PKCS #11 and CryptoAPI devices must include a device name */
-	{ MKACP_N( CRYPT_DEVICE_NONE + 1, CRYPT_DEVICE_LAST - 1 ),
-	  MKACP_N( 0, 0 ),
-	  MKACP_S( MIN_NAME_LENGTH,
-			   CRYPT_MAX_TEXTSIZE ),		/* Device name */
-	  MKACP_S_NONE() } 
+static const CREATE_ACL FAR_BSS deviceSpecialACL[] = {
+	/* PKCS #11 and CryptoAPI devices must include a device name */
+	{ OBJECT_TYPE_DEVICE,
+	  { MKACP_N( CRYPT_DEVICE_PKCS11, CRYPT_DEVICE_CRYPTOAPI ),
+		MKACP_N_FIXED( 0 ),
+		MKACP_N_FIXED( 0 ),
+		MKACP_S( MIN_NAME_LENGTH,
+				 CRYPT_MAX_TEXTSIZE ),		/* Device name */
+		MKACP_S_NONE() } },
+
+	/* End-of-ACL marker */
+	{ OBJECT_TYPE_NONE, { { 0 } } },
+	{ OBJECT_TYPE_NONE, { { 0 } } }
 	};
 static const CREATE_ACL FAR_BSS createObjectACL[] = {
 	/* Context object */
 	{ OBJECT_TYPE_CONTEXT,
 	  { MKACP_N( CRYPT_ALGO_NONE + 1, CRYPT_ALGO_LAST - 1 ),
-		MKACP_N( 0, 0 ),
+		MKACP_N_FIXED( 0 ),
+		MKACP_N_FIXED( 0 ),
 		MKACP_S_NONE(),
 		MKACP_S_NONE() } },
 
@@ -415,6 +421,7 @@ static const CREATE_ACL FAR_BSS createObjectACL[] = {
 	  { MKACP_N( CRYPT_KEYSET_NONE + 1, CRYPT_KEYSET_LAST - 1 ),
 		MKACP_N( CRYPT_KEYOPT_NONE, 
 				 CRYPT_KEYOPT_LAST - 1 ),	/* Keyset options (may be _NONE) */
+		MKACP_N_FIXED( 0 ),
 		MKACP_S( MIN_NAME_LENGTH, 
 				 MAX_ATTRIBUTE_SIZE - 1 ),	/* Keyset name */
 		MKACP_S_NONE() } },
@@ -422,38 +429,43 @@ static const CREATE_ACL FAR_BSS createObjectACL[] = {
 	/* Envelope object */
 	{ OBJECT_TYPE_ENVELOPE,
 	  { MKACP_N( CRYPT_FORMAT_NONE + 1, CRYPT_FORMAT_LAST_EXTERNAL - 1 ),
-		MKACP_N( 0, 0 ),
+		MKACP_N_FIXED( 0 ),
+		MKACP_N_FIXED( 0 ),
 		MKACP_S_NONE(),
 		MKACP_S_NONE() } },
 
 	/* Certificate object */
 	{ OBJECT_TYPE_CERTIFICATE,
 	  { MKACP_N( CRYPT_CERTTYPE_NONE + 1, CRYPT_CERTTYPE_LAST - 1 ),
-		MKACP_N( 0, 0 ),
+		MKACP_N_FIXED( 0 ),
+		MKACP_N_FIXED( 0 ),
 		MKACP_S_NONE(),
 		MKACP_S_NONE() } },
 
 	/* Device object */
 	{ OBJECT_TYPE_DEVICE,
 	  { MKACP_N( CRYPT_DEVICE_NONE + 1, CRYPT_DEVICE_LAST - 1 ),
-		MKACP_N( 0, 0 ),
+		MKACP_N_FIXED( 0 ),
+		MKACP_N_FIXED( 0 ),
 		MKACP_S_NONE(),						/* See exception list */
 		MKACP_S_NONE() }, 
 	  /* Exceptions: PKCS #11 and CryptoAPI devices have the device name as
 	     the first string parameter */
-	  { CRYPT_DEVICE_PKCS11, CRYPT_DEVICE_CRYPTOAPI }, &deviceSpecialACL },
+	  { CRYPT_DEVICE_PKCS11, CRYPT_DEVICE_CRYPTOAPI }, deviceSpecialACL },
 
 	/* Session object */
 	{ OBJECT_TYPE_SESSION,
 	  { MKACP_N( CRYPT_SESSION_NONE + 1, CRYPT_SESSION_LAST - 1 ),
-		MKACP_N( 0, 0 ),
+		MKACP_N_FIXED( 0 ),
+		MKACP_N_FIXED( 0 ),
 		MKACP_S_NONE(),
 		MKACP_S_NONE() } },
 
 	/* User object */
 	{ OBJECT_TYPE_USER,
 	  { MKACP_N( CRYPT_USER_NONE + 1, CRYPT_USER_LAST - 1 ),
-		MKACP_N( 0, 0 ),
+		MKACP_N_FIXED( 0 ),
+		MKACP_N_FIXED( 0 ),
 		MKACP_S( MIN_NAME_LENGTH, 
 				 CRYPT_MAX_TEXTSIZE ),		/* User name */
 		MKACP_S( MIN_NAME_LENGTH, 
@@ -466,32 +478,49 @@ static const CREATE_ACL FAR_BSS createObjectACL[] = {
 
 /* Create-object-indirect ACLs */
 
-static const CREATE_ACL FAR_BSS certSpecialACL = {
-	OBJECT_TYPE_CERTIFICATE,
-		/* PKCS #7/CMS certificate collections must include a identifier for 
-		   the leaf certificate in the collection, to allow the certificate-
-		   import code to pick and assemble the required certificates into a 
-		   chain */
-	{ MKACP_N( CRYPT_ICERTTYPE_CMS_CERTSET, 
-			   CRYPT_ICERTTYPE_CMS_CERTSET ),/* Cert.type hint */
-	  MKACP_N( CRYPT_IKEYID_KEYID, 
-			   CRYPT_IKEYID_ISSUERANDSERIALNUMBER ),/* Key ID type */
-	  MKACP_S( 16, MAX_INTLENGTH - 1 ),	/* Cert.object data */
-	  MKACP_S( 3, MAX_INTLENGTH - 1 ) }	/* Key ID */
+static const CREATE_ACL FAR_BSS certSpecialACL[] = {
+	/* PKCS #7/CMS certificate chains can include an optional key usage to 
+	   select a specific EE certificate in the case of muddled chains that
+	   contain multiple EE certificates */
+	{ OBJECT_TYPE_CERTIFICATE,
+	  { MKACP_N_FIXED( CRYPT_CERTTYPE_CERTCHAIN ),/* Cert.type hint */
+		MKACP_N_FIXED( 0 ),
+		MKACP_N( KEYMGMT_FLAG_NONE, KEYMGMT_FLAG_MAX ),
+										/* EE cert usage hint */
+		MKACP_S( 16, MAX_INTLENGTH - 1 ),	/* Cert.object data */
+		MKACP_S_NONE() } },
+
+	/* PKCS #7/CMS unordered certificate collections must include a 
+	   identifier for the leaf certificate in the collection in order to 
+	   allow the certificate-import code to pick and assemble the required 
+	   certificates into a chain */
+	{ OBJECT_TYPE_CERTIFICATE,
+	  { MKACP_N_FIXED( CRYPT_ICERTTYPE_CMS_CERTSET ),/* Cert.type hint */
+		MKACP_N( CRYPT_IKEYID_KEYID, 
+				 CRYPT_IKEYID_ISSUERANDSERIALNUMBER ),/* Key ID type */
+		MKACP_N_FIXED( 0 ),
+		MKACP_S( 16, MAX_INTLENGTH - 1 ),/* Cert.object data */
+		MKACP_S( 3, MAX_INTLENGTH - 1 ) } },/* Key ID */
+
+	/* End-of-ACL marker */
+	{ OBJECT_TYPE_NONE, { { 0 } } },
+	{ OBJECT_TYPE_NONE, { { 0 } } }
 	};
 static const CREATE_ACL FAR_BSS createObjectIndirectACL[] = {
 	/* Certificate object instantiated from encoded data */
 	{ OBJECT_TYPE_CERTIFICATE,
 	  { MKACP_N( CRYPT_CERTTYPE_NONE, 
 				 CRYPT_CERTTYPE_LAST - 1 ),	/* Cert.type hint (may be _NONE) */
-		MKACP_N( 0, 0 ),					/* See exception list */
+		MKACP_N_FIXED( 0 ),					/* See exception list */
+		MKACP_N_FIXED( 0 ),					/* See exception list */
 		MKACP_S( 16, MAX_INTLENGTH - 1 ),	/* Cert.object data */
 		MKACP_S_NONE() },					/* See exception list */
 	  /* Exception: CMS certificate-set objects have a key ID type as the 
 	     second integer argument and a key ID as the second string 
 		 argument */
-	  { CRYPT_ICERTTYPE_CMS_CERTSET }, &certSpecialACL },
+	  { CRYPT_CERTTYPE_CERTCHAIN, CRYPT_ICERTTYPE_CMS_CERTSET }, certSpecialACL },
 
+	/* End-of-ACL marker */
 	{ OBJECT_TYPE_NONE, { { 0 } } },
 	{ OBJECT_TYPE_NONE, { { 0 } } }
 	};
@@ -762,6 +791,169 @@ static int findCheckACL( IN_ENUM( MESSAGE_CHECK ) const int messageValue,
 *																			*
 ****************************************************************************/
 
+/* Ensure that a parameter ACL is consistent.  This is also used to check
+   the parameter ACLs in certm_acl.c and mech_acl.c */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN paramAclConsistent( const PARAM_ACL *paramACL,
+							const BOOLEAN mustBeEmpty )
+	{
+	assert( isReadPtr( paramACL, sizeof( PARAM_ACL ) ) );
+
+	/* If an ACL doesn't use all of its parameter ACL entries then the last 
+	   few will be all-zero, in which case we check that they are indeed 
+	   empty entries (the remaining entries will be checked by the code
+	   below) */
+	if( mustBeEmpty && paramACL->valueType != PARAM_VALUE_NONE )
+		return( FALSE );
+
+	/* ACL-specific checks */
+	switch( paramACL->valueType )
+		{
+		case PARAM_VALUE_NONE:
+		case PARAM_VALUE_STRING_NONE:
+			/* These attributes all have implicit parameter checks so the 
+			   ACL contents are identical */
+			if( paramACL->lowRange != 0 || \
+				paramACL->highRange != 0 || \
+				paramACL->subTypeA != ST_NONE || \
+				paramACL->subTypeB != ST_NONE || \
+				paramACL->subTypeC != ST_NONE || \
+				paramACL->flags != ACL_FLAG_NONE )
+				return( FALSE );
+			break;
+
+		case PARAM_VALUE_NUMERIC:
+			if( paramACL->lowRange < 0 || \
+				paramACL->highRange >= MAX_INTLENGTH || \
+				paramACL->lowRange > paramACL->highRange )
+				{
+				/* There are two special-case numeric ACLs for which both 
+				   ranges can be -ve and that's when the value is set to 
+				   CRYPT_UNUSED or CRYPT_USE_DEFAULT */
+				if( !( paramACL->lowRange == CRYPT_UNUSED && \
+					   paramACL->highRange == CRYPT_UNUSED ) && \
+					!( paramACL->lowRange == CRYPT_USE_DEFAULT && \
+					   paramACL->highRange == CRYPT_USE_DEFAULT ) )
+					return( FALSE );
+				}
+			if( paramACL->subTypeA != ST_NONE || \
+				paramACL->subTypeB != ST_NONE || \
+				paramACL->subTypeC != ST_NONE || \
+				paramACL->flags != ACL_FLAG_NONE )
+				return( FALSE );
+			break;
+
+		case PARAM_VALUE_STRING:
+		case PARAM_VALUE_STRING_OPT:
+			if( paramACL->lowRange < 1 || \
+				paramACL->highRange >= MAX_INTLENGTH || \
+				paramACL->lowRange > paramACL->highRange )
+				return( FALSE );
+			if( paramACL->subTypeA != ST_NONE || \
+				paramACL->subTypeB != ST_NONE || \
+				paramACL->subTypeC != ST_NONE || \
+				paramACL->flags != ACL_FLAG_NONE )
+				return( FALSE );
+			break;
+
+		case PARAM_VALUE_OBJECT:
+			if( paramACL->lowRange != 0 || \
+				paramACL->highRange != 0 )
+				return( FALSE );
+			if( ( paramACL->subTypeA & ( SUBTYPE_CLASS_B | SUBTYPE_CLASS_C ) ) || \
+				paramACL->subTypeB != ST_NONE || \
+				paramACL->subTypeC != ST_NONE )
+				return( FALSE );
+			if( paramACL->flags & ~ACL_FLAG_MASK )
+				return( FALSE );
+			break;
+
+		default:
+			return( FALSE );
+		}
+
+	return( TRUE );
+	}
+
+/* Ensure that a create-object ACL is consistent */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN createAclConsistent( const CREATE_ACL *createACL,
+									const BOOLEAN doRecurse )
+	{
+	const PARAM_ACL *paramACL = getParamACL( createACL );
+	const int paramACLSize = getParamACLSize( createACL );
+	BOOLEAN paramACLEmpty = FALSE;
+	int subType1 = createACL->exceptions[ 0 ];
+	int subType2 = createACL->exceptions[ 1 ];
+	int i;
+
+	assert( isReadPtr( createACL, sizeof( CREATE_ACL ) ) );
+
+	/* Check the parameter ACLs within the create ACL */
+	for( i = 0; i < paramACLSize && i < FAILSAFE_ITERATIONS_SMALL; i++ )
+		{
+		if( !paramAclConsistent( &paramACL[ i ], paramACLEmpty ) )
+			return( FALSE );
+		if( paramACL[ i ].valueType == PARAM_VALUE_NONE )
+			paramACLEmpty = TRUE;
+		}
+	ENSURES_B( i < FAILSAFE_ITERATIONS_SMALL );
+
+	/* If there are no exceptions present, we're done */
+	if( createACL->exceptions[ 0 ] == 0 && \
+		createACL->exceptions[ 1 ] == 0 && \
+		createACL->exceptionACL == NULL )
+		return( TRUE );
+
+	/* Make sure that the exception entries are consistent */
+	if( ( createACL->exceptions[ 0 ] == 0 && \
+		  createACL->exceptions[ 1 ] != 0 ) || \
+		createACL->exceptionACL == NULL )
+		return( FALSE );
+
+	/* If we're only checking the current ACL level, we're done */
+	if( !doRecurse )
+		return( TRUE );
+
+	/* Check the exception ACLs */
+	for( i = 0; createACL->exceptionACL[ i ].type != OBJECT_TYPE_NONE && \
+				i < FAILSAFE_ITERATIONS_MED; i++ )
+		{
+		const CREATE_ACL *exceptionACL = &createACL->exceptionACL[ i ];
+		const PARAM_ACL *paramACL = getParamACL( exceptionACL );
+
+		if( !createAclConsistent( exceptionACL, FALSE ) )
+			return( FALSE );
+
+		/* Make sure that each of the exception entries in the main ACL is
+		   handled in a sub-ACL, and that there are no duplicates */
+		REQUIRES( paramACL->valueType == PARAM_VALUE_NUMERIC );
+		if( subType1 >= paramACL->lowRange && \
+			subType1 <= paramACL->highRange )
+			{
+			if( subType1 == 0 )
+				return( FALSE );
+			subType1 = 0;
+			}
+		if( subType2 >= paramACL->lowRange && \
+			subType2 <= paramACL->highRange )
+			{
+			if( subType2 == 0 )
+				return( FALSE );
+			subType2 = 0;
+			}
+		}
+	ENSURES_B( i < FAILSAFE_ITERATIONS_MED );
+	if( subType1 != 0 || subType2 != 0 )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
+/* Initialise and check the message ACLs */
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
@@ -774,6 +966,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 				i < FAILSAFE_ARRAYSIZE( compareACLTbl, COMPARE_ACL ); i++ )
 		{
 		const COMPARE_ACL *compareACL = &compareACLTbl[ i ];
+		const PARAM_ACL *paramACL = getParamACL( compareACL );
+		const int paramACLSize = getParamACLSize( compareACL );
+		BOOLEAN paramACLEmpty = FALSE;
+		int j;
 
 		ENSURES( compareACL->compareType > MESSAGE_COMPARE_NONE && \
 				compareACL->compareType < MESSAGE_COMPARE_LAST && \
@@ -807,6 +1003,16 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 				retIntError();
 				}
 			}
+		
+		/* Check the paramter ACLs within the compare ACL */
+		for( j = 0; j < paramACLSize && j < FAILSAFE_ITERATIONS_SMALL; j++ )
+			{
+			if( !paramAclConsistent( &paramACL[ j ], paramACLEmpty ) )
+				return( FALSE );
+			if( paramACL[ j ].valueType == PARAM_VALUE_NONE )
+				paramACLEmpty = TRUE;
+			}
+		ENSURES( j < FAILSAFE_ITERATIONS_SMALL );
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( compareACLTbl, COMPARE_ACL ) );
 
@@ -905,12 +1111,16 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 		ENSURES( isValidType( createACL->type ) );
 		ENSURES( paramInfo( createACL, 0 ).valueType == PARAM_VALUE_NUMERIC && \
 				 paramInfo( createACL, 1 ).valueType == PARAM_VALUE_NUMERIC && \
-				 ( paramInfo( createACL, 2 ).valueType == PARAM_VALUE_STRING_NONE || \
-				   paramInfo( createACL, 2 ).valueType == PARAM_VALUE_STRING ) && \
+				 paramInfo( createACL, 2 ).valueType == PARAM_VALUE_NUMERIC && \
 				 ( paramInfo( createACL, 3 ).valueType == PARAM_VALUE_STRING_NONE || \
-				   paramInfo( createACL, 3 ).valueType == PARAM_VALUE_STRING ) );
+				   paramInfo( createACL, 3 ).valueType == PARAM_VALUE_STRING ) && \
+				 ( paramInfo( createACL, 4 ).valueType == PARAM_VALUE_STRING_NONE || \
+				   paramInfo( createACL, 4 ).valueType == PARAM_VALUE_STRING ) );
 		if( createACL->type == OBJECT_TYPE_CONTEXT )
 			{
+			/* The algorithm values cover a wide range so we perform a 
+			   separate check for them in order to allow more precise 
+			   checking for the other object's values */
 			ENSURES( paramInfo( createACL, 0 ).lowRange > CRYPT_ALGO_NONE && \
 					 paramInfo( createACL, 0 ).highRange < CRYPT_ALGO_LAST );
 			}
@@ -922,19 +1132,9 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 			ENSURES( paramInfo( createACL, 0 ).lowRange > 0 && \
 					 paramInfo( createACL, 0 ).highRange < CRYPT_CERTTYPE_LAST );
 			}
-		if( createACL->exceptions[ 0 ] == 0 && \
-			createACL->exceptions[ 1 ] != 0 )
-			{
-			DEBUG_DIAG(( "Create-object ACLs inconsistent" ));
-			retIntError();
-			}
-		if( ( createACL->exceptions[ 0 ] != 0 || \
-			  createACL->exceptions[ 1 ] != 0 ) && \
-			createACL->exceptionACL == NULL )
-			{
-			DEBUG_DIAG(( "Create-object ACLs inconsistent" ));
-			retIntError();
-			}
+
+		/* Check the parameter ACLs within the compare ACL */
+		ENSURES( createAclConsistent( createACL, TRUE ) );
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( createObjectACL, CREATE_ACL ) );
 
@@ -948,9 +1148,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 		ENSURES( isValidType( createACL->type ) );
 		if( paramInfo( createACL, 0 ).valueType != PARAM_VALUE_NUMERIC || \
 			paramInfo( createACL, 1 ).valueType != PARAM_VALUE_NUMERIC || \
-			paramInfo( createACL, 2 ).valueType != PARAM_VALUE_STRING || \
-			( paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING_NONE && \
-			  paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING ) )
+			paramInfo( createACL, 2 ).valueType != PARAM_VALUE_NUMERIC || \
+			paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING || \
+			( paramInfo( createACL, 4 ).valueType != PARAM_VALUE_STRING_NONE && \
+			  paramInfo( createACL, 4 ).valueType != PARAM_VALUE_STRING ) )
 			{
 			DEBUG_DIAG(( "Create-object indirect ACLs inconsistent" ));
 			retIntError();
@@ -959,21 +1160,17 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 				 paramInfo( createACL, 0 ).highRange < CRYPT_CERTTYPE_LAST );
 				/* The low-range may be 0, which indicates that we're using 
 				   automatic format detection */
-		ENSURES( paramInfo( createACL, 2 ).lowRange >= 16 && \
-				 paramInfo( createACL, 2 ).highRange < MAX_INTLENGTH );
-		if( createACL->exceptions[ 0 ] == 0 && \
-			createACL->exceptions[ 1 ] != 0 )
+		ENSURES( paramInfo( createACL, 3 ).lowRange >= 16 && \
+				 paramInfo( createACL, 3 ).highRange < MAX_INTLENGTH );
+		if( paramInfo( createACL, 1 ).highRange == 0 && \
+			paramInfo( createACL, 2 ).highRange != 0 )
 			{
 			DEBUG_DIAG(( "Create-object ACLs inconsistent" ));
 			retIntError();
 			}
-		if( ( createACL->exceptions[ 0 ] != 0 || \
-			  createACL->exceptions[ 1 ] != 0 ) && \
-			createACL->exceptionACL == NULL )
-			{
-			DEBUG_DIAG(( "Create-object ACLs inconsistent" ));
-			retIntError();
-			}
+
+		/* Check the parameter ACLs within the compare ACL */
+		ENSURES( createAclConsistent( createACL, TRUE ) );
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( createObjectIndirectACL, CREATE_ACL ) );
 
@@ -1019,22 +1216,20 @@ int preDispatchSignalDependentObjects( IN_HANDLE const int objectHandle,
 	/* An inability to change the reference counts of the dependent objects 
 	   doesn't affect the object itself so we can't report it as an error, 
 	   however we can at least warn about it in debug mode */
-	if( isValidObject( objectInfoPtr->dependentDevice ) )
-		{
-		/* Velisurmaaja */
-		status = decRefCount( objectInfoPtr->dependentDevice, 0, NULL, TRUE );
-		assert( cryptStatusOK( status ) );
-		}
 	if( isValidObject( objectInfoPtr->dependentObject ) )
 		{
+		/* Velisurmaaja */
 		status = decRefCount( objectInfoPtr->dependentObject, 0, NULL, TRUE );
 		assert( cryptStatusOK( status ) );
+		objectInfoPtr->dependentObject = CRYPT_ERROR;
 		}
 	objectInfoPtr->flags |= OBJECT_FLAG_SIGNALLED;
 
 	/* Postcondition: The object is now in the destroyed state as far as
-	   other objects are concerned */
+	   other objects are concerned, and the dependent object is disconnected 
+	   from this object */
 	ENSURES( isInvalidObjectState( objectHandle ) );
+	ENSURES( !isValidObject( objectInfoPtr->dependentObject ) );
 
 	return( CRYPT_OK );
 	}
@@ -1996,31 +2191,55 @@ int preDispatchCheckCreate( IN_HANDLE const int objectHandle,
 	createACL = &createACL[ i ];
 
 	/* Check whether this object subtype requires special handling and if it
-	   does switch to the alternative ACL.  The default value for the 
-	   entries in the exceptions list is 0, but no valid exceptionally 
-	   processed sub-type has this value (which corresponds to 
-	   CRYPT_something_NONE) so we can never inadvertently match a valid 
-	   type.  We do however have to check for a nonzero subtype argument 
-	   since for indirect object creates the subtype arg.can be zero if type 
-	   autodetection is being used */
+	   does switch to an alternative ACL.  The default value for the entries 
+	   in the exceptions list is 0, but no valid exceptionally processed 
+	   sub-type has this value (which corresponds to CRYPT_something_NONE) 
+	   so we can never inadvertently match a valid type.  We do however have 
+	   to check for a nonzero subtype argument since for indirect object 
+	   creates the subtype arg.can be zero if type autodetection is being 
+	   used */
 	if( createInfo->arg1 != 0 && \
-		( createACL->exceptions[ 0 ] == createInfo->arg1 || \
-		  createACL->exceptions[ 1 ] == createInfo->arg1 ) )
-		createACL = createACL->exceptionACL;
+		( createInfo->arg1 == createACL->exceptions[ 0 ] || \
+		  createInfo->arg1 == createACL->exceptions[ 1 ] ) )
+		{
+		const int objectSubType = createInfo->arg1;
+		int i;
+
+		/* This object subtype is covered by a sub-ACL, walk down the list 
+		   of exception ACLs until we find the one that we want */
+		for( i = 0; createACL->exceptionACL[ i ].type != OBJECT_TYPE_NONE && \
+					i < FAILSAFE_ITERATIONS_MED; i++ )
+			{
+			const CREATE_ACL *exceptionACL = &createACL->exceptionACL[ i ];
+			const PARAM_ACL *paramACL = getParamACL( exceptionACL );
+
+			/* If the object subtype that we're processing is the one 
+			   that's covered by this ACL then we're done */
+			if( objectSubType >= paramACL->lowRange && \
+				objectSubType <= paramACL->highRange )
+				{
+				createACL = exceptionACL;
+				break;
+				}
+			}
+		ENSURES( i < FAILSAFE_ITERATIONS_MED );
+		}
 
 	/* Make sure that the subtype is valid for this object type */
 	if( !checkParamNumeric( paramInfo( createACL, 0 ), createInfo->arg1 ) )
 		return( CRYPT_ARGERROR_NUM1 );
 
-	/* Make sure that any additional numeric argument is valid */
+	/* Make sure that any additional numeric arguments are valid */
 	ENSURES( checkParamNumeric( paramInfo( createACL, 1 ), 
 								createInfo->arg2 ) );
+	ENSURES( checkParamNumeric( paramInfo( createACL, 2 ), 
+								createInfo->arg3 ) );
 
 	/* Make sure that any string arguments are valid */
-	if( !checkParamString( paramInfo( createACL, 2 ), 
+	if( !checkParamString( paramInfo( createACL, 3 ), 
 						   createInfo->strArg1, createInfo->strArgLen1 ) )
 		return( CRYPT_ARGERROR_STR1 );
-	if( !checkParamString( paramInfo( createACL, 3 ), 
+	if( !checkParamString( paramInfo( createACL, 4 ), 
 						   createInfo->strArg2, createInfo->strArgLen2 ) )
 		return( CRYPT_ARGERROR_STR2 );
 
@@ -2134,6 +2353,42 @@ int preDispatchCheckTrustMgmtAccess( IN_HANDLE const int objectHandle,
 *							Message Post-Dispatch Handlers					*
 *																			*
 ****************************************************************************/
+
+/* If it's a destroy object message, adjust the reference counts of any
+   dependent devices.  We have to do this as a post-dispatch action since
+   the object that we're destroying often depends on the dependent device */
+
+CHECK_RETVAL \
+int postDispatchSignalDependentDevices( IN_HANDLE const int objectHandle,
+										STDC_UNUSED const MESSAGE_TYPE dummy1,
+										STDC_UNUSED const void *dummy2,
+										STDC_UNUSED const int dummy3,
+										STDC_UNUSED const void *dummy4 )
+	{
+	OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
+	STDC_UNUSED int status;
+
+	/* Preconditions */
+	REQUIRES( isValidObject( objectHandle ) && \
+			  objectHandle >= NO_SYSTEM_OBJECTS );
+
+	/* An inability to change the reference counts of the dependent devices 
+	   doesn't affect the object itself so we can't report it as an error, 
+	   however we can at least warn about it in debug mode */
+	if( isValidObject( objectInfoPtr->dependentDevice ) )
+		{
+		/* Velisurmaaja */
+		status = decRefCount( objectInfoPtr->dependentDevice, 0, NULL, TRUE );
+		assert( cryptStatusOK( status ) );
+		objectInfoPtr->dependentDevice = CRYPT_ERROR;
+		}
+
+	/* Postcondition: The dependent device is now disconnected from the 
+	   object */
+	ENSURES( !isValidObject( objectInfoPtr->dependentDevice ) );
+
+	return( CRYPT_OK );
+	}
 
 /* If we're fetching or creating an object, it won't be visible to an
    outside caller.  If it's an external message, we have to make the object

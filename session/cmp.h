@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							CMP Definitions Header File						*
-*						Copyright Peter Gutmann 1999-2009					*
+*						Copyright Peter Gutmann 1999-2011					*
 *																			*
 ****************************************************************************/
 
@@ -141,9 +141,6 @@
 /* CMP version and the default port for the "TCP transport" kludge */
 
 #define CMP_VERSION				2		/* CMP version */
-#ifdef USE_CMP_TRANSPORT
-  #define CMP_PORT				829		/* TCP default port */
-#endif /* USE_CMP_TRANSPORT */
 
 /* Various CMP constants.  Since the cryptlib MAC keys are high-entropy 
    machine-generated values we don't have to use as many hashing iterations 
@@ -388,7 +385,13 @@ typedef struct {
 	   CA certificate to verify instead of MAC'ing it.  If we're signing,
 	   we clear the useMACsend flag, if we're verifying we clear the
 	   useMACreceive flag (in theory the two should match, but there are
-	   implementations that use MACs one way and sigs the other) */
+	   implementations that use MACs one way and sigs the other).
+	   
+	   In addition to the standard MAC password there's also an alternative
+	   MAC password that may be used to authenticated revocations.  Since 
+	   this doesn't fit into the conventional username+password model, we 
+	   keep a copy here in case it's needed to process a MAC'd revocation
+	   request */
 	CRYPT_ALGO_TYPE hashAlgo;				/* Hash algo for signature */
 	int hashParam;							/* Optional parameter for hash algo.*/
 	CRYPT_CONTEXT iMacContext;				/* MAC context */
@@ -396,6 +399,8 @@ typedef struct {
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];	/* MAC password salt  */
 	int saltSize;
 	int iterations;							/* MAC password iterations */
+	BYTE altMacKey[ CRYPT_MAX_HASHSIZE + 8 ];
+	int altMacKeySize;						/* Alt.MAC key for revocations */
 	BOOLEAN useMACsend, useMACreceive;		/* Use MAC to verify integrity */
 
 	/* Other protocol information.  CMP uses an extremely clunky 
@@ -443,7 +448,7 @@ typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 									   IN_LENGTH_SHORT const int messageLength );
 typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 		int ( *WRITEMESSAGE_FUNCTION )( INOUT STREAM *stream, 
-										const SESSION_INFO *sessionInfoPtr,
+										INOUT SESSION_INFO *sessionInfoPtr,
 										const CMP_PROTOCOL_INFO *protocolInfo );
 
 CHECK_RETVAL_PTR \

@@ -79,7 +79,7 @@ void setStreamLayerHTTPwrite( INOUT NET_STREAM_INFO *netStream );
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sendHTTPError( INOUT STREAM *stream, 
-				   IN_BUFFER( headerBufMaxLen ) char *headerBuffer, 
+				   OUT_BUFFER_FIXED( headerBufMaxLen ) char *headerBuffer, 
 				   IN_LENGTH_SHORT_MIN( 256 ) const int headerBufMaxLen, 
 				   IN_INT const int httpStatus );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
@@ -91,16 +91,18 @@ int parseUriInfo( INOUT_BUFFER( dataInLength, *dataOutLength ) char *data,
 				  IN_LENGTH_SHORT const int dataInLength, 
 				  OUT_LENGTH_SHORT_Z int *dataOutLength, 
 				  INOUT HTTP_URI_INFO *uriInfo );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
 int readFirstHeaderLine( INOUT STREAM *stream, 
 						 OUT_BUFFER_FIXED( dataMaxLength ) char *dataBuffer, 
 						 IN_LENGTH_SHORT const int dataMaxLength, 
-						 OUT_RANGE( 0, 999 ) int *httpStatus );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+						 OUT_RANGE( 0, 999 ) int *httpStatus,
+						 OUT_BOOL BOOLEAN *isSoftError );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
 int readHeaderLines( INOUT STREAM *stream, 
 					 OUT_BUFFER_FIXED( lineBufMaxLen ) char *lineBuffer, 
 					 IN_LENGTH_SHORT_MIN( 256 ) const int lineBufMaxLen,
-					 INOUT HTTP_HEADER_INFO *headerInfo );
+					 INOUT HTTP_HEADER_INFO *headerInfo,
+					 OUT_BOOL BOOLEAN *isSoftError );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readTrailerLines( INOUT STREAM *stream, 
 					  OUT_BUFFER_FIXED( lineBufMaxLen ) char *lineBuffer, 

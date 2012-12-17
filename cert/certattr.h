@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					Certificate Attribute Routines Header File 				*
-*						Copyright Peter Gutmann 1997-2008					*
+*						Copyright Peter Gutmann 1997-2011					*
 *																			*
 ****************************************************************************/
 
@@ -75,7 +75,7 @@
     
 	FL_ATTR_CRITICAL: The overall extension is marked critical when encoding.
 
-   The attribute field flags are:
+   The encoding flags are:
 
 	FL_DEFAULT: The field has a default value that's set if no field data
 		is present.
@@ -122,7 +122,20 @@
 		present.  The field marked with FL_SETOF in the encoding/decoding
 		table is bookmarked, if all of the SET/SEQUENCE data isn't read the 
 		first time through then the decoding table position is restarted 
-		from the bookmark until the SET/SEQUENCE data is exhausted */
+		from the bookmark until the SET/SEQUENCE data is exhausted.
+
+	FL_SPECIALENCODING: The attribute isn't encoded as part of the standard
+		attributes but requires special-case encoding.  This exists for use
+		with certificate requests to indicate that the attribute isn't 
+		encoded encapsulated inside an extensionRequest but as a standalone
+		attribute, because certificate request attributes are usually 
+		encapsulated inside an extensionRequest wrapper, however occasionally 
+		an attribute needs to be encoded in non-encapsulated form.  
+		
+		In addition this is just as much an attribute flag as an encoding 
+		one since it controls the encoding of an entire attribute, we group 
+		it with the encoding flags mostly because there's no room for 
+		expansion any more in the attribute flags */
 
 /* Type information and whole-attribute flags */
 
@@ -169,6 +182,7 @@
 #define FL_EMPTYOK			0x0200		/* SET/SEQ may be empty */
 #define FL_NONENCODING		0x0400		/* Field is a non-encoding value */
 #define FL_MULTIVALUED		0x0800		/* Field can occur multiple times */
+#define FL_SPECIALENCODING	0x1000		/* Attribute requires special-case encoding */
 
 /* If a constructed field is nested (for example a SEQUENCE OF SEQUENCE) 
    then the FL_SEQEND may need to denote multiple levels of unnesting.  This 

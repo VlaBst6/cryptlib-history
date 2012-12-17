@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Win32 Randomness-Gathering Code					*
-*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2010	*
+*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2011	*
 *																			*
 ****************************************************************************/
 
@@ -19,6 +19,13 @@
 #include <winperf.h>
 #include <winioctl.h>
 #include <process.h>
+
+/* MinGW doesn't support inline asm (via gas) in its standard install
+   so we turn it off just for this file */
+
+#ifdef __MINGW32__
+  #define NO_ASM
+#endif /* __MINGW32__ */
 
 /* Some new CPU opcodes aren't supported by all compiler versions, if
    they're not available we define them here.  BC++ can only handle the
@@ -128,8 +135,8 @@ static HCRYPTPROV hProv;			/* Handle to Intel RNG CSP */
 
 /* Try and connect to the system RNG if there's one present.  In theory we 
    could also try and get data from a TPM if there's one present, but the 
-   TPM functions are only available under Vista (so they'd have to be 
-   dynamically bound), the chances of a TPM being present and accessible 
+   TPM functions are only available under Vista and newer (so they'd have to 
+   be dynamically bound), the chances of a TPM being present and accessible 
    are pretty slim, and since we have to talk to the TPM at the raw APDU 
    level (not to mention all the horror stories in the MSDN forums about 
    getting any of this stuff to work) the amount of effort required versus 
@@ -196,9 +203,9 @@ static void initSystemRNG( void )
 	/* Try and connect to the PIII RNG CSP.  The AMD 768 southbridge (from 
 	   the 760 MP chipset) also has a hardware RNG, but there doesn't appear 
 	   to be any driver support for this as there is for the Intel RNG so we 
-	   can't do much with it.  OTOH the Intel RNG is also effectively dead 
-	   as well, mostly due to virtually nonexistant support/marketing by 
-	   Intel, it's included here mostly for form's sake */
+	   can't do much with it.  OTOH the Intel RNG is also effectively dead, 
+	   mostly due to virtually nonexistant support/marketing by Intel, it's 
+	   included here mostly for form's sake */
 	if( ( pCryptAcquireContext == NULL || \
 		  pCryptGenRandom == NULL || pCryptReleaseContext == NULL || \
 		  pCryptAcquireContext( &hProv, NULL, INTEL_DEF_PROV,
@@ -216,7 +223,7 @@ static void initSystemRNG( void )
 	}
 
 /* Read data from the system RNG, in theory the PIII hardware RNG but in
-   practice more likely the CryptoAPI software RNG */
+   practice the CryptoAPI software RNG */
 
 static void readSystemRNG( void )
 	{
@@ -530,7 +537,7 @@ static void readRivaTunerData( void )
 			{
 			MESSAGE_DATA msgData;
 			const BYTE *entryPtr = ( ( BYTE * ) rivaTunerHeaderPtr ) + \
-								  sizeof( RTHM_SHARED_MEMORY_HEADER );
+								   sizeof( RTHM_SHARED_MEMORY_HEADER );
 			const int entryTotalSize = rivaTunerHeaderPtr->dwNumEntries * \
 									   rivaTunerHeaderPtr->dwEntrySize;
 			static const int quality = 10;
@@ -986,22 +993,23 @@ void fastPoll( void )
 		addedFixedItems = TRUE;
 		}
 
-	/* The performance of QPC varies depending on the architecture it's
-	   running on and on the OS, the MS documentation is vague about the
-	   details because it varies so much.  Under Win9x/ME it reads the
-	   1.193180 MHz PIC timer.  Under NT/Win2K/XP it may or may not read the
-	   64-bit TSC depending on the HAL and assorted other circumstances,
-	   generally on machines with a uniprocessor HAL
-	   KeQueryPerformanceCounter() uses a 3.579545MHz timer and on machines
-	   with a multiprocessor or APIC HAL it uses the TSC (the exact time
-	   source is controlled by the HalpUse8254 flag in the kernel).  Since
-	   Vista-era machines are generally running on multiprocessor HALs we
-	   usually get the TSC under Vista.
+	/* The performance of QPC varies depending on the architecture that it's 
+	   running on and on the OS, the MS documentation is vague about the 
+	   details because they vary so much.  Under Win9x/ME it reads the 
+	   1.193180 MHz PIC timer.  Under NT/Win2K/XP/Vista/etc it may or may 
+	   not read the 64-bit TSC depending on the HAL and assorted other 
+	   circumstances, generally on machines with a uniprocessor HAL 
+	   KeQueryPerformanceCounter() uses a 3.579545MHz timer and on machines 
+	   with a multiprocessor or APIC HAL it uses the TSC (the exact time 
+	   source is controlled by the HalpUse8254 flag in the kernel).  Since 
+	   Vista-era and newer machines are generally running on multiprocessor 
+	   HALs (due to multicore processors and/or hyperthreading) we usually 
+	   get the TSC under Vista and up.
 
-	   This choice of time sources is somewhat peculiar because on a
-	   multiprocessor machine it's theoretically possible to get completely
-	   different TSC readings depending on which CPU you're currently
-	   running on, while for uniprocessor machines it's not a problem.
+	   This choice of time sources is somewhat peculiar because on a 
+	   multiprocessor machine it's theoretically possible to get completely 
+	   different TSC readings depending on which CPU you're currently 
+	   running on, while for uniprocessor machines it's not a problem. 
 	   However the kernel synchronises the TSCs across CPUs at boot time if 
 	   a multiprocessor HAL is used (it resets the TSC as part of its system 
 	   init) so this shouldn't really be a problem.  Under WinCE it's 
@@ -1010,37 +1018,37 @@ void fastPoll( void )
 
 	   Another feature of the TSC (although it doesn't really affect us 
 	   here) is that mobile CPUs will turn off the TSC when they idle, 
-	   newer Pentiums and Athlons with advanced power management/clock
+	   newer Pentiums and Athlons with advanced power management/clock 
 	   throttling will change the rate of the counter when they clock-
 	   throttle (to match the current CPU speed), and hyperthreading 
 	   Pentiums will turn it off when both threads are idle (this more or 
 	   less makes sense since the CPU will be in the halted state and not 
-	   executing any instructions to count).  What makes this even more
-	   exciting is that the resulting handling of the TSC is almost entirely
-	   nondeterministic, the only thing that's guaranteed is that the
-	   counter is monotonically incrementing.  For example when a newer
-	   processor with power-saving features enabled ramps down its core
-	   clock the TSC rate is lowered to correspond to the clock rate
-	   (assuming that the BIOS sets this up correctly, which isn't always
-	   the case).  However various events like cache probes can cause the
-	   core to temporarily return to the original rate to process the
-	   event before dropping back to the throttled rate, which can cause
-	   TSC drift across multiple cores.  Hardware-specific events like
-	   AMDs STPCLK signalling ("shut 'er down ma, she's glowing red") can
-	   reach different cores at different times and lead to ramping up
-	   and down and different times and for different durations, leading
+	   executing any instructions to count).  What makes this even more 
+	   exciting is that the resulting handling of the TSC is almost entirely 
+	   nondeterministic, the only thing that's guaranteed is that the 
+	   counter is monotonically incrementing.  For example when a newer 
+	   processor with power-saving features enabled ramps down its core 
+	   clock the TSC rate is lowered to correspond to the clock rate 
+	   (assuming that the BIOS sets this up correctly, which isn't always 
+	   the case).  However various events like cache probes can cause the 
+	   core to temporarily return to the original rate to process the 
+	   event before dropping back to the throttled rate, which can cause 
+	   TSC drift across multiple cores.  Hardware-specific events like 
+	   AMDs STPCLK signalling ("shut 'er down ma, she's glowing red") can 
+	   reach different cores at different times and lead to ramping up 
+	   and down and different times and for different durations, leading 
 	   to further drift.  Newer AMD CPUs fix this by providing drift-
 	   invariant TSCs if the TscInvariant CPUID feature flag is set.
 
-	   As a result, if we're on a system with multiple cores and it doesn't
-	   have the AMD TscInvariant fix then the TSC skew can also be a source
+	   As a result, if we're on a system with multiple cores and it doesn't 
+	   have the AMD TscInvariant fix then the TSC skew can also be a source 
 	   of entropy.  To some extent this is just timing the context switch 
 	   time across CPUs (which in itself is a source of some entropy), but 
-	   what's left is the TSC skew across cores.  If this is if interest we
+	   what's left is the TSC skew across cores.  If this is if interest we 
 	   can do it with code something like the following.  Note that this is 
 	   only sample code, there are various complications such as the fact 
-	   that another thread may change the process affinity mask between the
-	   call to the initial GetProcessAffinityMask() and the final
+	   that another thread may change the process affinity mask between the 
+	   call to the initial GetProcessAffinityMask() and the final 
 	   SetThreadAffinityMask() to restore the original mask, even if we 
 	   insert another GetProcessAffinityMask() just before the 
 	   SetThreadAffinityMask() there's still a small race condition present 
@@ -1048,7 +1056,7 @@ void fastPoll( void )
 
 		DWORD processAfinityMask, systemAffinityMask, mask = 0x10000;
 
-		// Get the available processors that the thread can be scheduled on
+		// Get the available processors that the thread can be scheduled on 
 		if( !GetProcessAffinityMask( GetCurrentProcess(), processAfinityMask, 
 									 systemAffinityMask ) )
 			return;
@@ -1112,17 +1120,19 @@ void fastPoll( void )
 		}
 #endif /* Win32 vs. Win64 */
 
-	/* If there's a hardware RNG present, read data from it.  We check that
-	   the RNG is still present/enabled on each fetch since it could (at 
-	   least in theory) be disabled by the OS between fetches.  We also read 
-	   the data into an explicitly dword-aligned buffer (which the standard 
-	   buffer should be anyway, but we make it explicit here just to be 
-	   safe).  Note that we have to force alignment using a LONGLONG rather 
-	   than a #pragma pack, since chars don't need alignment it would have 
-	   no effect on the BYTE [] member */
+	/* If there's a hardware RNG present, read data from it.  In cases where 
+	   there's an RNG status flag present, we check that the RNG is still 
+	   present/enabled on each fetch since it could (at least in theory) be 
+	   disabled by the OS between fetches.  We also read the data into an 
+	   explicitly dword-aligned buffer (which the standard buffer should be 
+	   anyway, but we make it explicit here just to be safe).  Note that we 
+	   have to force alignment using a LONGLONG rather than a #pragma pack, 
+	   since chars don't need alignment it would have no effect on the 
+	   BYTE [] member */
 #ifndef NO_ASM
 	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_XSTORE )
 		{
+		/* VIA C3 and newer */
 		struct alignStruct {
 			LONGLONG dummy1;		/* Force alignment of following member */
 			BYTE buffer[ 64 ];
@@ -1158,7 +1168,8 @@ void fastPoll( void )
 		}
 	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_RDRAND )
 		{
-		unsigned long buffer[ 8 + 8 ];
+		/* Intel CPUs with AVX support (Sandy Bridge and newer) */
+		unsigned long rdrandBuffer[ 8 + 8 ];
 		int byteCount = 0;
 
 		__asm {
@@ -1167,7 +1178,7 @@ void fastPoll( void )
 		trngLoop:
 			rdrand_eax
 			jnc trngExit		/* TRNG result bad, exit with byteCount = 0 */
-			mov [buffer+ecx], eax
+			mov [rdrandBuffer+ecx], eax
 			add ecx, 4
 			cmp ecx, 32			/* Fill 32 bytes worth */
 			jl trngLoop
@@ -1176,12 +1187,18 @@ void fastPoll( void )
 			}
 		if( byteCount > 0 )
 			{
-			addRandomData( randomState, buffer, byteCount );
+			addRandomData( randomState, rdrandBuffer, byteCount );
 			trngValue = 45;
 			}
 		}
 	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_TRNG )
 		{
+		/* AMD Geode LX.  The procedure for reading this is complex and
+		   awkward, and probably only possible in kernel mode (see section
+		   6.12.2 of the Geode LX data book).  In additionthe CPU line was 
+		   more or less abandoned in 2005 so we don't try and do anything 
+		   with it */
+#if 0
 		unsigned long value = 0;
 
 		__asm {
@@ -1199,6 +1216,7 @@ void fastPoll( void )
 			addRandomValue( randomState, value );
 			trngValue = 20;
 			}
+#endif /* 0 */
 		}
 #endif /* NO_ASM */
 
@@ -1220,13 +1238,15 @@ void fastPoll( void )
 
 /* Type definitions for function pointers to call Toolhelp32 functions */
 
-#ifdef _MSC_VER
+#if defined( _MSC_VER )
   #if VC_GE_2005( _MSC_VER )
 	#define THREAD_ID	ULONG_PTR
   #else
 	#define THREAD_ID	DWORD
   #endif /* VC++ < 2005 */
-#endif /* VC++ */
+#elif defined( __MINGW32__ )
+  #define THREAD_ID	DWORD
+#endif /* Compiler-specific defines */
 
 typedef BOOL ( WINAPI *MODULEWALK )( HANDLE hSnapshot, LPMODULEENTRY32 lpme );
 typedef BOOL ( WINAPI *THREADWALK )( HANDLE hSnapshot, LPTHREADENTRY32 lpte );
@@ -1360,12 +1380,43 @@ static void slowPollWin95( void )
 	   suboptimal performance if we have a small number of deep heaps
 	   rather than the current large number of shallow heaps.
 
-	   There is however a second consideration that needs to be taken into
-	   account when doing this, which is that the heap-management functions
-	   aren't completely thread-safe, so that under (very rare) conditions
-	   of heavy allocation/deallocation this can cause problems when calling
-	   HeapNext().  By limiting the amount of time that we spend in each
-	   heap, we can reduce our exposure somewhat */
+	   Unfortunately this interacts badly with a problem with the heap-
+	   traversal functions there's a Heap32First() and a Heap32Next() but 
+	   not Heap32Close().  The way Heap32First() works is that it allocates 
+	   some memory to keep track of the heap walk and stores the state in 
+	   the HEAPENTRY32.dwResvd field.  Heap32Next() then uses this to find 
+	   the next heap block to return.  Since there's no explicit 
+	   Heap32Close(), if we don't walk the heap to the end via Heap32Next() 
+	   (which does the free when it gets to the end) then we leak the memory
+	   that was allocated with Heap32First().
+
+	   The NT folks pseudo-solved this problem by making the operation
+	   stateless, allocating and freeing things on *every single call*
+	   to Heap32First() and Heap32Next().  In other words for Heap32First() 
+	   it takes a snapshot, returnd info on the first block, and frees it.
+	   For Heap32Next() it takes a snapshot, walks it until it finds the
+	   n-th block, returns info on it, and frees it.  This is an O( n^2 )
+	   process, thus the "pseudo-solution" to the problem.
+
+	   A better way to do it would be by using HeapWalk() (which doesn't 
+	   have the Heap32First()/Heap32Next() problems), however this only
+	   exists in Windows XP and newer which doesn't help much in a
+	   function called slowPollWin95().
+
+	   (Another way to do it which avoids going via the ToolHelp functions
+	   is to call directly into the not-very-documented RtlXXX() native API 
+	   functions, specifically RtlCreateQueryDebugBuffer() followed by 
+	   RtlQueryProcessDebugInformation( ..., PDI_HEAPS | PDI_HEAP_BLOCKS, ... )
+	   and then walk the internal list structure, but this is an even uglier
+	   hack and in any case similar to HeapWalk() isn't available for non-NT
+	   OS versions).
+
+	   There's also a second consideration that needs to be taken into 
+	   account when doing the walk, which is that the heap-management 
+	   functions aren't completely thread-safe, so that under (very rare) 
+	   conditions of heavy allocation/deallocation this can cause problems 
+	   when calling HeapNext().  By limiting the amount of time that we 
+	   spend in each heap, we can reduce our exposure somewhat */
 	hl32.dwSize = sizeof( HEAPLIST32 );
 	if( pHeap32ListFirst( hSnapshot, &hl32 ) )
 		{
@@ -1863,8 +1914,8 @@ static void slowPollWinNT( void )
 		/* Some information types are write-only (the IDs are shared with
 		   a set-information call), we skip these */
 		if( dwType == 26 || dwType == 27 || dwType == 38 || \
-			dwType == 38 || dwType == 46 || dwType == 47 || \
-			dwType == 48 || dwType == 52 )
+			dwType == 46 || dwType == 47 || dwType == 48 || \
+			dwType == 52 )
 			continue;
 
 		/* ID 53 = SystemSessionProcessInformation reads input from the

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Base64 Routines						*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -69,11 +69,12 @@ static const BYTE FAR_BSS asciiToBin[ 256 ] = {
 
 /* The size of lines for base64-encoded data.  This is only used for 
    encoding, for decoding we adjust to whatever size the sender has used, 
-   however we require at least some minimum line size when we check for the 
-   validity of base64-encoded data */
+   however we require at least some minimum line size as well as a maximum 
+   line size when we check for the validity of base64-encoded data */
 
 #define BASE64_LINESIZE		64
 #define BASE64_MIN_LINESIZE	56
+#define BASE64_MAX_LINESIZE	128
 
 /* Basic single-character en/decode functions.  We mask the value to 6 or 8 
    bits both as a range check and to avoid generating negative array offsets 
@@ -137,10 +138,10 @@ static int fixedBase64decode( STREAM *stream,
 							  IN_LENGTH_MIN( 10 ) const int srcLen );
 
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-static BOOLEAN checkBase64( INOUT STREAM *stream )
+static BOOLEAN checkBase64( INOUT STREAM *stream, const BOOLEAN isPEM )
 	{
 	STREAM nullStream;
-	BYTE buffer[ BASE64_MIN_LINESIZE + 8 ];
+	BYTE buffer[ BASE64_MAX_LINESIZE + 8 ];
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -172,6 +173,32 @@ static BOOLEAN checkBase64( INOUT STREAM *stream )
 	sMemDisconnect( &nullStream );
 	if( cryptStatusError( status ) )
 		return( FALSE );
+
+	/* If it's supposed to be PEM data, check that it's delimited by 
+	   linebreaks (or at least that there's a linebreak visible before 
+	   encountering BASE64_MAX_LINESIZE characters) */
+	if( isPEM )
+		{
+		BOOLEAN hasLineBreak = FALSE;
+		int i;
+
+		status = sread( stream, buffer, 
+						( BASE64_MAX_LINESIZE - BASE64_MIN_LINESIZE ) + 1 );
+		if( cryptStatusError( status ) )
+			return( FALSE );
+		for( i = 0; i < ( BASE64_MAX_LINESIZE - \
+						  BASE64_MIN_LINESIZE ) + 1; i++ )
+			{
+			const int ch = byteToInt( decode( buffer[ i ] ) );
+			if( ch == BERR || ch == BEOF )
+				{
+				hasLineBreak = TRUE;
+				break;
+				}
+			}
+		if( !hasLineBreak )
+			return( FALSE );
+		}
 
 	return( TRUE );
 	}
@@ -464,7 +491,7 @@ int base64checkHeader( IN_BUFFER( dataLength ) const char *data,
 			sMemDisconnect( &stream );
 			return( status );
 			}
-		if( !checkBase64( &stream ) )
+		if( !checkBase64( &stream, TRUE ) )
 			{
 			sMemDisconnect( &stream );
 			return( CRYPT_ERROR_BADDATA );
@@ -477,7 +504,7 @@ int base64checkHeader( IN_BUFFER( dataLength ) const char *data,
 		}
 
 	/* Check for non-encapsulated base64 data */
-	if( checkBase64( &stream ) )
+	if( checkBase64( &stream, FALSE ) )
 		{
 		sMemDisconnect( &stream );
 		*format = CRYPT_CERTFORMAT_TEXT_CERTIFICATE;
@@ -547,7 +574,7 @@ int base64checkHeader( IN_BUFFER( dataLength ) const char *data,
 
 		return( CRYPT_OK );
 		}
-	isBase64 = checkBase64( &stream );
+	isBase64 = checkBase64( &stream, FALSE );
 	sMemDisconnect( &stream );
 	if( !isBase64 )
 		return( CRYPT_ERROR_BADDATA );
@@ -895,6 +922,14 @@ int base64encodeLen( IN_LENGTH_MIN( 10 ) const int dataLength,
 
 	/* Clear return value */
 	*encodedLength = 0;
+
+	/* If we're encoding the data as a raw base64 string then we're done */
+	if( certType == CRYPT_CERTTYPE_NONE )
+		{
+		*encodedLength = length;
+
+		return( CRYPT_OK );
+		}
 
 	/* Find the header/trailer info for this format */
 	for( headerInfoIndex = 0;

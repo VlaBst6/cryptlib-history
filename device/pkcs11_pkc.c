@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib PKCS #11 PKC Routines						*
-*						Copyright Peter Gutmann 1998-2006					*
+*						Copyright Peter Gutmann 1998-2011					*
 *																			*
 ****************************************************************************/
 
@@ -62,6 +62,37 @@ static int readAttributeValue( PKCS11_INFO *pkcs11Info,
 	if( cryptStatusOK( status ) )
 		*length = attrTemplate.ulValueLen;
 	return( cryptStatus );
+	}
+
+/* When we've generated or loaded a key, the underlying device may impose
+   additional usage restrictions on it that go beyond what we've requested 
+   at object-creation time.  In order to deal with this we read back the 
+   attributes that are set for the newly-created device object and update 
+   the object's action flags to reflect this */
+
+static int updateActionFlags( INOUT PKCS11_INFO *pkcs11Info,
+							  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+							  const CK_OBJECT_HANDLE hObject,
+							  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+							  const BOOLEAN isPrivateKey )
+	{
+	int actionFlags, cryptStatus;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
+
+	cryptStatus = actionFlags = \
+			getActionFlags( pkcs11Info, hObject, 
+							isPrivateKey ? KEYMGMT_ITEM_PRIVATEKEY : \
+										   KEYMGMT_ITEM_PUBLICKEY, 
+							cryptAlgo );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
+	return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
+							 ( MESSAGE_CAST ) &actionFlags, 
+							 CRYPT_IATTRIBUTE_ACTIONPERMS ) );
 	}
 
 /****************************************************************************
@@ -408,12 +439,18 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		return( cryptStatus );
 		}
 
-	/* Remember what we've set up */
-	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
-					 ( MESSAGE_CAST ) &hPrivateKey, 
-					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
-	contextInfoPtr->altDeviceObject = hPublicKey;
-	contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
+	/* Remember what we've set up.  Unlike conventional PKC algorithms for
+	   which we only store the private-key object handle, for DH key 
+	   agreement we need to store the handles for both objects */
+	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
+								   IMESSAGE_SETATTRIBUTE,
+								   ( MESSAGE_CAST ) &hPrivateKey, 
+								   CRYPT_IATTRIBUTE_DEVICEOBJECT );
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		contextInfoPtr->altDeviceObject = hPublicKey;
+		contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
+		}
 	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
@@ -671,15 +708,24 @@ static int rsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
-	/* Remember what we've set up */
-	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
-					 ( MESSAGE_CAST ) &hPrivateKey, 
-					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
+	/* Remember what we've set up.  Note that PKCS #11 tokens create 
+	   distinct public- and private-key objects but we're only interested
+	   in the private-key one, so we store the private-key object handle
+	   in the context */
+	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
+								   IMESSAGE_SETATTRIBUTE,
+								   ( MESSAGE_CAST ) &hPrivateKey, 
+								   CRYPT_IATTRIBUTE_DEVICEOBJECT );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
 	contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
 
 	/* Get the key ID from the context and use it as the object ID.  Since 
-	   some objects won't allow after-the-event ID updates, we don't treat a
-	   failure to update as an error */
+	   some objects won't allow after-the-event ID updates, we don't treat a 
+	   failure to update as an error.  We do however assert on it in debug 
+	   mode since if we later want to update the key with a certificate then 
+	   we need the ID set in order to locate the object that the certificate 
+	   is associated with */
 	setMessageData( &msgData, idBuffer, KEYID_SIZE );
 	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
 								   IMESSAGE_GETATTRIBUTE_S, &msgData, 
@@ -687,12 +733,17 @@ static int rsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 	if( cryptStatusOK( cryptStatus ) )
 		{
 		CK_ATTRIBUTE idTemplate = { CKA_ID, msgData.data, msgData.length };
+		CK_RV status;
 
 		if( hPublicKey != CK_OBJECT_NONE )
-			C_SetAttributeValue( pkcs11Info->hSession, hPublicKey, 
-								 &idTemplate, 1 );
-		C_SetAttributeValue( pkcs11Info->hSession, hPrivateKey, 
-							 &idTemplate, 1 );
+			{
+			status = C_SetAttributeValue( pkcs11Info->hSession, hPublicKey, 
+										  &idTemplate, 1 );
+			assert( status == CKR_OK );
+			}
+		status = C_SetAttributeValue( pkcs11Info->hSession, hPrivateKey, 
+									  &idTemplate, 1 );
+		assert( status == CKR_OK );
 		}
 	
 	return( cryptStatus );
@@ -765,8 +816,8 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		}
 	else
 		{
-		/* If it's a public key, we need to change the type and indication of 
-		   the operations that it's allowed to perform */
+		/* If it's a public key then we need to change the type and 
+		   indication of the operations that it's allowed to perform */
 		rsaKeyTemplate[ 0 ].pValue = ( CK_VOID_PTR ) &pubKeyClass;
 		rsaKeyTemplate[ 3 ].type = CKA_VERIFY;
 		rsaKeyTemplate[ 4 ].type = CKA_ENCRYPT;
@@ -799,6 +850,13 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = rsaSetKeyInfo( pkcs11Info, contextInfoPtr, 
 									 hRsaKey, CK_OBJECT_NONE );
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		cryptStatus = updateActionFlags( pkcs11Info, 
+										 contextInfoPtr->objectHandle,
+										 hRsaKey, CRYPT_ALGO_RSA,
+										 !rsaKey->isPublicKey );
+		}
 	if( cryptStatusError( cryptStatus ) )
 		C_DestroyObject( pkcs11Info->hSession, hRsaKey );
 	else
@@ -850,7 +908,7 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Patch in the key size and generate the keys */
+	/* Generate the keys */
 	status = C_GenerateKeyPair( pkcs11Info->hSession,
 								( CK_MECHANISM_PTR ) &mechanism,
 								publicKeyTemplate, 6, privateKeyTemplate, 6,
@@ -870,6 +928,12 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = rsaSetKeyInfo( pkcs11Info, contextInfoPtr, hPrivateKey, 
 									 hPublicKey );
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		cryptStatus = updateActionFlags( pkcs11Info, 
+										 contextInfoPtr->objectHandle,
+										 hPrivateKey, CRYPT_ALGO_RSA, TRUE );
+		}
 	if( cryptStatusError( cryptStatus ) )
 		{
 		C_DestroyObject( pkcs11Info->hSession, hPublicKey );
@@ -901,7 +965,7 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	/* Undo the PKCS #1 padding to make CKM_RSA_PKCS look like 
 	   CKM_RSA_X_509 */
-	assert( bufPtr[ 0 ] == 0 && bufPtr[ 1 ] == 1 && bufPtr[ 2 ] == 0xFF );
+	REQUIRES( bufPtr[ 0 ] == 0 && bufPtr[ 1 ] == 1 && bufPtr[ 2 ] == 0xFF );
 	for( i = 2; i < keySize; i++ )
 		{
 		if( bufPtr[ i ] == 0 )
@@ -933,6 +997,8 @@ static int rsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	   operation because cryptlib does the same thing much faster in 
 	   software and because some tokens don't support public-key 
 	   operations */
+	DEBUG_PRINT(( "Warning: rsaVerify() called for device object, should "
+				  "be handled via native object.\n" ));
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
@@ -1119,10 +1185,15 @@ static int dsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Remember what we've set up */
-	krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-					 ( MESSAGE_CAST ) &hPrivateKey, 
-					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
+	/* Remember what we've set up.  Note that PKCS #11 tokens create 
+	   distinct public- and private-key objects but we're only interested
+	   in the private-key one, so we store the private-key object handle
+	   in the context */
+	cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
+								   ( MESSAGE_CAST ) &hPrivateKey, 
+								   CRYPT_IATTRIBUTE_DEVICEOBJECT );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
 
 	/* Get the key ID from the context and use it as the object ID.  Since 
 	   some objects won't allow after-the-even ID updates, we don't treat a
@@ -1347,11 +1418,20 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 								 dsaKey->q, bitsToBytes( dsaKey->qLen ),
 								 dsaKey->g, bitsToBytes( dsaKey->gLen ),
 								 yValuePtr, yValueLength, FALSE );
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		cryptStatus = updateActionFlags( pkcs11Info, 
+										 contextInfoPtr->objectHandle,
+										 hDsaKey, CRYPT_ALGO_DSA,
+										 !dsaKey->isPublicKey );
+		}
 	if( cryptStatusError( cryptStatus ) )
 		C_DestroyObject( pkcs11Info->hSession, hDsaKey );
 	else
+		{
 		/* Remember that this object is backed by a crypto device */
 		contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
+		}
 
 	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
@@ -1440,26 +1520,29 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	readSequence( &stream, NULL );					/* SEQUENCE */
 	readUniversal( &stream );							/* OID */
 	readSequence( &stream, NULL );						/* SEQUENCE */
-	status = readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* p */
-	if( cryptStatusOK( status ) )
-		status = sMemGetDataBlock( &stream, &dataPtr, length );
-	if( cryptStatusError( status ) )
+	cryptStatus = readGenericHole( &stream, &length, 16,	/* p */
+								   BER_INTEGER  );
+	if( cryptStatusOK( cryptStatus ) )
+		cryptStatus = sMemGetDataBlock( &stream, &dataPtr, length );
+	if( cryptStatusError( cryptStatus ) )
 		retIntError();
 	publicKeyTemplate[ 3 ].pValue = dataPtr;
 	publicKeyTemplate[ 3 ].ulValueLen = length;
 	sSkip( &stream, length );
-	status = readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* q */
-	if( cryptStatusOK( status ) )
-		status = sMemGetDataBlock( &stream, &dataPtr, length );
-	if( cryptStatusError( status ) )
+	cryptStatus = readGenericHole( &stream, &length, 16, 	/* q */
+								   BER_INTEGER  );
+	if( cryptStatusOK( cryptStatus ) )
+		cryptStatus = sMemGetDataBlock( &stream, &dataPtr, length );
+	if( cryptStatusError( cryptStatus ) )
 		retIntError();
 	publicKeyTemplate[ 4 ].pValue = dataPtr;
 	publicKeyTemplate[ 4 ].ulValueLen = length;
 	sSkip( &stream, length );
-	status = readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* g */
-	if( cryptStatusOK( status ) )
-		status = sMemGetDataBlock( &stream, &dataPtr, length );
-	if( cryptStatusError( status ) )
+	cryptStatus = readGenericHole( &stream, &length, 16, 	/* g */
+								   BER_INTEGER  );
+	if( cryptStatusOK( cryptStatus ) )
+		cryptStatus = sMemGetDataBlock( &stream, &dataPtr, length );
+	if( cryptStatusError( cryptStatus ) )
 		retIntError();
 	publicKeyTemplate[ 5 ].pValue = dataPtr;
 	publicKeyTemplate[ 5 ].ulValueLen = length;
@@ -1498,12 +1581,20 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		}
 	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusOK( cryptStatus ) )
+		{
 		cryptStatus = dsaSetKeyInfo( pkcs11Info, contextInfoPtr->objectHandle, 
 			hPrivateKey, hPublicKey,
 			publicKeyTemplate[ 3 ].pValue, publicKeyTemplate[ 3 ].ulValueLen, 
 			publicKeyTemplate[ 4 ].pValue, publicKeyTemplate[ 4 ].ulValueLen, 
 			publicKeyTemplate[ 5 ].pValue, publicKeyTemplate[ 5 ].ulValueLen,
 			yValueTemplate.pValue, yValueTemplate.ulValueLen, FALSE );
+		}
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		cryptStatus = updateActionFlags( pkcs11Info, 
+										 contextInfoPtr->objectHandle,
+										 hPrivateKey, CRYPT_ALGO_DSA, TRUE );
+		}
 	if( cryptStatusError( cryptStatus ) )
 		{
 		C_DestroyObject( pkcs11Info->hSession, hPublicKey );
@@ -1584,18 +1675,20 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	{
-	static const CK_MECHANISM mechanism = { CKM_DSA, NULL_PTR, 0 };
+/*	static const CK_MECHANISM mechanism = { CKM_DSA, NULL_PTR, 0 }; */
 /*	CRYPT_DEVICE iCryptDevice; */
-	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
-	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC;
-	BIGNUM r, s;
+	const DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
+/*	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC; */
+/*	BIGNUM r, s; */
 /*	BYTE signature[ 40 + 8 ]; */
-	int cryptStatus;
+/*	int cryptStatus; */
 
 	/* This function is present but isn't used as part of any normal 
 	   operation because cryptlib does the same thing much faster in 
 	   software and because some tokens don't support public-key 
 	   operations */
+	DEBUG_PRINT(( "Warning: dsaVerify() called for device object, should "
+				  "be handled via native object.\n" ));
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
@@ -1611,6 +1704,11 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 				  dlpParams->inLen2 == 40 ) ) );
 	REQUIRES( dlpParams->outParam == NULL && dlpParams->outLen == 0 );
 
+	/* This code can never be called since DSA public-key contexts are 
+	   always native contexts */
+	retIntError();
+
+#if 0
 	/* Decode the values from a DL data block and make sure r and s are
 	   valid */
 	BN_init( &r );
@@ -1621,11 +1719,6 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* This code can never be called since DSA public-key contexts are 
-	   always native contexts */
-	retIntError();
-
-#if 0
 	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );

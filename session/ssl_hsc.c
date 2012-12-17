@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *			cryptlib SSL v3/TLS Handshake Completion Management				*
-*					Copyright Peter Gutmann 1998-2009						*
+*					Copyright Peter Gutmann 1998-2012						*
 *																			*
 ****************************************************************************/
 
@@ -57,6 +57,66 @@ static void destroyHashContexts( IN_HANDLE const CRYPT_CONTEXT hashContext1,
 		krnlSendNotifier( hashContext2, IMESSAGE_DECREFCOUNT );
 	if( hashContext3 != CRYPT_ERROR )
 		krnlSendNotifier( hashContext3, IMESSAGE_DECREFCOUNT );
+	}
+
+/* Add the current session information to the session cache */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int addSessionToCache( INOUT SESSION_INFO *sessionInfoPtr,
+							  INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+							  IN_BUFFER( masterSecretSize ) void *masterSecret,
+							  IN_LENGTH_SHORT const int masterSecretSize,
+							  const BOOLEAN isClient )
+	{
+	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
+	int cachedID, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+	assert( isWritePtr( masterSecret, masterSecretSize ) );
+
+	REQUIRES( masterSecretSize > 0 && \
+			  masterSecretSize < MAX_INTLENGTH_SHORT );
+
+	/* If we're the client then we have to add additional information to the
+	   cache, in this case the server's name/address so that we can look up
+	   the information if we try to reconnect later */
+	if( isClient )
+		{
+		const ATTRIBUTE_LIST *attributeListPtr;
+
+		attributeListPtr = findSessionInfo( sessionInfoPtr->attributeList,
+											CRYPT_SESSINFO_SERVER_NAME );
+		if( attributeListPtr == NULL )
+			{
+			/* If the connection was established by passing cryptlib a raw
+			   network socket then there's no server name information 
+			   present, so we can't cache anything based on this */
+			return( CRYPT_OK );
+			}
+		status = cachedID = \
+				addScoreboardEntryEx( sslInfo->scoreboardInfoPtr,
+									  handshakeInfo->sessionID,
+									  handshakeInfo->sessionIDlength,
+									  attributeListPtr->value,
+									  attributeListPtr->valueLength,
+									  masterSecret, masterSecretSize );
+		}
+	else
+		{
+		/* We're the server, add the client's state information indexed by 
+		   the sessionID */
+		status = cachedID = \
+				addScoreboardEntry( sslInfo->scoreboardInfoPtr,
+									handshakeInfo->sessionID,
+									handshakeInfo->sessionIDlength,
+									masterSecret, masterSecretSize );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+	sslInfo->sessionCacheID = cachedID;
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -371,6 +431,9 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	const void *sslInitiatorString, *sslResponderString;
 	const void *tlsInitiatorString, *tlsResponderString;
 	const BOOLEAN isInitiator = isResumedSession ? !isClient : isClient;
+	const BOOLEAN updateSessionCache = 	\
+			( !isResumedSession && handshakeInfo->sessionIDlength > 0 ) ? \
+			TRUE : FALSE;
 	int initiatorHashLength, responderHashLength;
 	int sslLabelLength, tlsLabelLength, status;
 
@@ -487,7 +550,8 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Now that we have the initiator MACs, complete the dual-hashing/
 	   hashing and dual-MAC/MAC of the responder-side messages and destroy 
-	   the master secret.  We haven't created the full message yet at this 
+	   the master secret unless we need to keep it around to update the
+	   session cache.  We haven't created the full message yet at this 
 	   point so we manually hash the individual pieces so that we can 
 	   finally get rid of the master secret */
 	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
@@ -550,11 +614,15 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 							tlsLabelLength, masterSecret, SSL_SECRET_SIZE );
 			}
 		}
-	zeroise( masterSecret, SSL_SECRET_SIZE );
+	if( !updateSessionCache )
+		zeroise( masterSecret, SSL_SECRET_SIZE );
 	destroyHashContexts( responderMD5context, responderSHA1context,
 						 responderSHA2context );
 	if( cryptStatusError( status ) )
+		{
+		zeroise( masterSecret, SSL_SECRET_SIZE );
 		return( status );
+		}
 
 	/* Send our MACs to the other side and read back their response if
 	   necessary.  The initiatorHashLength is the same as the 
@@ -567,9 +635,20 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 										   /* Same as responderHashLength */
 										   ( isClient && !isResumedSession ) || \
 										   ( !isClient && isResumedSession ) );
-	if( cryptStatusError( status ) || !isInitiator )
-		return( status );
-	return( readHandshakeCompletionData( sessionInfoPtr, responderHashes,
-										 initiatorHashLength ) );
+	if( cryptStatusOK( status ) && isInitiator )
+		{
+		status = readHandshakeCompletionData( sessionInfoPtr, responderHashes,
+											  initiatorHashLength );
+		}
+	if( cryptStatusOK( status ) && updateSessionCache )
+		{
+		/* The handshake completed successfully, add the master secret to 
+		   the session cache */
+		status = addSessionToCache( sessionInfoPtr, handshakeInfo, 
+									masterSecret, SSL_SECRET_SIZE,
+									isClient );
+		}
+	zeroise( masterSecret, SSL_SECRET_SIZE );
+	return( status );
 	}
 #endif /* USE_SSL */

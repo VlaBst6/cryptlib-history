@@ -43,9 +43,11 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	"testlib/zsechash"
 #define OPENPGP_PUBKEY_AES_FILE		"testlib/zpubaes"
 #define OPENPGP_PRIVKEY_AES_FILE	"testlib/zsecaes"
+#define OPENPGP_PRIVKEY_CAST_FILE	"testlib/zseccast"
 #define OPENPGP_PUBKEY_RSA_FILE		"testlib/zpubrsa"
 #define OPENPGP_PRIVKEY_RSA_FILE	"testlib/zsecrsa"
 #define OPENPGP_PRIVKEY_PART_FILE	"testlib/zsecpart"
+#define OPENPGP_PUBKEY_MULT_FILE	"testlib/zpubmult"
 #define NAIPGP_PUBKEY_FILE			"testlib/zpubnai"
 #define NAIPGP_PRIVKEY_FILE			"testlib/zsecnai"
 
@@ -125,9 +127,11 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	":test:pgp:sec_hash.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		":test:pgp:pub_aes.pkr"
 #define OPENPGP_PRIVKEY_AES_FILE	":test:pgp:sec_aes.skr"
+#define OPENPGP_PRIVKEY_CAST_FILE	":test:pgp:sec_cast.gpg"
 #define OPENPGP_PUBKEY_RSA_FILE		":test:pgp:pub_rsa.gpg"
 #define OPENPGP_PRIVKEY_RSA_FILE	":test:pgp:sec_rsa.gpg"
 #define OPENPGP_PRIVKEY_PART_FILE	":test:pgp:sec_part.gpg"
+#define OPENPGP_PUBKEY_MULT_FILE	":test:pgp:pub_mult.gpg"
 #define NAIPGP_PUBKEY_FILE			":test:pgp:pub_nai.pkr"
 #define NAIPGP_PRIVKEY_FILE			":test:pgp:sec_nai.skr"
 
@@ -207,9 +211,11 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	"DD:CLBGPG(SECHASH)"
 #define OPENPGP_PUBKEY_AES_FILE		"DD:CLBPKR(PUBAES)"
 #define OPENPGP_PRIVKEY_AES_FILE	"DD:CLBSKR(SECAES)"
+#define OPENPGP_PRIVKEY_CAST_FILE	"DD:CLBSKR(SECCAS)"
 #define OPENPGP_PUBKEY_RSA_FILE		"DD:CLBGPG(PUBRSA)"
 #define OPENPGP_PRIVKEY_RSA_FILE	"DD:CLBGPG(SECRSA)"
 #define OPENPGP_PRIVKEY_PART_FILE	"DD:CLBGPG(SECPART)"
+#define OPENPGP_PUBKEY_MULT_FILE	"DD:CLBGPG(PUBMULT)"
 #define NAIPGP_PUBKEY_FILE			"DD:CLBPKR(PUBNAI)"
 #define NAIPGP_PRIVKEY_FILE			"DD:CLBSKR(SECNAI)"
 
@@ -256,6 +262,90 @@
 
 /****************************************************************************
 *																			*
+*									Nucleus									*
+*																			*
+****************************************************************************/
+
+/* Generic embedded system using the FAT filesystem */
+
+#elif defined (__Nucleus__)
+
+#define TEST_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\test.p15" )
+#define TEST_PRIVKEY_TMP_FILE		TEXT( "c:\\test\\keys\\test_tmp.p15" )
+#define TEST_PRIVKEY_ALT_FILE		TEXT( "c:\\test\\keys\\test.p12" )
+#define CA_PRIVKEY_FILE				TEXT( "c:\\test\\keys\\ca.p15" )
+#define ICA_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\ca_int.p15" )
+#define SCEPCA_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\ca_scep.p15" )
+#define USER_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\user.p15" )
+#define DUAL_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\dual.p15" )
+#define RENEW_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\renewed.p15" )
+#define P15_FILE_TEMPLATE			TEXT( "c:\\test\\keys\\pkcs15_%d.p15" )
+#define CMP_PRIVKEY_FILE_TEMPLATE	TEXT( "c:\\test\\keys\\cmp%d.p15" )
+#define PNP_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\pnp_user.p15" )
+#define PNPCA_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\pnp_ca.p15" )
+#define SERVER_PRIVKEY_FILE_TEMPLATE TEXT( "c:\\test\\keys\\server%d.p15" )
+#define SERVER_ECPRIVKEY_FILE_TEMPLATE TEXT( "c:\\test\\keys\\serverp%d.p15" )
+#define SSH_PRIVKEY_FILE_TEMPLATE	TEXT( "c:\\test\\keys\\ssh%d.p15" )
+#define SSL_CLI_PRIVKEY_FILE		TEXT( "c:\\test\\keys\\ssl_cli.p15" )
+#define TSA_PRIVKEY_FILE			TEXT( "c:\\test\\keys\\tsa.p15" )
+#define MISC_PRIVKEY_FILE_TEMPLATE	TEXT( "c:\\test\\keys\\misc%d.p15" )
+#define PKCS12_FILE_TEMPLATE		TEXT( "c:\\test\\keys\\pkcs12_%d.p12" )
+
+#define PGP_PUBKEY_FILE				TEXT( "c:\\test\\pgp\\pubring.pgp" )
+#define PGP_PRIVKEY_FILE			TEXT( "c:\\test\\pgp\\secring.pgp" )
+#define OPENPGP_PUBKEY_HASH_FILE	TEXT( "c:\\test\\pgp\\pub_hash.gpg" )
+#define OPENPGP_PRIVKEY_HASH_FILE	TEXT( "c:\\test\\pgp\\sec_hash.gpg" )
+#define OPENPGP_PUBKEY_AES_FILE		TEXT( "c:\\test\\pgp\\pub_aes.pkr" )
+#define OPENPGP_PRIVKEY_AES_FILE	TEXT( "c:\\test\\pgp\\sec_aes.skr" )
+#define OPENPGP_PUBKEY_RSA_FILE		TEXT( "c:\\test\\pgp\\pub_rsa.gpg" )
+#define OPENPGP_PRIVKEY_RSA_FILE	TEXT( "c:\\test\\pgp\\sec_rsa.gpg" )
+#define OPENPGP_PRIVKEY_PART_FILE	TEXT( "c:\\test\\pgp\\sec_part.gpg" )
+#define NAIPGP_PUBKEY_FILE			TEXT( "c:\\test\\pgp\\pub_nai.pkr" )
+#define NAIPGP_PRIVKEY_FILE			TEXT( "c:\\test\\pgp\\sec_nai.skr" )
+
+#define CERT_FILE_TEMPLATE			TEXT( "c:\\test\\certs\\cert%02d.der" )
+#define BASE64CERT_FILE_TEMPLATE	TEXT( "c:\\test\\certs\\cert%d.asc" )
+#define ECC_CERT_FILE_TEMPLATE		TEXT( "c:\\test\\certs\\eccert%02d.der" )
+#define BROKEN_CERT_FILE			TEXT( "c:\\test\\certs\\broken.der" )
+#define BROKEN_USER_CERT_FILE		TEXT( "c:\\test\\certs\\broken_ee.der" )
+#define BROKEN_CA_CERT_FILE			TEXT( "c:\\test\\certs\\broken_ca.der" )
+#define CERTREQ_FILE_TEMPLATE		TEXT( "c:\\test\\certs\\certreq%d.der" )
+#define CRL_FILE_TEMPLATE			TEXT( "c:\\test\\certs\\crl%d.crl" )
+#define CERTCHAIN_FILE_TEMPLATE		TEXT( "c:\\test\\certs\\certchn%d.der" )
+#define BASE64CERTCHAIN_FILE_TEMPLATE TEXT( "c:\\test\\certs\\certchn%d.asc" )
+#define PATHTEST_FILE_TEMPLATE		TEXT( "c:\\test\\nist\\test%d.p7s" )
+#define PADTEST_FILE_TEMPLATE		TEXT( "c:\\test\\certs\\bad_sig%d.der" )
+#define SSHKEY_FILE_TEMPLATE		TEXT( "c:\\test\\misc\\sshkey%d.asc" )
+#define PGPKEY_FILE_TEMPLATE		TEXT( "c:\\test\\pgp\\pubkey%d.pgp" )
+#define PGPASCKEY_FILE_TEMPLATE		TEXT( "c:\\test\\pgp\\pubkey%d.asc" )
+#define NOCHAIN_EE_FILE				TEXT( "c:\\test\\misc\\nochn_ee.der" )
+#define NOCHAIN_CA_FILE				TEXT( "c:\\test\\misc\\nochn_ca.der" )
+#define RTCS_OK_FILE				TEXT( "c:\\test\\misc\\rtcsrok.der" )
+#define OCSP_OK_FILE				TEXT( "c:\\test\\session\\ocspr_ok.der" )
+#define OCSP_REV_FILE				TEXT( "c:\\test\\session\\ocspr_re.der" )
+#define OCSP_CA_FILE				TEXT( "c:\\test\\session\\ocspca.der" )
+#define CRLCERT_FILE_TEMPLATE		TEXT( "c:\\test\\misc\\crl_cert%d.der" )
+#define RTCS_FILE_TEMPLATE			TEXT( "c:\\test\\misc\\rtcs_ee%do.der" )
+#define OCSP_CA_FILE_TEMPLATE		TEXT( "c:\\test\\session\\ocsp_ca%d.der" )
+#define OCSP_EEOK_FILE_TEMPLATE		TEXT( "c:\\test\\session\\ocsp_ok%d.der" )
+#define OCSP_EEREV_FILE_TEMPLATE	TEXT( "c:\\test\\session\\ocsp_re%d.der" )
+#define CMP_CA_FILE_TEMPLATE		TEXT( "c:\\test\\session\\cmp_ca%d.der" )
+#define SCEP_CA_FILE_TEMPLATE		TEXT( "c:\\test\\session\\scep_ca%d.der" )
+
+#define CMS_ENC_FILE_TEMPLATE		TEXT( "c:\\test\\smime\\pw_enc%d.p7m" )
+#define SMIME_SIG_FILE_TEMPLATE		TEXT( "c:\\test\\smime\\signed%d.p7s" )
+#define SMIME_ENV_FILE_TEMPLATE		TEXT( "c:\\test\\smime\\envel%d.p7m" )
+#define PGP_ENC_FILE_TEMPLATE		TEXT( "c:\\test\\pgp\\conv_enc%d.pgp" )
+#define PGP_PKE_FILE_TEMPLATE		TEXT( "c:\\test\\pgp\\pgp_enc%d.pgp" )
+#define OPENPGP_PKE_FILE_TEMPLATE	TEXT( "c:\\test\\pgp\\gpg_enc%d.gpg" )
+#define PGP_SIG_FILE_TEMPLATE		TEXT( "c:\\test\\pgp\\signed%d.pgp" )
+#define PGP_COPR_FILE_TEMPLATE		TEXT( "c:\\test\\pgp\\copr%d.pgp" )
+
+#define TESTDATA_FILE_TEMPLATE		TEXT( "c:\\test\\misc\\testdata%d.dat" )
+#define COMPRESS_FILE				TEXT( "c:\\test\\filename.h" )
+
+/****************************************************************************
+*																			*
 *									VM/CMS									*
 *																			*
 ****************************************************************************/
@@ -289,9 +379,11 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	"zsechash.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		"zpubaes.pkr"
 #define OPENPGP_PRIVKEY_AES_FILE	"zsecaes.skr"
+#define OPENPGP_PRIVKEY_CAST_FILE	"zseccas.gpg"
 #define OPENPGP_PUBKEY_RSA_FILE		"zpubrsa.gpg"
 #define OPENPGP_PRIVKEY_RSA_FILE	"zsecrsa.gpg"
 #define OPENPGP_PRIVKEY_PART_FILE	"zsecpart.gpg"
+#define OPENPGP_PUBKEY_MULT_FILE	"zpubmult.gpg"
 #define NAIPGP_PUBKEY_FILE			"zpubnai.pkr"
 #define NAIPGP_PRIVKEY_FILE			"zsecnai.skr"
 
@@ -371,9 +463,11 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	L"\\Storage Card\\pgp\\sec_hash.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		L"\\Storage Card\\pgp\\pub_aes.pkr"
 #define OPENPGP_PRIVKEY_AES_FILE	L"\\Storage Card\\pgp\\sec_aes.skr"
+#define OPENPGP_PRIVKEY_CAST_FILE	L"\\Storage Card\\pgp\\sec_cast.gpg"
 #define OPENPGP_PUBKEY_RSA_FILE		L"\\Storage Card\\pgp\\pub_rsa.gpg"
 #define OPENPGP_PRIVKEY_RSA_FILE	L"\\Storage Card\\pgp\\sec_rsa.gpg"
 #define OPENPGP_PRIVKEY_PART_FILE	L"\\Storage Card\\pgp\\sec_part.gpg"
+#define OPENPGP_PUBKEY_MULT_FILE	L"\\Storage Card\\pgp\\pub_mult.gpg"
 #define NAIPGP_PUBKEY_FILE			L"\\Storage Card\\pgp\\pub_nai.pkr"
 #define NAIPGP_PRIVKEY_FILE			L"\\Storage Card\\pgp\\sec_nai.skr"
 
@@ -453,9 +547,11 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	TEXT( "test/pgp/sec_hash.gpg" )
 #define OPENPGP_PUBKEY_AES_FILE		TEXT( "test/pgp/pub_aes.pkr" )
 #define OPENPGP_PRIVKEY_AES_FILE	TEXT( "test/pgp/sec_aes.skr" )
+#define OPENPGP_PRIVKEY_CAST_FILE	TEXT( "test/pgp/sec_cast.gpg" )
 #define OPENPGP_PUBKEY_RSA_FILE		TEXT( "test/pgp/pub_rsa.gpg" )
 #define OPENPGP_PRIVKEY_RSA_FILE	TEXT( "test/pgp/sec_rsa.gpg" )
 #define OPENPGP_PRIVKEY_PART_FILE	TEXT( "test/pgp/sec_part.gpg" )
+#define OPENPGP_PUBKEY_MULT_FILE	TEXT( "test/pgp/pub_mult.gpg" )
 #define NAIPGP_PUBKEY_FILE			TEXT( "test/pgp/pub_nai.pkr" )
 #define NAIPGP_PRIVKEY_FILE			TEXT( "test/pgp/sec_nai.skr" )
 

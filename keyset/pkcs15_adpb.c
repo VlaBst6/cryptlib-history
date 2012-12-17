@@ -443,7 +443,7 @@ int pkcs15AddCertChain( INOUT PKCS15_INFO *pkcs15info,
 		if( cryptStatusError( status ) )
 			continue;
 		if( findEntry( pkcs15info, noPkcs15objects, CRYPT_IKEYID_ISSUERID, 
-					   iAndSID, iAndSIDlength, KEYMGMT_FLAG_NONE ) != NULL )
+					   iAndSID, iAndSIDlength, KEYMGMT_FLAG_NONE, FALSE ) != NULL )
 			continue;
 
 		/* We've found a certificate that isn't present yet, try and add 

@@ -170,6 +170,61 @@ static int checkSuiteBSuiteSelection( IN_RANGE( SSL_FIRST_VALID_SUITE, \
 
 /****************************************************************************
 *																			*
+*								Legacy SSLv2 Functions						*
+*																			*
+****************************************************************************/
+
+#ifdef ALLOW_SSLV2_HELLO	/* See warning in ssl.h */
+
+/* Process an SSLv2 client hello:
+
+	uint16		suiteLen
+	uint16		sessIDlen
+	uint16		nonceLen
+	uint24[]	suites
+	byte[]		sessID
+	byte[]		nonce
+
+   The v2 type and version have already been processed in readPacketSSL() 
+   since this information, which is moved into the header in v3, is part of 
+   the body in v2.  What's left for the v2 hello is the remainder of the 
+   payload */
+
+static int processCipherSuite( SESSION_INFO *sessionInfoPtr, 
+							   SSL_HANDSHAKE_INFO *handshakeInfo, 
+							   STREAM *stream, const int noSuites );
+
+int processHelloSSLv2( SESSION_INFO *sessionInfoPtr, 
+					   SSL_HANDSHAKE_INFO *handshakeInfo, 
+					   STREAM *stream)
+	{
+	int suiteLength, sessionIDlength, nonceLength, status;
+
+	/* Read the SSLv2 hello */
+	suiteLength = readUint16( stream );
+	sessionIDlength = readUint16( stream );
+	nonceLength = readUint16( stream );
+	if( suiteLength < 3 || ( suiteLength % 3 ) != 0 || \
+		sessionIDlength < 0 || sessionIDlength > MAX_SESSIONID_SIZE || \
+		nonceLength < 16 || nonceLength > SSL_NONCE_SIZE )
+		{
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Invalid legacy SSLv2 hello packet" ) );
+		}
+	status = processCipherSuite( sessionInfoPtr, handshakeInfo, stream, 
+								 suiteLength / 3 );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( sessionIDlength > 0 )
+		sSkip( stream, sessionIDlength );
+	return( sread( stream, handshakeInfo->clientNonce + \
+						   SSL_NONCE_SIZE - nonceLength, nonceLength ) );
+	}
+#endif /* ALLOW_SSLV2_HELLO */
+
+/****************************************************************************
+*																			*
 *							Negotiate a Cipher Suite						*
 *																			*
 ****************************************************************************/
@@ -241,9 +296,6 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 	BOOLEAN allowRSA = algoAvailable( CRYPT_ALGO_RSA );
 	BOOLEAN allowTLS12 = \
 		( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 ) ? TRUE : FALSE;
-#ifdef CONFIG_SUITEB
-	const int suiteBinfo = sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
-#endif /* CONFIG_SUITEB */
 	int cipherSuiteInfoSize, suiteIndex = 999, altSuiteIndex = 999;
 	int i, status;
 
@@ -294,9 +346,7 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 		const CIPHERSUITE_INFO *cipherSuiteInfoPtr = NULL;
 		int newSuite, newSuiteIndex;
 
-#ifdef ALLOW_SSLV2_HELLO	/* 28/01/08 Disabled since it's now finally 
-							   removed in MSIE and Firefox (but see also the 
-							   comment in ssl_rd.c) */
+#ifdef ALLOW_SSLV2_HELLO	/* See warning in ssl.h */
 		/* If we're reading an SSLv2 hello and it's an SSLv2 suite (the high
 		   byte is nonzero), skip it and continue */
 		if( handshakeInfo->isSSLv2 )

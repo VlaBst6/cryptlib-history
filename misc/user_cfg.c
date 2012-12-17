@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib Configuration Routines					*
-*						Copyright Peter Gutmann 1994-2008					*
+*						Copyright Peter Gutmann 1994-2012					*
 *																			*
 ****************************************************************************/
 
@@ -34,10 +34,10 @@
 static const BUILTIN_OPTION_INFO FAR_BSS builtinOptionInfo[] = {
 	/* cryptlib information (read-only) */
 	MK_OPTION_S( CRYPT_OPTION_INFO_DESCRIPTION, "cryptlib security toolkit", 25, CRYPT_UNUSED ),
-	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2011", 55, CRYPT_UNUSED ),
+	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2012", 55, CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MAJORVERSION, 3, CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MINORVERSION, 4, CRYPT_UNUSED ),
-	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 1, CRYPT_UNUSED ),
+	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 2, CRYPT_UNUSED ),
 
 	/* Context options, base = 0 */
 	/* Algorithm = Conventional encryption/hash/MAC options */
@@ -47,17 +47,20 @@ static const BUILTIN_OPTION_INFO FAR_BSS builtinOptionInfo[] = {
 
 	/* Algorithm = PKC options */
 	MK_OPTION( CRYPT_OPTION_PKC_ALGO, CRYPT_ALGO_RSA, 3 ),
-	MK_OPTION( CRYPT_OPTION_PKC_KEYSIZE, bitsToBytes( 1024 ), 4 ),
+	MK_OPTION( CRYPT_OPTION_PKC_KEYSIZE, bitsToBytes( 1280 ), 4 ),
 
 	/* Algorithm = Signature options */
 	MK_OPTION( CRYPT_OPTION_SIG_ALGO, CRYPT_ALGO_RSA, 5 ),
-	MK_OPTION( CRYPT_OPTION_SIG_KEYSIZE, bitsToBytes( 1024 ), 6 ),
+	MK_OPTION( CRYPT_OPTION_SIG_KEYSIZE, bitsToBytes( 1280 ), 6 ),
 
 	/* Algorithm = Key derivation options.  On a slower CPU we use a 
-	   lower number of iterations */
+	   lower number of iterations.  Conversely, on a fast CPU we use
+	   a larger number */
 	MK_OPTION( CRYPT_OPTION_KEYING_ALGO, CRYPT_ALGO_SHA1, 7 ),
-#ifdef CONFIG_SLOW_CPU
+#if defined( CONFIG_SLOW_CPU )
 	MK_OPTION( CRYPT_OPTION_KEYING_ITERATIONS, 500, 8 ),
+#elif defined( CONFIG_FAST_CPU )
+	MK_OPTION( CRYPT_OPTION_KEYING_ITERATIONS, 20000, 8 ),
 #else
 	MK_OPTION( CRYPT_OPTION_KEYING_ITERATIONS, 5000, 8 ),
 #endif /* CONFIG_SLOW_CPU */

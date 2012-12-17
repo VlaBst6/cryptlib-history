@@ -636,6 +636,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 									   ( BYTE * ) "12345678", 8 );
 				break;
 
+			case CRYPT_ALGO_CAST:
 			case CRYPT_ALGO_IDEA:
 			case CRYPT_ALGO_AES:
 				status = loadContexts( &cryptContext, &decryptContext,
@@ -663,7 +664,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 				break;
 
 			case CRYPT_ALGO_MD5:
-			case CRYPT_ALGO_SHA:
+			case CRYPT_ALGO_SHA1:
 			case CRYPT_ALGO_SHA2:
 			case CRYPT_ALGO_RIPEMD160:
 				status = loadContexts( &cryptContext, &decryptContext,
@@ -923,33 +924,6 @@ int testRSAMinimalKey( void )
 
 #define NO_TESTS	25
 
-static unsigned long timeDiff( unsigned long startTime )
-	{
-	unsigned long timeLSB;
-
-#if 1
-	LARGE_INTEGER performanceCount;
-
-	/* Sensitive to context switches */
-	QueryPerformanceCounter( &performanceCount );
-	timeLSB = performanceCount.LowPart;
-#else
-	FILETIME dummyTime, kernelTime, userTime;
-	int status;
-
-	/* Only accurate to 10ms, returns constant values in VC++ debugger */
-	GetThreadTimes( GetCurrentThread(), &dummyTime, &dummyTime,
-					&kernelTime, &userTime );
-	timeLSB = userTime.dwLowDateTime;
-#endif /* 0 */
-
-	if( !startTime )
-		return( timeLSB );
-	if( startTime < timeLSB )
-		return( timeLSB - startTime );
-	return( ( 0xFFFFFFFF - startTime ) + 1 + timeLSB );
-	}
-
 /* Print timing info.  This gets a bit hairy because we're actually counting
    timer ticks rather than thread times, which means we'll be affected by
    things like context switches.  There are two approaches to this:
@@ -1166,7 +1140,7 @@ void performanceTests( const CRYPT_DEVICE cryptDevice )
 	encTests( CRYPT_UNUSED, CRYPT_ALGO_RC4, CRYPT_MODE_OFB, buffer );
 	encTests( CRYPT_UNUSED, CRYPT_ALGO_AES, CRYPT_MODE_CBC, buffer );
 	encTests( CRYPT_UNUSED, CRYPT_ALGO_MD5, CRYPT_MODE_NONE, buffer );
-	encTests( CRYPT_UNUSED, CRYPT_ALGO_SHA, CRYPT_MODE_NONE, buffer );
+	encTests( CRYPT_UNUSED, CRYPT_ALGO_SHA1, CRYPT_MODE_NONE, buffer );
 	free( buffer );
 	}
 #endif /* Win32 with VC++ */

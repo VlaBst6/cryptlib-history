@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Set Certificate Components						*
-*						Copyright Peter Gutmann 1997-2009					*
+*						Copyright Peter Gutmann 1997-2011					*
 *																			*
 ****************************************************************************/
 
@@ -218,8 +218,10 @@ int copyPublicKeyInfo( INOUT CERT_INFO *certInfoPtr,
 					   IN_HANDLE_OPT const CRYPT_HANDLE cryptHandle,
 					   IN_OPT const CERT_INFO *srcCertInfoPtr )
 	{
+	CRYPT_CONTEXT iCryptContext;
+	MESSAGE_DATA msgData;
 	void *publicKeyInfoPtr;
-	int length = DUMMY_INIT, status;
+	int isXyzzyCert, length = DUMMY_INIT, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( ( isHandleRangeValid( cryptHandle ) && \
@@ -249,82 +251,129 @@ int copyPublicKeyInfo( INOUT CERT_INFO *certInfoPtr,
 		return( CRYPT_ERROR_INITED );
 		}
 
-	/* If we've been given a data-only certificate copy over the public key 
-	   data */
+	/* If we've been given a data-only certificate then all that we need to 
+	   do is copy over the public key data */
 	if( srcCertInfoPtr != NULL )
 		{
 		REQUIRES( memcmp( srcCertInfoPtr->publicKeyID,
 						  "\x00\x00\x00\x00\x00\x00\x00\x00", 8 ) );
 
-		length = srcCertInfoPtr->publicKeyInfoSize;
-		if( ( publicKeyInfoPtr = clAlloc( "copyPublicKeyInfo", 
-										  length ) ) == NULL )
+		if( ( publicKeyInfoPtr = \
+					clAlloc( "copyPublicKeyInfo", 
+							 srcCertInfoPtr->publicKeyInfoSize ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
-		memcpy( publicKeyInfoPtr, srcCertInfoPtr->publicKeyInfo, length );
+		memcpy( publicKeyInfoPtr, srcCertInfoPtr->publicKeyInfo, 
+				srcCertInfoPtr->publicKeyInfoSize );
+		certInfoPtr->publicKeyData = certInfoPtr->publicKeyInfo = \
+			publicKeyInfoPtr;
+		certInfoPtr->publicKeyInfoSize = srcCertInfoPtr->publicKeyInfoSize;
 		certInfoPtr->publicKeyAlgo = srcCertInfoPtr->publicKeyAlgo;
 		certInfoPtr->publicKeyFeatures = srcCertInfoPtr->publicKeyFeatures;
 		memcpy( certInfoPtr->publicKeyID, srcCertInfoPtr->publicKeyID,
 				KEYID_SIZE );
+		certInfoPtr->flags |= CERT_FLAG_DATAONLY;
+
+		return( CRYPT_OK );
 		}
-	else
+
+	/* Get the context handle.  All other checking has already been 
+	   performed by the kernel */
+	status = krnlSendMessage( cryptHandle, IMESSAGE_GETDEPENDENT, 
+							  &iCryptContext, OBJECT_TYPE_CONTEXT );
+	if( cryptStatusError( status ) )
 		{
-		CRYPT_CONTEXT iCryptContext;
-		MESSAGE_DATA msgData;
+		setErrorInfo( certInfoPtr, CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO,
+					  CRYPT_ERRTYPE_ATTR_VALUE );
+		return( status );
+		}
 
-		/* Get the context handle.  All other checking has already been
-		   performed by the kernel */
-		status = krnlSendMessage( cryptHandle, IMESSAGE_GETDEPENDENT,
-								  &iCryptContext, OBJECT_TYPE_CONTEXT );
-		if( cryptStatusError( status ) )
-			{
-			setErrorInfo( certInfoPtr, CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO,
-						  CRYPT_ERRTYPE_ATTR_VALUE );
-			return( status );
-			}
-
-		/* Get the key information */
+	/* Get the key information */
+	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
+							  &certInfoPtr->publicKeyAlgo,
+							  CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-								  &certInfoPtr->publicKeyAlgo,
-								  CRYPT_CTXINFO_ALGO );
-		if( cryptStatusOK( status ) )
-			status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-									  &certInfoPtr->publicKeyFeatures,
-									  CRYPT_IATTRIBUTE_KEYFEATURES );
-		if( cryptStatusOK( status ) )
-			{
-			setMessageData( &msgData, certInfoPtr->publicKeyID, KEYID_SIZE );
-			status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
-									  &msgData, CRYPT_IATTRIBUTE_KEYID );
-			}
-		if( cryptStatusError( status ) )
-			return( status );
+								  &certInfoPtr->publicKeyFeatures,
+								  CRYPT_IATTRIBUTE_KEYFEATURES );
+	if( cryptStatusOK( status ) )
+		{
+		setMessageData( &msgData, certInfoPtr->publicKeyID, KEYID_SIZE );
+		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
+								  &msgData, CRYPT_IATTRIBUTE_KEYID );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
 
-		/* Copy over the public-key data.  We copy the data rather than
-		   keeping a reference to the context for two reasons.  Firstly,
-		   when the certificate is transitioned into the high state it will
-		   constrain the attached context so a context shared between two
-		   certificates could be constrained in unexpected ways.  Secondly, 
-		   the context could be a private-key context and attaching that to 
-		   a certificate would be rather inappropriate.  Furthermore, the 
-		   constraint issue is even more problematic in that a context 
-		   constrained by an encryption-only request could then no longer be 
-		   used to sign the request or a PKI protocol message containing the 
-		   request */
-		setMessageData( &msgData, NULL, 0 );
-		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
-								  &msgData, CRYPT_IATTRIBUTE_KEY_SPKI );
+	/* If it's a XYZZY certificate then we need to check that the key is 
+	   signature-capable (or at least sig-check capable, since it may be
+	   just the public key that's being added), since XYZZY certificates 
+	   are self-signed */
+	status = getCertComponent( certInfoPtr, CRYPT_CERTINFO_XYZZY, 
+							   &isXyzzyCert );
+	if( cryptStatusOK( status ) && isXyzzyCert )
+		{
+		int keyUsage = KEYUSAGE_SIGN | KEYUSAGE_CA;
+
+		/* Make sure that the key is signature-capable.  We have to check 
+		   for a capability to either sign or sig-check since a pure public 
+		   key will only have a sig-check capability while a private key 
+		   held in a device (from which we're going to extract the public-
+		   key components) may be only signature-capable */
+		status = krnlSendMessage( iCryptContext, IMESSAGE_CHECK, NULL,
+								  MESSAGE_CHECK_PKC_SIGCHECK );
 		if( cryptStatusError( status ) )
-			return( status );
-		length = msgData.length;
-		if( ( publicKeyInfoPtr = clAlloc( "copyPublicKeyInfo", 
-										  length ) ) == NULL )
-			return( CRYPT_ERROR_MEMORY );
-		setMessageData( &msgData, publicKeyInfoPtr, length );
-		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
-								  &msgData, CRYPT_IATTRIBUTE_KEY_SPKI );
+			status = krnlSendMessage( iCryptContext, IMESSAGE_CHECK, NULL,
+									  MESSAGE_CHECK_PKC_SIGN );
+		if( cryptStatusError( status ) )
+			{
+			setErrorInfo( certInfoPtr, CRYPT_CERTINFO_KEYUSAGE,
+						  CRYPT_ERRTYPE_ATTR_VALUE );
+			return( CRYPT_ERROR_INVALID );
+			}
+
+		/* If the key is encryption-capable (with the same caveat as for the 
+		   signature check above), enable that usage as well */
+		status = krnlSendMessage( iCryptContext, IMESSAGE_CHECK, NULL,
+								  MESSAGE_CHECK_PKC_ENCRYPT );
+		if( cryptStatusError( status ) )
+			status = krnlSendMessage( iCryptContext, IMESSAGE_CHECK, NULL,
+									  MESSAGE_CHECK_PKC_DECRYPT );
+		if( cryptStatusOK( status ) )
+			keyUsage |= CRYPT_KEYUSAGE_KEYENCIPHERMENT;
+
+		/* Clear the existing usage and replace it with our usage.  See 
+		   the comment in setXyzzyInfo() for why it's done this way */
+		( void ) deleteCertComponent( certInfoPtr, CRYPT_CERTINFO_KEYUSAGE );
+		status = addCertComponent( certInfoPtr, CRYPT_CERTINFO_KEYUSAGE,
+								   keyUsage );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+
+	/* Copy over the public-key data.  We copy the data rather than keeping 
+	   a reference to the context for two reasons.  Firstly, when the 
+	   certificate is transitioned into the high state it will constrain the 
+	   attached context so a context shared between two certificates could 
+	   be constrained in unexpected ways.  Secondly, the context could be a 
+	   private-key context and attaching that to a certificate would be 
+	   rather inappropriate.  Furthermore, the constraint issue is even more 
+	   problematic in that a context constrained by an encryption-only 
+	   request could then no longer be used to sign the request or a PKI 
+	   protocol message containing the request */
+	setMessageData( &msgData, NULL, 0 );
+	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_IATTRIBUTE_KEY_SPKI );
+	if( cryptStatusError( status ) )
+		return( status );
+	length = msgData.length;
+	if( ( publicKeyInfoPtr = clAlloc( "copyPublicKeyInfo", 
+									  length ) ) == NULL )
+		return( CRYPT_ERROR_MEMORY );
+	setMessageData( &msgData, publicKeyInfoPtr, length );
+	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_IATTRIBUTE_KEY_SPKI );
+	if( cryptStatusError( status ) )
+		return( status );
 	certInfoPtr->publicKeyData = certInfoPtr->publicKeyInfo = \
 		publicKeyInfoPtr;
 	certInfoPtr->publicKeyInfoSize = length;

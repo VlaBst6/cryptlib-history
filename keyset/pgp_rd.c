@@ -245,73 +245,13 @@ static int readPrivateKeyDecryptionInfo( INOUT STREAM *stream,
 							  ( value == PGP_ALGO_AES_192 ) ? 24 : 32;
 		ivSize = 16;
 		}
-	status = value = sgetc( stream );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( value != 0 && value != 1 && value != 3 )
+	status = readPgpS2K( stream, &keyInfo->hashAlgo, keyInfo->salt, 
+						 PGP_SALTSIZE, &keyInfo->saltSize, 
+						 &keyInfo->keySetupIterations );
+	if( status == CRYPT_ERROR_NOTAVAIL )
+		{
+		/* Unknown algorithm type, skip this packet */
 		return( OK_SPECIAL );
-	status = readPgpAlgo( stream, &keyInfo->hashAlgo, 
-						  PGP_ALGOCLASS_HASH );
-	if( cryptStatusError( status ) )
-		{
-		if( status == CRYPT_ERROR_NOTAVAIL )
-			{
-			/* Unknown algorithm type, skip this packet */
-			return( OK_SPECIAL );
-			}
-
-		 return( status );
-		 }
-	if( value != 0 )
-		{
-		/* It's a salted hash */
-		status = sread( stream, keyInfo->salt, PGP_SALTSIZE );
-		if( cryptStatusError( status ) )
-			return( status );
-		keyInfo->saltSize = PGP_SALTSIZE;
-		}
-	if( value == 3 )
-		{
-		long iterations;
-
-		/* It's a salted iterated hash, get the iteration count, limited to 
-		   a sane value.  The "iteration count" is actually a count of how 
-		   many bytes are hashed, this is because the "iterated hashing" 
-		   treats the salt + password as an infinitely-repeated sequence of 
-		   values and hashes the resulting string for PGP-iteration-count 
-		   bytes worth.  The value that we calculate here (to prevent 
-		   overflow on 16-bit machines) is the count without the base * 64 
-		   scaling, this also puts the range within the value of the 
-		   standard sanity check.  Note that there's a mutant GPG build used 
-		   with loop-AES that uses 8M setup iterations, why this is used and 
-		   why it writes PGP keys with this setting is uncertain but 
-		   cryptlib will reject keys with this value as being outside the 
-		   range of sane values (for an 8-byte salt and a typical 8-byte 
-		   password this would lead to 8M / 16 = 512K iterations of the PRF,
-		   a value so extreme that it'd normally only be used in a DoS 
-		   attack).
-		   
-		   Unfortunately however PGP Desktop 9 (apparently) in its default
-		   config will use values up to 4M (= 256K iterations of the PRF),
-		   which the sanity-check code would also reject.  It's uncertain at 
-		   which point we should draw the line here, on the one hand we want 
-		   to be able to handle PGP Desktop's data but we also want some 
-		   protection against DoS attacks due to ridiculously high iteration 
-		   counts.  For now we reject obviously invalid values (ones less 
-		   than zero or which would cause an overflow once the base * 64 
-		   scaling is applied) and in addition tell the caller to skip the
-		   packet (without rejecting the overall keyring data) if the
-		   iteration count would be larger than 128K for the typical 8-byte
-		   password case above */
-		value = sgetc( stream );
-		if( cryptStatusError( value ) )
-			return( value );
-		iterations = ( 16 + ( ( long ) value & 0x0F ) ) << ( value >> 4 );
-		if( iterations <= 0 || iterations >= MAX_INTLENGTH / 64 )
-			return( CRYPT_ERROR_BADDATA );
-		if( iterations >= 32768L )	/* 32K * 4 = 128K iterations */
-			return( OK_SPECIAL );
-		keyInfo->keySetupIterations = ( int ) iterations;
 		}
 	if( ctb == PGP_S2K_HASHED )
 		{
@@ -682,6 +622,9 @@ static int readKey( INOUT STREAM *stream,
 					  "Invalid additional PGP subkey information for key "
 					  "packet group %d", keyGroupNo ) );
 			}
+
+		/* We've skipped the current subkey, we're done */
+		return( CRYPT_OK );
 		}
 
 	/* Determine which bits make up the public and the private key data.  The

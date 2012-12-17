@@ -90,21 +90,6 @@
 
 #define NO_TESTS	25
 
-/* Normally we use 32-bit time values, however there's also (partial)
-   support for 64-bit signed values on systems that support this */
-
-#define USE_32BIT_TIME
-
-#if defined( USE_32BIT_TIME )
-  typedef long HIRES_TIME;
-#elif defined( _MSC_VER )
-  typedef __int64 HIRES_TIME;
-#elif defined( __GNUC__ )
-  typedef long long HIRES_TIME;
-#else
-  typedef unsigned long HIRES_TIME;
-#endif /* 64-bit int values */
-
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -134,98 +119,6 @@ void wcPuts( const char *string )
 	wcPrintf( "%s\n", string );
 	}
 #endif /* Console-less environments */
-
-/* Get high-resolution timing info */
-
-#ifdef USE_32BIT_TIME
-
-static HIRES_TIME timeDiff( HIRES_TIME startTime )
-	{
-	HIRES_TIME timeLSB, timeDifference;
-
-#ifdef __WINDOWS__
-  #if 1
-	LARGE_INTEGER performanceCount;
-
-	/* Sensitive to context switches */
-	QueryPerformanceCounter( &performanceCount );
-	timeLSB = performanceCount.LowPart;
-  #else
-	FILETIME dummyTime, kernelTime, userTime;
-	int status;
-
-	/* Only accurate to 10ms, returns constant values in VC++ debugger */
-	GetThreadTimes( GetCurrentThread(), &dummyTime, &dummyTime,
-					&kernelTime, &userTime );
-	timeLSB = userTime.dwLowDateTime;
-  #endif /* 0 */
-#else
-	struct timeval tv;
-
-	/* Only accurate to about 1us */
-	gettimeofday( &tv, NULL );
-	timeLSB = tv.tv_usec;
-#endif /* Windows vs.Unix high-res timing */
-
-	/* If we're getting an initial time, return an absolute value */
-	if( !startTime )
-		return( timeLSB );
-
-	/* We're getting a time difference */
-	if( startTime < timeLSB )
-		timeDifference = timeLSB - startTime;
-	else
-#ifdef __WINDOWS__
-		/* Windows rolls over at INT_MAX */
-		timeDifference = ( 0xFFFFFFFFUL - startTime ) + 1 + timeLSB;
-#else
-		/* gettimeofday() rolls over at 1M us */
-		timeDifference = ( 1000000L - startTime ) + timeLSB;
-#endif /* __WINDOWS__ */
-	if( timeDifference <= 0 )
-		{
-		printf( "Error: Time difference = %X, startTime = %X, endTime = %X.\n",
-				timeDifference, startTime, timeLSB );
-		return( 1 );
-		}
-	return( timeDifference );
-	}
-
-#else
-
-static HIRES_TIME timeDiff( HIRES_TIME startTime )
-	{
-	HIRES_TIME timeValue;
-
-#ifdef __WINDOWS__
-  #if 1
-	LARGE_INTEGER performanceCount;
-
-	/* Sensitive to context switches */
-	QueryPerformanceCounter( &performanceCount );
-	timeValue = performanceCount.QuadPart;
-  #else
-	FILETIME dummyTime, kernelTime, userTime;
-	int status;
-
-	/* Only accurate to 10ms, returns constant values in VC++ debugger */
-	GetThreadTimes( GetCurrentThread(), &dummyTime, &dummyTime,
-					&kernelTime, &userTime );
-	timeLSB = userTime.dwLowDateTime;
-  #endif /* 0 */
-#else
-	struct timeval tv;
-
-	/* Only accurate to about 1us */
-	gettimeofday( &tv, NULL );
-	timeValue = ( ( ( HIRES_TIME ) tv.tv_sec ) << 32 ) | tv.tv_usec;
-#endif /* Windows vs.Unix high-res timing */
-
-	if( !startTime )
-		return( timeValue );
-	return( timeValue - startTime );
-	}
-#endif /* USE_32BIT_TIME */
 
 /* Check for an algorithm/mode */
 
@@ -902,6 +795,7 @@ static BOOLEAN loadRSAKey( const CRYPT_DEVICE cryptDevice,
 										 CRYPT_ALGO_RSA );
 		if( cryptStatusError( status ) )
 			{
+			free( rsaKey );
 			printf( "crypt%sCreateContext() failed with error code %d.\n",
 					isDevice ? "Device" : "", status );
 			return( FALSE );
@@ -917,6 +811,7 @@ static BOOLEAN loadRSAKey( const CRYPT_DEVICE cryptDevice,
 		cryptDestroyComponents( rsaKey );
 		if( cryptStatusError( status ) )
 			{
+			free( rsaKey );
 			printf( "Key load failed with error code %d.\n", status );
 			return( FALSE );
 			}
@@ -937,6 +832,7 @@ static BOOLEAN loadRSAKey( const CRYPT_DEVICE cryptDevice,
 									 CRYPT_ALGO_RSA );
 	if( cryptStatusError( status ) )
 		{
+		free( rsaKey );
 		printf( "crypt%sCreateContext() failed with error code %d.\n",
 				isDevice ? "Device" : "", status );
 		return( FALSE );
@@ -1069,6 +965,7 @@ static BOOLEAN loadDSAKey( const CRYPT_DEVICE cryptDevice,
 										 CRYPT_ALGO_DSA );
 		if( cryptStatusError( status ) )
 			{
+			free( dsaKey );
 			printf( "crypt%sCreateContext() failed with error code %d.\n",
 					isDevice ? "Device" : "", status );
 			return( FALSE );
@@ -1087,6 +984,7 @@ static BOOLEAN loadDSAKey( const CRYPT_DEVICE cryptDevice,
 		cryptDestroyComponents( dsaKey );
 		if( cryptStatusError( status ) )
 			{
+			free( dsaKey );
 			printf( "Key load failed with error code %d.\n", status );
 			return( FALSE );
 			}
@@ -1107,6 +1005,7 @@ static BOOLEAN loadDSAKey( const CRYPT_DEVICE cryptDevice,
 									 CRYPT_ALGO_DSA );
 	if( cryptStatusError( status ) )
 		{
+		free( dsaKey );
 		printf( "crypt%sCreateContext() failed with error code %d.\n",
 				isDevice ? "Device" : "", status );
 		return( FALSE );

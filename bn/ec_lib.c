@@ -61,13 +61,13 @@
  * SUN MICROSYSTEMS, INC., and contributed to the OpenSSL project.
  */
 
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "ec_lcl.h"
 #else
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#if defined( USE_ECDH ) || defined( USE_ECDSA )
+#if defined( USE_ECDH ) || defined( USE_ECDSA )		/* pcg */
 
 /* functions for EC_GROUP objects */
 
@@ -77,7 +77,7 @@ EC_GROUP *EC_GROUP_new(const EC_METHOD *meth)
 
 	if (meth == NULL)
 		{
-		ECerr(EC_F_EC_GROUP_NEW, ERR_R_PASSED_NULL_PARAMETER);
+		ECerr(EC_F_EC_GROUP_NEW, EC_R_SLOT_FULL);
 		return NULL;
 		}
 	if (meth->group_init == 0)
@@ -86,7 +86,7 @@ EC_GROUP *EC_GROUP_new(const EC_METHOD *meth)
 		return NULL;
 		}
 
-	ret = clBnAlloc( "EC_GROUP_new", sizeof *ret);
+	ret = clBnAlloc( "EC_GROUP_new",sizeof *ret);	/* pcg */
 	if (ret == NULL)
 		{
 		ECerr(EC_F_EC_GROUP_NEW, ERR_R_MALLOC_FAILURE);
@@ -225,7 +225,7 @@ int EC_GROUP_copy(EC_GROUP *dest, const EC_GROUP *src)
 		{
 		if (dest->seed)
 			OPENSSL_free(dest->seed);
-		dest->seed = clBnAlloc( "EC_GROUP_copy", src->seed_len);
+		dest->seed = clBnAlloc( "EC_GROUP_copy",src->seed_len);		/* pcg */
 		if (dest->seed == NULL)
 			return 0;
 		if (!memcpy(dest->seed, src->seed, src->seed_len))
@@ -381,7 +381,7 @@ size_t EC_GROUP_set_seed(EC_GROUP *group, const unsigned char *p, size_t len)
 	if (!len || !p)
 		return 1;
 
-	if ((group->seed = clBnAlloc( "EC_GROUP_set_seed", len)) == NULL)
+	if ((group->seed = clBnAlloc( "EC_GROUP_set_seed",len)) == NULL)	/* pcg */
 		return 0;
 	memcpy(group->seed, p, len);
 	group->seed_len = len;
@@ -565,7 +565,7 @@ int EC_EX_DATA_set_data(EC_EXTRA_DATA **ex_data, void *data,
 		/* no explicit entry needed */
 		return 1;
 
-	d = clBnAlloc( "EC_EX_DATA_set_data", sizeof *d);
+	d = clBnAlloc( "EC_EX_DATA_set_data",sizeof *d);	/* pcg */
 	if (d == NULL)
 		return 0;
 
@@ -703,7 +703,7 @@ EC_POINT *EC_POINT_new(const EC_GROUP *group)
 		return NULL;
 		}
 
-	ret = clBnAlloc( "EC_POINT_new", sizeof *ret);
+	ret = clBnAlloc( "EC_POINT_new",sizeof *ret);	/* pcg */
 	if (ret == NULL)
 		{
 		ECerr(EC_F_EC_POINT_NEW, ERR_R_MALLOC_FAILURE);
@@ -738,7 +738,7 @@ void EC_POINT_clear_free(EC_POINT *point)
 
 	if (point->meth->point_clear_finish != 0)
 		point->meth->point_clear_finish(point);
-	else if (point->meth != NULL && point->meth->point_finish != 0)
+	else if (point->meth->point_finish != 0)
 		point->meth->point_finish(point);
 	OPENSSL_cleanse(point, sizeof *point);
 	OPENSSL_free(point);
@@ -1161,4 +1161,35 @@ int EC_GROUP_have_precompute_mult(const EC_GROUP *group)
 		return 0; /* cannot tell whether precomputation has been performed */
 	}
 
-#endif /* USE_ECDH || USE_ECDSA */
+/* Checksum the ECC structure metadata and their data payloads - pcg */
+
+void BN_checksum_ec_group_metadata( EC_GROUP *group, int *chk )	/* pcg */
+	{
+	*chk = checksumBignumData( group, sizeof( EC_GROUP ), *chk );
+	}
+
+void BN_checksum_ec_group( EC_GROUP *group, int *chk )	/* pcg */
+	{
+	/* EC_GROUPs have an incredibly complex inner stucture (see 
+	   bn/ec_lcl.h), the following checksums the fixed without getting 
+	   into the lists of method-specific data values */
+	BN_checksum( &group->order, chk );
+	BN_checksum( &group->cofactor, chk );
+	BN_checksum( &group->field, chk );
+	BN_checksum( &group->a, chk );
+	BN_checksum( &group->b, chk );
+	}
+
+void BN_checksum_ec_point_metadata( EC_POINT *point, int *chk )	/* pcg */
+	{
+	*chk = checksumBignumData( point, sizeof( EC_POINT ), *chk );
+	}
+
+void BN_checksum_ec_point( EC_POINT *point, int *chk )	/* pcg */
+	{
+	BN_checksum( &point->X, chk );
+	BN_checksum( &point->Y, chk );
+	BN_checksum( &point->Z, chk );
+	}
+
+#endif /* USE_ECDH || USE_ECDSA */	/* pcg */

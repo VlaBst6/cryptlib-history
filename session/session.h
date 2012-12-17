@@ -61,16 +61,7 @@
 			enhancements.
 
 	SESSION_ISHTTPTRANSPORT: The session is using HTTP transport, for 
-			request/response sessions.
-
-	SESSION_USEALTTRANSPORT: The protocol usually uses HTTP but also 
-			supports an alternative transport type, which should be used 
-			in place of HTTP.
-	
-	SESSION_USEHTTPTUNNEL: The protocol is (potentially) tunneled over an 
-			HTTP proxy.  In other words if CRYPT_OPTION_NET_HTTP_PROXY is
-			set, the protocol talks through an HTTP proxy rather than a
-			direct connection */
+			request/response sessions */
 	
 #define SESSION_NONE				0x0000	/* No session flags */
 #define SESSION_ISOPEN				0x0001	/* Session is active */
@@ -83,8 +74,6 @@
 #define SESSION_ISSECURE_WRITE		0x0080	/* Session write ch.in secure state */
 #define SESSION_ISCRYPTLIB			0x0100	/* Peer is running cryptlib */
 #define SESSION_ISHTTPTRANSPORT		0x0200	/* Session using HTTP transport */
-#define SESSION_USEHTTPTUNNEL		0x0400	/* Session uses HTTP tunnel */
-#define SESSION_USEALTTRANSPORT		0x0800	/* Use alternative to HTTP xport */
 
 /* Needed-information flags used by protocol-specific handlers to indicate
    that the caller must set the given attributes in the session information
@@ -152,21 +141,7 @@ typedef enum {
 *																			*
 ****************************************************************************/
 
-/* Protocol-specific information for each session.  The alt.protocol 
-   information can be used when a secondary transport protocol is available 
-   (e.g. HTTP tunnel for SSL), if the URI type matches then the alt.protocol 
-   type, port, and protocol flags are used, the mask is used to mask out 
-   existing flags and the new flags value is used to set replacement flags */
-
-typedef struct {
-	const STREAM_PROTOCOL_TYPE type;	/* Protocol type */
-	BUFFER_FIXED( uriTypeLen ) \
-	const char *uriType;				/* Protocol URI type (e.g. "cmp://") */
-	const int uriTypeLen;				/* Protocol URI type length */
-	const int port;						/* Protocol port */
-	const int oldFlagsMask;				/* Mask for current protocol flags */
-	const int newFlags;					/* Replacement flags */
-	} ALTPROTOCOL_INFO;
+/* Protocol-specific information for each session */
 
 typedef struct {
 	/* Information required for all sessions: Whether this is a secure
@@ -188,7 +163,6 @@ typedef struct {
 	const int bufSize;					/* Send/receive buffer sizes */
 	const int sendBufStartOfs;			/* Payload data start */
 	const int maxPacketSize;			/* Maximum packet (payload data) size */
-	const ALTPROTOCOL_INFO *altProtocolInfo; /* Alternative xport protocol */
 	} PROTOCOL_INFO;
 
 /* A value to initialise the session type-specific buffer size values to
@@ -703,9 +677,9 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readPkiDatagram( INOUT SESSION_INFO *sessionInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writePkiDatagram( INOUT SESSION_INFO *sessionInfoPtr, 
-					  IN_BUFFER_OPT( contentTypeLength ) \
+					  IN_BUFFER_OPT( contentTypeLen ) \
 							const char *contentType, 
-					  IN_LENGTH_SHORT_Z const int contentTypeLength );
+					  IN_LENGTH_TEXT_Z const int contentTypeLen );
 
 /* Prototypes for functions in session.c */
 

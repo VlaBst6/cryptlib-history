@@ -156,7 +156,7 @@ static int readKeyDerivationInfo( INOUT STREAM *stream,
 	status = readShortInteger( stream, &intValue );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( intValue < 1 || intValue >= MAX_KEYSETUP_ITERATIONS )
+	if( intValue < 1 || intValue > MAX_KEYSETUP_ITERATIONS )
 		return( CRYPT_ERROR_BADDATA );
 	*iterations = ( int ) intValue;
 
@@ -408,6 +408,7 @@ int pkcs12ReadObject( INOUT STREAM *stream,
 				( status, errorInfo, 
 				  "Couldn't read PKCS #12 object data" ) );
 		}
+	ANALYSER_HINT( objectData != NULL );
 
 	/* Read the object information from the in-memory object data.  First we 
 	   have to find out what it is that we're dealing with, caused by yet 

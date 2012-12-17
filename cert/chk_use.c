@@ -385,7 +385,10 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 	ATTRIBUTE_PTR *attributePtr;
 	const BOOLEAN isGeneralCheck = ( flags & CHECKKEY_FLAG_GENCHECK ) ? \
 								   TRUE : FALSE;
-	BOOLEAN keyUsageCritical = 0, isCA = FALSE;
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
+	BOOLEAN keyUsageCritical = 0;
+#endif /* USE_CERTLEVEL_PKIX_PARTIAL */
+	BOOLEAN isCA = FALSE;
 	const int trustedUsage = \
 				( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
 				  certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN ) ? \
@@ -483,11 +486,15 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 									   CRYPT_ATTRIBUTE_NONE );
 	if( attributePtr != NULL )
 		{
+		/* Check whether the keyUsage extension is critical, needed for 
+		   some odd PKIX-defined checks at higher compliance levels */
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
 		status = getAttributeDataValue( attributePtr, &keyUsage );
 		if( cryptStatusError( status ) )
 			return( status );
 		keyUsageCritical = \
 			checkAttributeProperty( attributePtr, ATTRIBUTE_PROPERTY_CRITICAL );
+#endif /* USE_CERTLEVEL_PKIX_PARTIAL */
 
 		/* If the CA key usages are set make sure that the CA flag is set in
 		   an appropriate manner */

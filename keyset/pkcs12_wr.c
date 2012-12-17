@@ -68,7 +68,7 @@ static int sizeofMacData( const PKCS12_INFO *pkcs12info )
 	assert( isReadPtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
 
 	return( sizeofObject( \
-				sizeofAlgoID( CRYPT_ALGO_SHA ) + \
+				sizeofAlgoID( CRYPT_ALGO_SHA1 ) + \
 				sizeofObject( 20 ) ) + \
 			 sizeofObject( pkcs12info->macSaltSize ) + \
 			 sizeofShortInteger( pkcs12info->macIterations ) );
@@ -103,9 +103,9 @@ static int writeMacData( INOUT STREAM *stream,
 	/* Write the MAC data.  Despite the fact that the algorithm being used 
 	   is HMAC, the OID that we have to write is the one for plain SHA-1 */
 	writeSequence( stream, macDataSize );
-	writeSequence( stream, sizeofAlgoID( CRYPT_ALGO_SHA ) + \
+	writeSequence( stream, sizeofAlgoID( CRYPT_ALGO_SHA1 ) + \
 						   sizeofObject( 20 ) );
-	writeAlgoID( stream, CRYPT_ALGO_SHA );
+	writeAlgoID( stream, CRYPT_ALGO_SHA1 );
 	writeOctetString( stream, macBuffer, msgData.length, DEFAULT_TAG );
 	writeOctetString( stream, pkcs12info->macSalt, pkcs12info->macSaltSize,
 					  DEFAULT_TAG );
@@ -312,17 +312,20 @@ static int writeMacItem( INOUT STREAM *stream,
 		}
 	else
 		{
-		writeNonCMSheader( &memStream, OID_PKCS12_CERTBAG,
-						   sizeofOID( OID_PKCS12_CERTBAG ), ( int ) \
-						   ( sizeofOID( OID_PKCS9_X509CERTIFICATE ) + \
-							 sizeofObject( \
+		status = writeNonCMSheader( &memStream, OID_PKCS12_CERTBAG,
+							sizeofOID( OID_PKCS12_CERTBAG ), ( int ) \
+							( sizeofOID( OID_PKCS9_X509CERTIFICATE ) + \
+							  sizeofObject( \
 								sizeofObject( pkcs12objectInfo->dataSize ) ) ),
-							 attrDataSize );
-		writeOID( &memStream, OID_PKCS9_X509CERTIFICATE );
-		writeConstructed( &memStream, ( int ) \
-						  sizeofObject( pkcs12objectInfo->dataSize ), 0 );
-		status = writeOctetStringHole( &memStream, 
-							pkcs12objectInfo->dataSize, DEFAULT_TAG );
+							  attrDataSize );
+		if( cryptStatusOK( status ) )
+			{
+			writeOID( &memStream, OID_PKCS9_X509CERTIFICATE );
+			writeConstructed( &memStream, ( int ) \
+							  sizeofObject( pkcs12objectInfo->dataSize ), 0 );
+			status = writeOctetStringHole( &memStream, 
+								pkcs12objectInfo->dataSize, DEFAULT_TAG );
+			}
 		}
 	if( cryptStatusOK( status ) )
 		objectHeaderSize = stell( &memStream );

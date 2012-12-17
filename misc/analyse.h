@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Source Analysis Header File 					*
-*						Copyright Peter Gutmann 1997-2010					*
+*						Copyright Peter Gutmann 1997-2011					*
 *																			*
 ****************************************************************************/
 
@@ -454,6 +454,8 @@
 	LENGTH_PKC		Value must be a valid length for PKC data.
 	LENGTH_PKC_Z	Value must be a valid length for PKC data, including 
 					zero-length output, which is returned on error.
+	LENGTH_TEXT		Value must be a valid length for a text string (length
+					up to CRYPT_MAX_TEXTSIZE).
 
    In addition to these we allow the OPT specifier and Z suffix as before */
 
@@ -475,6 +477,8 @@
 #define IN_LENGTH_OID			_In_ _In_range_( 7, MAX_OID_SIZE )
 #define IN_LENGTH_PKC			_In_ _In_range_( 1, CRYPT_MAX_PKCSIZE )
 #define IN_LENGTH_PKC_Z			_In_ _In_range_( 0, CRYPT_MAX_PKCSIZE )
+#define IN_LENGTH_TEXT			_In_ _In_range_( 1, CRYPT_MAX_TEXTSIZE )
+#define IN_LENGTH_TEXT_Z		_In_ _In_range_( 0, CRYPT_MAX_TEXTSIZE )
 
 #define OUT_LENGTH_DNS_Z		_Out_ _Out_range_( 0, MAX_DNS_SIZE )
 #define OUT_OPT_LENGTH_HASH_Z	_Out_opt_ _Out_range_( 0, CRYPT_MAX_HASHSIZE )
@@ -500,6 +504,8 @@
 #define IN_LENGTH_OID			__in __in_range( 7, MAX_OID_SIZE )
 #define IN_LENGTH_PKC			__in __in_range( 1, CRYPT_MAX_PKCSIZE )
 #define IN_LENGTH_PKC_Z			__in __in_range( 0, CRYPT_MAX_PKCSIZE )
+#define IN_LENGTH_TEXT			__in __in_range( 1, CRYPT_MAX_TEXTSIZE )
+#define IN_LENGTH_TEXT_Z		__in __in_range( 0, CRYPT_MAX_TEXTSIZE )
 
 #define OUT_LENGTH_DNS_Z		__out __out_range( 0, MAX_DNS_SIZE )
 #define OUT_OPT_LENGTH_HASH_Z	__out_opt __out_range( 0, CRYPT_MAX_HASHSIZE )
@@ -924,7 +930,17 @@
    placing it next to the parameter as for STDC_UNUSED.
 
    For both of these issues the gcc maintainers' response was "not our 
-   problem/it's behaving as intended" */
+   problem/it's behaving as intended".
+   
+   (This isn't the only time that gcc maintainers have introduced faults 
+   and/or security flaws into gcc-generated code.  When they changed gcc to 
+   optimise away integer-overflow checks like 'a*b/b != a' (see "IntPatch: 
+   Automatically Fix Integer-Overflow-to-Buffer-Overflow Vulnerability at 
+   Compile Time", Zhang et al, ESORICS'10) or 'a + 100 > 0' they spent a 55-
+   message thread arguing over why it was OK to do this (see 
+   http://gcc.gnu.org/bugzilla/show_bug.cgi?id=30475) rather than actually 
+   fixing it (although in this case the lack of tact of the bug submitter 
+   can't have helped either) */
 
 #define STDC_NONNULL_ARG( argIndex ) \
 		__attribute__(( nonnull argIndex ))
@@ -1156,6 +1172,8 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 #define IN_LENGTH_OID
 #define IN_LENGTH_PKC
 #define IN_LENGTH_PKC_Z
+#define IN_LENGTH_TEXT
+#define IN_LENGTH_TEXT_Z
 #define OUT_LENGTH_DNS_Z
 #define OUT_OPT_LENGTH_HASH_Z
 #define OUT_LENGTH_PKC_Z

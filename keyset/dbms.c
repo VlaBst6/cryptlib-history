@@ -121,20 +121,27 @@ static int performUpdate( INOUT DBMS_INFO *dbmsInfo,
 	   do anything */
 	if( updateType == DBMS_UPDATE_ABORT && \
 		!( dbmsInfo->flags & DBMS_FLAG_UPDATEACTIVE ) )
+		{
+		DEBUG_DIAG(( "Tried to roll back non-begun transaction." ));
 		return( CRYPT_OK );
+		}
 
 	/* Process the update */
-	status = dbmsInfo->performUpdateBackend( dbmsStateInfo, command, 
-											 commandLength, boundData, 
+	status = dbmsInfo->performUpdateBackend( dbmsStateInfo, command,
+											 commandLength, boundData,
 											 updateType );
-	if( cryptStatusOK( status ) )
+	if( cryptStatusOK( status ) && updateType == DBMS_UPDATE_BEGIN )
 		{
-		/* If we're starting or ending an update, record the update state */
-		if( updateType == DBMS_UPDATE_BEGIN )
-			dbmsInfo->flags |= DBMS_FLAG_UPDATEACTIVE;
-		if( updateType == DBMS_UPDATE_COMMIT || \
-			updateType == DBMS_UPDATE_ABORT )
-			dbmsInfo->flags &= ~DBMS_FLAG_UPDATEACTIVE;
+		/* We've successfully started a transaction, record the update
+		   state */
+		dbmsInfo->flags |= DBMS_FLAG_UPDATEACTIVE;
+		}
+	if( updateType == DBMS_UPDATE_COMMIT || \
+		updateType == DBMS_UPDATE_ABORT )
+		{
+		/* Final commits or rollbacks always end a transaction, even if
+		   they're performed as part of a failed transaction */
+		dbmsInfo->flags &= ~DBMS_FLAG_UPDATEACTIVE;
 		}
 	return( status );
 	}

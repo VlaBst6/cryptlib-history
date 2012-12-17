@@ -470,7 +470,7 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 					   IN_HANDLE const CRYPT_USER iCryptOwner,
 					   IN_ENUM( CRYPT_DEVICE ) const CRYPT_DEVICE_TYPE deviceType,
 					   IN_BUFFER_OPT( nameLength ) const char *name, 
-					   IN_LENGTH_SHORT_Z const int nameLength,
+					   IN_LENGTH_TEXT_Z const int nameLength,
 					   OUT_PTR DEVICE_INFO **deviceInfoPtrPtr )
 	{
 	DEVICE_INFO *deviceInfoPtr;

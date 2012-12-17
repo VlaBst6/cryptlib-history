@@ -458,7 +458,11 @@ static int initKeys( IN_HANDLE const CRYPT_CONTEXT iGenericContext,
 	   release, private-key files created by this version use a 128-bit 
 	   HMAC-SHA1 key instead of a 160-bit one.  To work around this we 
 	   create a second MAC context with a 128-bit key and try that if the
-	   initial check with the 160-bit key fails */
+	   initial check with the 160-bit key fails.
+
+	   In addition the RFC draft that 3.4.0 was based on didn't MAC the
+	   EncryptedContentInfo.ContentEncryptionAlgorithmIdentifier, so we skip
+	   MAC'ing that part of the data as well */
 	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_HMAC_SHA1 );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
@@ -485,12 +489,6 @@ static int initKeys( IN_HANDLE const CRYPT_CONTEXT iGenericContext,
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
 								  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
 		}
-	if( cryptStatusOK( status ) )
-		{
-		status = krnlSendMessage( iAuthEncMacAltContext, IMESSAGE_CTX_HASH,
-								  ( MESSAGE_CAST ) queryInfo->authEncParamData,
-								  queryInfo->authEncParamLength );
-		}
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( iAuthEncCryptContext, IMESSAGE_DECREFCOUNT );
@@ -507,6 +505,118 @@ static int initKeys( IN_HANDLE const CRYPT_CONTEXT iGenericContext,
 	return( CRYPT_OK );
 	}
 
+/* Verify the integrity of the encrypted key components and derive the final 
+   decryption context from the generic intermediate context that's used to 
+   derive the MAC and final decryption contexts.  This replaces the 
+   intermediate context with the final decryption context */
+
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 2, 4, 6, 7 ) ) \
+static int verifyEncKey( INOUT_HANDLE CRYPT_CONTEXT *iCryptContext,
+						 IN_BUFFER( encryptedContentLength ) \
+							const void *encryptedContent, 
+						 IN_LENGTH_SHORT const int encryptedContentLength, 
+						 IN_BUFFER( macValueLength ) \
+							const void *macValue, 
+						 IN_LENGTH_HASH const int macValueLength, 
+						 const QUERY_INFO *queryInfo,
+						 INOUT ERROR_INFO *errorInfo )
+	{
+	const CRYPT_CONTEXT iOriginalCryptContext = *iCryptContext;
+	CRYPT_CONTEXT iDerivedCryptContext, iMacContext, iMacAltContext;
+	MESSAGE_DATA msgData;
+	int status;
+
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
+	assert( isReadPtr( encryptedContent, encryptedContentLength ) );
+	assert( isReadPtr( macValue, macValueLength ) );
+	assert( isReadPtr( queryInfo, sizeof( QUERY_INFO ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iOriginalCryptContext ) );
+	REQUIRES( encryptedContentLength > 0 && \
+			  encryptedContentLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( macValueLength >= 16 && macValueLength <= CRYPT_MAX_HASHSIZE );
+
+	/* We're using authenticated encryption so we have to apply an 
+	   intermediate step that transforms the generic-secret context into 
+	   distinct decryption and MAC contexts.  This also MACs the encryption 
+	   metadata that precedes the data payload */
+	status = initKeys( iOriginalCryptContext, &iDerivedCryptContext, 
+					   &iMacContext, &iMacAltContext, queryInfo );
+	if( cryptStatusError( status ) )
+		{
+		retExt( status, 
+				( status, errorInfo, 
+				  "Couldn't recreate encryption and MAC keys needed to "
+				  "unwrap the private key" ) );
+		}
+
+	/* Verify the integrity of the encrypted private key before trying to 
+	   process it */
+	status = krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH,
+							  ( MESSAGE_CAST ) encryptedContent, 
+							  encryptedContentLength );
+	if( cryptStatusOK( status ) )
+		status = krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH, "", 0 );
+	if( cryptStatusOK( status ) )
+		{
+		setMessageData( &msgData, ( MESSAGE_CAST ) macValue, 
+						macValueLength );
+		status = krnlSendMessage( iMacContext, IMESSAGE_COMPARE, 
+								  &msgData, MESSAGE_COMPARE_HASH );
+		if( cryptStatusError( status ) )
+			{
+			/* A failed MAC check is reported as a CRYPT_ERROR comparison 
+			   result so we have to convert it to a more appropriate status 
+			   code */
+			status = CRYPT_ERROR_SIGNATURE;
+			}
+		}
+#ifdef MAC_KEYSIZE_BUG
+	if( status == CRYPT_ERROR_SIGNATURE )
+		{
+		/* If we got a failed MAC check, try again with a MAC context with a 
+		   128-bit MAC key, a bug in cryptlib version 3.4.0 */
+		status = krnlSendMessage( iMacAltContext, IMESSAGE_CTX_HASH,
+								  ( MESSAGE_CAST ) encryptedContent, 
+								  encryptedContentLength );
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( iMacAltContext, IMESSAGE_CTX_HASH, "", 0 );
+		if( cryptStatusOK( status ) )
+			{
+			setMessageData( &msgData, ( MESSAGE_CAST ) macValue, 
+							macValueLength );
+			status = krnlSendMessage( iMacAltContext, IMESSAGE_COMPARE, 
+									  &msgData, MESSAGE_COMPARE_HASH );
+			if( cryptStatusError( status ) )
+				{
+				/* A failed MAC check is reported as a CRYPT_ERROR 
+				   comparison result so we have to convert it to a more 
+				   appropriate status code */
+				status = CRYPT_ERROR_SIGNATURE;
+				}
+			}
+		}
+	krnlSendNotifier( iMacAltContext, IMESSAGE_DECREFCOUNT );
+#endif /* MAC_KEYSIZE_BUG */
+	krnlSendNotifier( iMacContext, IMESSAGE_DECREFCOUNT );
+	if( cryptStatusError( status ) )
+		{
+		/* We convert any failure status encountered at this point into a 
+		   generic signature-check failure, which makes explicit what's 
+		   going on */
+		retExt( CRYPT_ERROR_SIGNATURE, 
+				( CRYPT_ERROR_SIGNATURE, errorInfo, 
+				  "Private-key integrity check failed" ) );
+		}
+
+	/* Replace the original encryption context with the derived one */
+	krnlSendNotifier( iOriginalCryptContext, IMESSAGE_DECREFCOUNT );
+	*iCryptContext = iDerivedCryptContext;
+
+	return( CRYPT_OK );
+	}
+
 /* Read private-key components from a PKCS #15 object entry */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
@@ -518,10 +628,7 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							  const BOOLEAN isStorageObject, 
 							  INOUT ERROR_INFO *errorInfo )
 	{
-	CRYPT_CONTEXT iCryptContext, iMacContext = CRYPT_UNUSED;
-#ifdef MAC_KEYSIZE_BUG
-	CRYPT_CONTEXT iMacAltContext = CRYPT_UNUSED;
-#endif /* MAC_KEYSIZE_BUG */
+	CRYPT_CONTEXT iCryptContext;
 	MECHANISM_WRAP_INFO mechanismInfo;
 	MESSAGE_DATA msgData;
 	QUERY_INFO queryInfo = DUMMY_INIT_STRUCT, contentQueryInfo;
@@ -531,8 +638,8 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	const int privKeyStartOffset = pkcs15infoPtr->privKeyOffset;
 	const int privKeyTotalSize = pkcs15infoPtr->privKeyDataSize;
 	void *encryptedKey, *encryptedContent = DUMMY_INIT_PTR;
-	int encryptedContentLength = DUMMY_INIT;
-	int tag, macValueLength = DUMMY_INIT, status;
+	int encryptedContentLength = DUMMY_INIT, macValueLength = DUMMY_INIT;
+	int tag, status;
 
 	assert( isReadPtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	assert( ( isStorageObject && \
@@ -683,83 +790,20 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 
 	/* If we're using authenticated encryption then we have to use an 
 	   intermediate step that transforms the generic-secret context into 
-	   distinct decryption and MAC contexts */
+	   distinct decryption and MAC contexts.  This also MACs the 
+	   encryption metadata that precedes the data payload */
 	if( isAuthEnc )
 		{
-		const CRYPT_CONTEXT iGenericContext = iCryptContext;
-
-		status = initKeys( iGenericContext, &iCryptContext, &iMacContext,
-						   &iMacAltContext, &contentQueryInfo );
-		krnlSendNotifier( iGenericContext, IMESSAGE_DECREFCOUNT );
+		status = verifyEncKey( &iCryptContext, encryptedContent, 
+							   encryptedContentLength, macValue, 
+							   macValueLength, &contentQueryInfo, 
+							   errorInfo );
+		zeroise( &contentQueryInfo, sizeof( QUERY_INFO ) );
 		if( cryptStatusError( status ) )
-			{
-			zeroise( &contentQueryInfo, sizeof( QUERY_INFO ) );
-			retExt( status, 
-					( status, errorInfo, 
-					  "Couldn't recreate encryption and MAC keys needed to "
-					  "unwrap the private key" ) );
-			}
+			return( status );
 		}
-	zeroise( &contentQueryInfo, sizeof( QUERY_INFO ) );
-
-	/* If we're using authenticated encryption, verify the integrity of the
-	   encrypted private key before trying to process it */
-	if( isAuthEnc )
-		{
-		status = krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH,
-								  encryptedContent, encryptedContentLength );
-		if( cryptStatusOK( status ) )
-			status = krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH, "", 0 );
-		if( cryptStatusOK( status ) )
-			{
-			setMessageData( &msgData, macValue, macValueLength );
-			status = krnlSendMessage( iMacContext, IMESSAGE_COMPARE, 
-									  &msgData, MESSAGE_COMPARE_HASH );
-			if( cryptStatusError( status ) )
-				{
-				/* A failed MAC check is reported as a CRYPT_ERROR
-				   comparison result */
-				status = CRYPT_ERROR_SIGNATURE;
-				}
-			}
-#ifdef MAC_KEYSIZE_BUG
-		if( status == CRYPT_ERROR_SIGNATURE )
-			{
-			/* If we got a failed MAC check, try again with a MAC context 
-			   with a 128-bit MAC key, a bug in cryptlib version 3.4.0 */
-			status = krnlSendMessage( iMacAltContext, IMESSAGE_CTX_HASH,
-									  encryptedContent, 
-									  encryptedContentLength );
-			if( cryptStatusOK( status ) )
-				status = krnlSendMessage( iMacAltContext, IMESSAGE_CTX_HASH, 
-										  "", 0 );
-			if( cryptStatusOK( status ) )
-				{
-				setMessageData( &msgData, macValue, macValueLength );
-				status = krnlSendMessage( iMacAltContext, IMESSAGE_COMPARE, 
-										  &msgData, MESSAGE_COMPARE_HASH );
-				if( cryptStatusError( status ) )
-					{
-					/* A failed MAC check is reported as a CRYPT_ERROR
-					   comparison result */
-					status = CRYPT_ERROR_SIGNATURE;
-					}
-				}
-			}
-		krnlSendNotifier( iMacAltContext, IMESSAGE_DECREFCOUNT );
-#endif /* MAC_KEYSIZE_BUG */
-		krnlSendNotifier( iMacContext, IMESSAGE_DECREFCOUNT );
-		if( cryptStatusError( status ) )
-			{
-			/* We convert any failure status encountered at this point into
-			   a generic signature-check failure, which makes explicit 
-			   what's going on */
-			krnlSendNotifier( iCryptContext, IMESSAGE_DECREFCOUNT );
-			retExt( CRYPT_ERROR_SIGNATURE, 
-					( CRYPT_ERROR_SIGNATURE, errorInfo, 
-					  "Private-key integrity check failed" ) );
-			}
-		}
+	else
+		zeroise( &contentQueryInfo, sizeof( QUERY_INFO ) );
 
 	/* Import the encrypted key into the PKC context */
 	setMechanismWrapInfo( &mechanismInfo, ( MESSAGE_CAST ) encryptedContent,

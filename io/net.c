@@ -201,13 +201,8 @@ static int checkForProxy( INOUT NET_STREAM_INFO *netStream,
 
 	/* Check to see whether we're going through a proxy.  First we check for 
 	   a protocol-specific HTTP proxy (if appropriate), if there's none then 
-	   we check for the more generic case of a SOCKS proxy.  In addition to 
-	   the obvious use of an HTTP proxy for HTTP we also check for an HTTP 
-	   URL specified for use with other protocols (specifcally SSL/TLS) 
-	   since these can also go via a proxy even if the they're not an 
-	   explicit use of HTTP */
-	if( ( protocol == STREAM_PROTOCOL_HTTP || \
-		  connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL ) )
+	   we check for the more generic case of a SOCKS proxy */
+	if( protocol == STREAM_PROTOCOL_HTTP )
 		{
 		/* Check whether there's an HTTP proxy configured */
 		setMessageData( &msgData, proxyUrlBuffer, proxyUrlMaxLen );
@@ -458,8 +453,7 @@ static int processConnectOptions( INOUT STREAM *stream,
 					connectInfo->options == NET_OPTION_NETWORKSOCKET_DUMMY ) && \
 					urlInfo == NULL ) || \
 				( !( netStream->nFlags & STREAM_NFLAG_ISSERVER ) && \
-				  ( connectInfo->options == NET_OPTION_HOSTNAME || \
-					connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL ) && \
+				  connectInfo->options == NET_OPTION_HOSTNAME && \
 				  connectInfo->name != NULL && urlInfo != NULL ) || \
 				( ( netStream->nFlags & STREAM_NFLAG_ISSERVER ) && \
 				  connectInfo->options == NET_OPTION_HOSTNAME && \
@@ -490,8 +484,7 @@ static int processConnectOptions( INOUT STREAM *stream,
 		return( CRYPT_OK );
 		}
 
-	ENSURES_S( connectInfo->options == NET_OPTION_HOSTNAME || \
-			   connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL );
+	ENSURES_S( connectInfo->options == NET_OPTION_HOSTNAME );
 
 	REQUIRES_S( ( ( netStream->nFlags & STREAM_NFLAG_ISSERVER ) && \
 				  connectInfo->name == NULL && \
@@ -516,8 +509,6 @@ static int processConnectOptions( INOUT STREAM *stream,
 	/* Parse the URI into its various components */
 	status = parseURL( urlInfo, name, nameLength, connectInfo->port,
 					   ( netStream->protocol == STREAM_PROTOCOL_HTTP ) ? \
-							URL_TYPE_HTTP : 
-					   ( netStream->protocol == STREAM_PROTOCOL_CMP ) ? \
 							URL_TYPE_HTTP : URL_TYPE_NONE, FALSE );
 	if( cryptStatusError( status ) )
 		{
@@ -593,14 +584,6 @@ static int completeConnect( INOUT STREAM *stream,
 #else
 			return( CRYPT_ERROR_NOTAVAIL );
 #endif /* USE_HTTP */
-			break;
-
-		case STREAM_PROTOCOL_CMP:
-#ifdef USE_CMP_TRANSPORT
-			setStreamLayerCMP( netStreamTemplate );
-#else
-			return( CRYPT_ERROR_NOTAVAIL );
-#endif /* USE_CMP_TRANSPORT */
 			break;
 
 		case STREAM_PROTOCOL_TCPIP:
@@ -788,7 +771,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int sNetConnect( OUT STREAM *stream, 
 				 IN_ENUM( STREAM_PROTOCOL ) const STREAM_PROTOCOL_TYPE protocol,
 				 const NET_CONNECT_INFO *connectInfo, 
-				 INOUT ERROR_INFO *errorInfo )
+				 OUT ERROR_INFO *errorInfo )
 	{
 	NET_STREAM_INFO netStream;
 	URL_INFO urlInfo, *urlInfoPtr = NULL;
@@ -798,10 +781,8 @@ int sNetConnect( OUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( connectInfo, sizeof( NET_CONNECT_INFO ) ) );
 	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
-	assert( ( connectInfo->options != NET_OPTION_HOSTNAME && \
-			  connectInfo->options != NET_OPTION_HOSTNAME_TUNNEL ) || 
-			( ( connectInfo->options == NET_OPTION_HOSTNAME || \
-				connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL ) && \
+	assert( connectInfo->options != NET_OPTION_HOSTNAME || 
+			( connectInfo->options == NET_OPTION_HOSTNAME && \
 			  isReadPtr( connectInfo->name, connectInfo->nameLength ) && \
 			  ( connectInfo->nameLength > 0 && \
 				connectInfo->nameLength < MAX_INTLENGTH_SHORT ) && \
@@ -809,14 +790,11 @@ int sNetConnect( OUT STREAM *stream,
 			  connectInfo->networkSocket == CRYPT_ERROR ) );
 
 	REQUIRES( protocol == STREAM_PROTOCOL_TCPIP || \
-			  protocol == STREAM_PROTOCOL_HTTP || \
-			  protocol == STREAM_PROTOCOL_CMP );
+			  protocol == STREAM_PROTOCOL_HTTP );
 	REQUIRES( connectInfo->options > NET_OPTION_NONE && \
 			  connectInfo->options < NET_OPTION_LAST );
-	REQUIRES( ( connectInfo->options != NET_OPTION_HOSTNAME && \
-				connectInfo->options != NET_OPTION_HOSTNAME_TUNNEL ) || 
-			  ( ( connectInfo->options == NET_OPTION_HOSTNAME || \
-				  connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL ) && \
+	REQUIRES( connectInfo->options != NET_OPTION_HOSTNAME || 
+			  ( connectInfo->options == NET_OPTION_HOSTNAME && \
 			    connectInfo->name != NULL && \
 				( connectInfo->nameLength > 0 && \
 				  connectInfo->nameLength < MAX_INTLENGTH_SHORT ) && \
@@ -846,15 +824,13 @@ int sNetConnect( OUT STREAM *stream,
 	status = initStream( stream, &netStream, protocol, connectInfo, FALSE );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( connectInfo->options == NET_OPTION_HOSTNAME || \
-		connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL )
+	if( connectInfo->options == NET_OPTION_HOSTNAME )
 		urlInfoPtr = &urlInfo;
 	status = processConnectOptions( stream, &netStream, urlInfoPtr, 
 									connectInfo, errorInfo );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( connectInfo->options == NET_OPTION_HOSTNAME || \
-		connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL )
+	if( connectInfo->options == NET_OPTION_HOSTNAME )
 		{
 		int proxyUrlLength;
 
@@ -888,7 +864,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int sNetListen( OUT STREAM *stream, 
 				IN_ENUM( STREAM_PROTOCOL ) const STREAM_PROTOCOL_TYPE protocol,
 				const NET_CONNECT_INFO *connectInfo, 
-				INOUT ERROR_INFO *errorInfo )
+				OUT ERROR_INFO *errorInfo )
 	{
 	NET_STREAM_INFO netStream;
 	URL_INFO urlInfo, *urlInfoPtr = NULL;
@@ -899,8 +875,7 @@ int sNetListen( OUT STREAM *stream,
 	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
 	REQUIRES( protocol == STREAM_PROTOCOL_TCPIP || \
-			  protocol == STREAM_PROTOCOL_HTTP || \
-			  protocol == STREAM_PROTOCOL_CMP );
+			  protocol == STREAM_PROTOCOL_HTTP );
 	REQUIRES( connectInfo->options == NET_OPTION_HOSTNAME || \
 			  connectInfo->options == NET_OPTION_TRANSPORTSESSION || \
 			  connectInfo->options == NET_OPTION_NETWORKSOCKET );

@@ -219,7 +219,7 @@ typedef struct {
 	EC_GROUP *ecCTX;
 	EC_POINT *ecPoint;
 #endif /* USE_ECDH || USE_ECDSA */
-	BN_ULONG checksum;				/* Checksum for key value */
+	int metadataChecksum, checksum;	/* Checksums for key data */
 
 	/* Temporary workspace values used to avoid having to allocate and
 	   deallocate them on each PKC operation, and to keep better control
@@ -297,11 +297,6 @@ typedef struct {
 									 const BIGNUM *maxRange,
 									 IN_ENUM( CRYPT_FORMAT_TYPE ) \
 										const CRYPT_FORMAT_TYPE formatType );
-
-	/* State information needed to allow background key generation */
-#ifdef USE_THREADS
-//	THREAD_STATE threadState;
-#endif /* OS's with threads */
 	} PKC_INFO;
 #endif /* PKC_CONTEXT */
 

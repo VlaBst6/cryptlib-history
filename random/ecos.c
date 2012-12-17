@@ -74,9 +74,10 @@ void slowPoll( void )
 			iterationCount < FAILSAFE_ITERATIONS_MED;
 		 powerControllerInfo++, iterationCount++ )
 		{
-		const PowerMode power_get_controller_mode( powerControllerInfo );
+		const PowerMode mode = \
+			power_get_controller_mode( powerControllerInfo );
 
-		addRandomValue( randomState, PowerMode );
+		addRandomValue( randomState, mode );
 		}
 #endif /* CYGPKG_POWER */
 

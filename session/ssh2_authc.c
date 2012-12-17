@@ -82,7 +82,7 @@ static int processPamAuthentication( INOUT SESSION_INFO *sessionInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int sendDummyAuth( INOUT SESSION_INFO *sessionInfoPtr,
 						  IN_BUFFER( userNameLength ) const char *userName,
-						  IN_LENGTH_SHORT const int userNameLength )
+						  IN_LENGTH_TEXT const int userNameLength )
 	{
 	STREAM stream;
 	int status;
@@ -90,7 +90,7 @@ static int sendDummyAuth( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( userName, userNameLength ) );
 
-	REQUIRES( userNameLength > 0 && userNameLength < CRYPT_MAX_TEXTSIZE );
+	REQUIRES( userNameLength > 0 && userNameLength <= CRYPT_MAX_TEXTSIZE );
 
 	/* Send the dummy authentication request to the server */
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, 

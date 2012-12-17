@@ -2,7 +2,7 @@
 # *****************************************************************************
 # *                                                                           *
 # *                        cryptlib External API Interface                    *
-# *                       Copyright Peter Gutmann 1997-2010                   *
+# *                       Copyright Peter Gutmann 1997-2012                   *
 # *                                                                           *
 # *                 adapted for Perl Version 5.x  by Alvaro Livraghi          *
 # *****************************************************************************
@@ -12,7 +12,7 @@
 #
 # This file has been created automatically by a perl script from the file:
 #
-# "cryptlib.h" dated Tue Nov 30 16:05:00 2010, filesize = 97720.
+# "cryptlib.h" dated Wed Aug 29 15:34:08 2012, filesize = 97645.
 #
 # Please check twice that the file matches the version of cryptlib.h
 # in your cryptlib source! If this is not the right version, try to download an
@@ -25,17 +25,11 @@
 # -----------------------------------------------------------------------------
 #
 
-	sub CRYPTLIB_VERSION { 3400 }
+	sub CRYPTLIB_VERSION { 3410 }
 
 #  Additional defines for compilers that provide extended function and 
 #  function-parameter checking 
 
-# C-macro not translated to Perl code but implemented apart: 
-#   #define C_CHECK_RETVAL
-#
-# C-macro not translated to Perl code but implemented apart: 
-#   #define C_NONNULL_ARG( argIndex )
-#
 
 
 #****************************************************************************
@@ -56,11 +50,11 @@
 	sub CRYPT_ALGO_DES { 1 }
 	# Triple DES
 	sub CRYPT_ALGO_3DES { 2 }
-	# IDEA
+	# IDEA (only used for PGP 2.x)
 	sub CRYPT_ALGO_IDEA { 3 }
-	# CAST-128
+	# CAST-128 (only used for OpenPGP)
 	sub CRYPT_ALGO_CAST { 4 }
-	# RC2
+	# RC2 (disabled by default)
 	sub CRYPT_ALGO_RC2 { 5 }
 	# RC4
 	sub CRYPT_ALGO_RC4 { 6 }
@@ -70,8 +64,6 @@
 	sub CRYPT_ALGO_AES { 8 }
 	# Blowfish
 	sub CRYPT_ALGO_BLOWFISH { 9 }
-	# Skipjack
-	sub CRYPT_ALGO_SKIPJACK { 10 }
 
 	# Public-key encryption
 	# Diffie-Hellman
@@ -82,24 +74,22 @@
 	sub CRYPT_ALGO_DSA { 102 }
 	# ElGamal
 	sub CRYPT_ALGO_ELGAMAL { 103 }
-	# KEA
-	sub CRYPT_ALGO_KEA { 104 }
+	# Formerly KEA
+	sub CRYPT_ALGO_RESERVED1 { 104 }
 	# ECDSA
 	sub CRYPT_ALGO_ECDSA { 105 }
 	# ECDH
 	sub CRYPT_ALGO_ECDH { 106 }
 
 	# Hash algorithms
-	# MD2
-	sub CRYPT_ALGO_MD2 { 200 }
-	# MD4
-	sub CRYPT_ALGO_MD4 { 201 }
+	# Formerly MD2
+	sub CRYPT_ALGO_RESERVED2 { 200 }
+	# Formerly MD4
+	sub CRYPT_ALGO_RESERVED3 { 201 }
 	# MD5
 	sub CRYPT_ALGO_MD5 { 202 }
 	# SHA/SHA1
 	sub CRYPT_ALGO_SHA1 { 203 }
-	# Older form
-	sub CRYPT_ALGO_SHA { 203 }
 	# RIPE-MD 160
 	sub CRYPT_ALGO_RIPEMD160 { 204 }
 	# SHA-256
@@ -114,8 +104,6 @@
 	sub CRYPT_ALGO_HMAC_MD5 { 300 }
 	# HMAC-SHA
 	sub CRYPT_ALGO_HMAC_SHA1 { 301 }
-	# Older form
-	sub CRYPT_ALGO_HMAC_SHA { 301 }
 	# HMAC-RIPEMD-160
 	sub CRYPT_ALGO_HMAC_RIPEMD160 { 302 }
 	# HMAC-SHA2
@@ -150,7 +138,7 @@
 	sub CRYPT_ALGO_LAST_HASH { 299 }
 
 	sub CRYPT_ALGO_FIRST_MAC { 300 }
-	# End of mac algo.range
+
 	sub CRYPT_ALGO_LAST_MAC { 399 }
 
 
@@ -210,7 +198,7 @@
 	# Crypto device types
 	# No crypto device
 	sub CRYPT_DEVICE_NONE { 0 }
-	# Fortezza card
+	# Fortezza card - Placeholder only
 	sub CRYPT_DEVICE_FORTEZZA { 1 }
 	# PKCS #11 crypto token
 	sub CRYPT_DEVICE_PKCS11 { 2 }
@@ -717,6 +705,8 @@
 	sub CRYPT_CERTINFO_EDIPARTYNAME_PARTYNAME { 2112 }
 	# uniformResourceIdentifier
 	sub CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER { 2113 }
+
+	sub CRYPT_CERTINFO_URL { 2113 }
 	# iPAddress
 	sub CRYPT_CERTINFO_IPADDRESS { 2114 }
 	# registeredID
@@ -2449,12 +2439,6 @@ sub CRYPT_PKCINFO_ECC
 
 # C_CHECK_RETVAL 
 ###C_RET cryptGenerateKey( C_IN CRYPT_CONTEXT cryptContext );
-### C_CHECK_RETVAL 
-###C_RET cryptGenerateKeyAsync( C_IN CRYPT_CONTEXT cryptContext );
-### C_CHECK_RETVAL 
-###C_RET cryptAsyncQuery( C_IN CRYPT_HANDLE cryptObject );
-### C_CHECK_RETVAL 
-###C_RET cryptAsyncCancel( C_IN CRYPT_HANDLE cryptObject );
 ##
 # Encrypt/decrypt/hash a block of memory 
 
@@ -2489,9 +2473,8 @@ sub CRYPT_PKCINFO_ECC
 #  or key data.  These are due to be replaced once a suitable alternative can
 #  be found 
 
-# C_NONNULL_ARG( ( 1 ) ) 
-###C_RET cryptAddRandom( C_IN void C_PTR randomData, C_IN int randomDataLength );
-### C_CHECK_RETVAL C_NONNULL_ARG( ( 1, 3 ) ) 
+#C_RET cryptAddRandom( C_IN void C_PTR randomData, C_IN int randomDataLength );
+## C_CHECK_RETVAL C_NONNULL_ARG( ( 1, 3 ) ) 
 ###C_RET cryptQueryObject( C_IN void C_PTR objectData,
 ##                        C_IN int objectDataLength,
 ##                        C_OUT CRYPT_OBJECT_INFO C_PTR cryptObjectInfo );

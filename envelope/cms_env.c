@@ -902,7 +902,7 @@ static int writeKeyex( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	CRYPT_CONTEXT iCryptContext;
 	ACTION_LIST *actionListPtr;
-	int iterationCount, status = CRYPT_OK;
+	int iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
@@ -1435,12 +1435,6 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 					  "Couldn't emit encrypted content header to envelope "
 					  "header" ) );
 			}
-
-#if 0	/* ?/?/08 Commented out between 3.3.1 and 3.3.2 although there's no 
-		   indication why */
-		/* Make sure that we start a new segment if we try to add any data */
-		envelopeInfoPtr->dataFlags |= ENVDATA_SEGMENTCOMPLETE;
-#endif /* 0 */
 
 		/* We're done */
 		envelopeInfoPtr->envState = ENVSTATE_DONE;

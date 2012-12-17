@@ -115,7 +115,8 @@ PKCS15_INFO *findEntry( IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15inf
 						IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
 						IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
 						IN_LENGTH_KEYID_Z const int keyIDlength,
-						IN_FLAGS_Z( KEYMGMT ) const int requestedUsage )
+						IN_FLAGS_Z( KEYMGMT ) const int requestedUsage,
+						const BOOLEAN isWildcardMatch )
 	{
 	int i;
 
@@ -141,11 +142,13 @@ PKCS15_INFO *findEntry( IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15inf
 				requestedUsage < KEYMGMT_FLAG_MAX );
 	REQUIRES_N( ( requestedUsage & KEYMGMT_MASK_USAGEOPTIONS ) != \
 				KEYMGMT_MASK_USAGEOPTIONS );
+	REQUIRES_N( ( isWildcardMatch && keyID == NULL ) || !isWildcardMatch );
 
-	/* If there's no ID to search on, don't try and do anything.  This can
-	   occur when we're trying to build a chain and the necessary chaining
-	   data isn't present */
-	if( keyID == NULL || keyIDlength <= 0 )
+	/* If there's no ID to search on and we're not performing a wildcard 
+	   match, don't try and do anything.  This can occur when we're trying 
+	   to build a chain and the necessary chaining data like an issuerID 
+	   isn't present in the keyset */
+	if( ( keyID == NULL || keyIDlength <= 0 ) && !isWildcardMatch )
 		return( NULL );
 
 	/* Try and locate the appropriate object in the PKCS #15 collection */
@@ -173,6 +176,19 @@ PKCS15_INFO *findEntry( IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15inf
 		if( ( requestedUsage & KEYMGMT_FLAG_USAGE_SIGN ) && \
 			!( compositeUsage & SIGN_USAGE_MASK ) )
 			continue;
+
+		/* If we're performing a wildcard match, return the first private-key 
+		   entry.  In theory this shouldn't be necessary since cryptlib-
+		   generated keysets must have valid labels, but keysets from other 
+		   implementations may not have them, or may have machine-generated
+		   labels that don't work well for human use, so we allow a wildcard
+		   match as a generic "get me whatever you can" */
+		if( isWildcardMatch )
+			{
+			if( pkcs15infoPtr->privKeyData == NULL )
+				continue;	/* No private-key data present, continue */
+			return( ( PKCS15_INFO * ) pkcs15infoPtr );
+			}
 
 		/* Check for a match based on the ID type */
 		switch( keyIDtype )

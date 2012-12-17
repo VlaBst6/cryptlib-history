@@ -28,6 +28,27 @@
 
 #define USE_HW_KEYGEN
 
+/* Some devices use extended login mechanisms to get around PKCS #11's
+   somewhat-simplistic username-and-password model, if we detect the
+   presence of the extended mechanism we enable extended-login
+   functionality */
+
+#if 0		/* Private vendor #1's extensions for token login */
+#define CKU_EXTENDED		3
+/* When CKU_EXTENDED is used, the data passed to C_Login() is no longer a
+   straight string but the following structured value */
+typedef struct {
+	CK_UTF8CHAR_PTR	*username;	/* User name */
+	CK_ULONG name_len;			/* Length of user name */
+	CK_VOID_PTR context;		/* Token-specific context data */
+	CK_ULONG context_size;		/* Size of context data */
+	} CK_EXTENDED_LOGIN;
+#endif /* 0 */
+
+#ifdef CKU_EXTENDED
+  #define USE_EXTENDED_LOGIN
+#endif /* CKU_EXTENDED */
+
 #ifdef USE_PKCS11
 
 /* The max. number of drivers we can work with and the max.number of slots
@@ -202,6 +223,7 @@ static int checkDriverBugs( const PKCS11_INFO *pkcs11Info )
 		{ CKA_TOKEN, ( CK_VOID_PTR ) &bFalse, sizeof( CK_BBOOL ) },
 		{ CKA_PRIVATE, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
 		{ CKA_SENSITIVE, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
+		{ CKA_ENCRYPT, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
 		{ CKA_VALUE, "12345678", 8 }	/* Dummy key value */
 		};
 	const CK_MECHANISM mechanism = { CKM_DES_ECB, NULL, 0 };
@@ -215,7 +237,7 @@ static int checkDriverBugs( const PKCS11_INFO *pkcs11Info )
 	   isn't supported for this token type) so we only check for the 
 	   specific error code returned by a login bug */
 	status = C_CreateObject( pkcs11Info->hSession, 
-							 ( CK_ATTRIBUTE_PTR ) keyTemplate, 6, &hObject );
+							 ( CK_ATTRIBUTE_PTR ) keyTemplate, 7, &hObject );
 	if( status == CKR_USER_NOT_LOGGED_IN )
 		{
 		DEBUG_DIAG(( "PKCS #11 driver bug detected, attempt to log in to "
@@ -234,9 +256,10 @@ static int checkDriverBugs( const PKCS11_INFO *pkcs11Info )
 	if( status != CKR_OK )
 		{
 		DEBUG_DIAG(( "PKCS #11 driver bug detected, attempt to use object "
-					 "in logged-in device failed, this can happen when "
-					 "using C_InitToken() rather than the proprietary "
-					 "vendor-supplied utility to initialise the device" ));
+					 "in logged-in device failed with error code %lX, this "
+					 "can happen when using C_InitToken() rather than the "
+					 "proprietary vendor-supplied utility to initialise "
+					 "the device", status ));
 		assert( DEBUG_WARN );
 		return( pkcs11MapError( status, CRYPT_ERROR_FAILED ) );
 		}
@@ -314,6 +337,13 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 	if( type == CRYPT_DEVINFO_AUTHENT_USER || \
 		type == CRYPT_DEVINFO_AUTHENT_SUPERVISOR )
 		{
+#ifdef USE_EXTENDED_LOGIN
+		const CK_USER_TYPE userType = CKU_EXTENDED;
+#else
+		const CK_USER_TYPE userType = \
+				( type == CRYPT_DEVINFO_AUTHENT_USER ) ? CKU_USER : CKU_SO;
+#endif /* USE_EXTENDED_LOGIN */
+		
 		/* Make sure that the PIN is within range */
 		if( dataLength < pkcs11Info->minPinSize || \
 			dataLength > pkcs11Info->maxPinSize )
@@ -328,9 +358,8 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 			}
 
 		/* Authenticate the user to the device */
-		status = C_Login( pkcs11Info->hSession,
-						  ( type == CRYPT_DEVINFO_AUTHENT_USER ) ? \
-						  CKU_USER : CKU_SO, ( CK_CHAR_PTR ) data,
+		status = C_Login( pkcs11Info->hSession, userType, 
+						  ( CK_CHAR_PTR ) data,
 						  ( CK_ULONG ) dataLength );
 		if( status != CKR_OK )
 			{
@@ -600,10 +629,12 @@ static int genericDecrypt( const PKCS11_INFO *pkcs11Info,
 	return( CRYPT_OK );
 	}
 
-/* Clean up the object associated with a context */
+/* Clean up the object associated with a context.  The CONTEXT_INFO * is
+   actually a const in this case but we need to leave it non-const to make
+   it type-compatible with the function pointer in the CONTEXT_INFO */
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int genericEndFunction( const CONTEXT_INFO *contextInfoPtr )
+int genericEndFunction( /* const */ INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	CRYPT_DEVICE iCryptDevice;
 	PKCS11_INFO *pkcs11Info;

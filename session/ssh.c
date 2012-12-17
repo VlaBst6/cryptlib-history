@@ -154,15 +154,17 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 		}
 
 	/* Make sure that we got enough data to work with.  We need at least 
-	   "SSH-" (ID, size SSH_ID_SIZE) + "x.y-" (protocol version) + "a.b" 
-	   (software version) + "str" (software ID) */
-	if( length < SSH_ID_SIZE + 10 || length > SSH_ID_MAX_SIZE )
+	   "SSH-" (ID, size SSH_ID_SIZE) + "x.y-" (protocol version) + "xxxxx" 
+	   (software version/ID, of which the shortest-known is "ConfD") */
+	if( length < SSH_ID_SIZE + 9 || length > SSH_ID_MAX_SIZE )
 		{
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "%s sent truncated identifier string '%s'", peerType,
+				  "%s sent invalid-length identifier string '%s', total "
+				  "length %d", peerType,
 				  sanitiseString( sessionInfoPtr->receiveBuffer, 
-								  CRYPT_MAX_TEXTSIZE, length ) ) );
+								  CRYPT_MAX_TEXTSIZE, length ),
+				  length ) );
 		}
 
 	/* Null-terminate the string so that we can hash it to create the SSHv2

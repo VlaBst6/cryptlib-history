@@ -8,9 +8,11 @@
 #if defined( INC_ALL )
   #include "cert.h"
   #include "asn1.h"
+  #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
   #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_CERTIFICATES
@@ -253,6 +255,7 @@ int importCert( IN_BUFFER( certObjectLength ) const void *certObject,
 				IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
 				IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
 				IN_LENGTH_KEYID_Z const int keyIDlength,
+				IN_FLAGS( KEYMGMT ) const int options,
 				IN_ENUM_OPT( CRYPT_CERTTYPE ) \
 					const CRYPT_CERTTYPE_TYPE formatHint )
 	{
@@ -282,6 +285,14 @@ int importCert( IN_BUFFER( certObjectLength ) const void *certObject,
 				keyID != NULL && \
 				keyIDlength >= MIN_NAME_LENGTH && \
 				keyIDlength < MAX_ATTRIBUTE_SIZE ) );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX && \
+			  ( options & ~KEYMGMT_MASK_USAGEOPTIONS ) == 0 );
+	REQUIRES( ( keyIDtype == CRYPT_KEYID_NONE && \
+				options == KEYMGMT_FLAG_NONE ) || \
+			  ( keyIDtype != CRYPT_KEYID_NONE && \
+				options == KEYMGMT_FLAG_NONE ) || \
+			  ( keyIDtype == CRYPT_KEYID_NONE && \
+				options != KEYMGMT_FLAG_NONE ) );
 	REQUIRES( formatHint >= CRYPT_CERTTYPE_NONE && \
 			  formatHint < CRYPT_CERTTYPE_LAST );
 
@@ -352,6 +363,11 @@ int importCert( IN_BUFFER( certObjectLength ) const void *certObject,
 		type == CRYPT_ICERTTYPE_CMS_CERTSET || \
 		type == CRYPT_ICERTTYPE_SSL_CERTCHAIN )
 		{
+		const int extraOptions = \
+			( formatHint == CRYPT_ICERTTYPE_DATAONLY || \
+			  formatHint == CRYPT_ICERTTYPE_CTL ) ? \
+			  KEYMGMT_FLAG_DATAONLY_CERT : KEYMGMT_FLAG_NONE;
+
 		/* Read the certificate chain into a collection of internal 
 		   certificate objects.  This returns a handle to the leaf 
 		   certificate in the chain with the remaining certificates being 
@@ -366,9 +382,7 @@ int importCert( IN_BUFFER( certObjectLength ) const void *certObject,
 			readSequence( &stream, NULL );	/* Skip the outer wrapper */
 		status = readCertChain( &stream, certificate, iCryptOwner, type, 
 								keyIDtype, keyID, keyIDlength, 
-								( formatHint == CRYPT_ICERTTYPE_DATAONLY ||
-								  formatHint == CRYPT_ICERTTYPE_CTL ) ? \
-									TRUE : FALSE );
+								options | extraOptions );
 		sMemDisconnect( &stream );
 		if( isDecodedObject )
 			clFree( "importCert", certObjectPtr );
@@ -454,6 +468,46 @@ int importCert( IN_BUFFER( certObjectLength ) const void *certObject,
 		readLongSequence( &stream, NULL );
 		}
 	status = readCertFunction( &stream, certInfoPtr );
+	if( cryptStatusOK( status ) && \
+		( type == CRYPT_CERTTYPE_CERTIFICATE || \
+		  type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
+		  type == CRYPT_CERTTYPE_CRL || \
+		  type == CRYPT_CERTTYPE_CERTREQUEST ) )
+		{
+		CRYPT_ALGO_TYPE dummyAlgo1, dummyAlgo2;
+		int dummyParam;
+
+		/* If it's one of the standard certificate object types, check that
+		   the signature information is present and valid.  This will be
+		   checked explicitly anyway when the object's signature is checked,
+		   but we perform at least a basic sanity check here to make sure 
+		   that the information is actually present since the check might
+		   otherwise be skipped if the user doesn't perform an explicit
+		   signature check.
+		   
+		   Since this is only a sanity/presence-check, we don't perform any 
+		   algorithm or signature-data validation but just verify that the 
+		   information is present and seems approximately valid, using the 
+		   code that's used in readX509Signature() in mechs/sign_rw.c.  Any 
+		   in-depth validation is deferred for the full signature check 
+		   because at this point we don't know whether the presence of (say) 
+		   an RSA or a DSA or an ECDSA signature is correct, or whether the 
+		   signature key size is appropriate, without having the signing key 
+		   present.
+
+		   For the other object types like CMP/OCSP/RTCS requests and 
+		   responses we don't perform the check for the dual reasons that 
+		   the signatures are optional for many of the object types and that 
+		   if they are present they have gratuitously nonstandard formats, 
+		   or in some cases aren't signatures at all but things like MAC 
+		   values.  Since these can only be verified in the context of the
+		   protocol with which they're used, we defer the checking to the
+		   protocol-specific code */
+		status = readAlgoIDex( &stream, &dummyAlgo1, &dummyAlgo2, 
+							   &dummyParam, ALGOID_CLASS_PKCSIG );
+		if( cryptStatusOK( status ) )
+			status = readBitStringHole( &stream, NULL, 18 + 18, DEFAULT_TAG );
+		}
 	sMemDisconnect( &stream );
 	if( isDecodedObject )
 		clFree( "importCert", certObjectPtr );

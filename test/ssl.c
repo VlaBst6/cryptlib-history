@@ -105,8 +105,14 @@ typedef enum {
 			  There have to be three distinct servers in order to force a 
 			  full handshake rather than just pulling a previous session out 
 			  of the session cache.
-	Server 5: ~40K data returned.
-	Server 6: Sends zero-length blocks (actually a POP server).
+	Server 5: ~40K data returned.  Returns an incorrect certificate for the
+			  server when using SSL, although when accessed from a web
+			  browser it works as expected.
+	Server 6: Sends zero-length blocks (actually a POP server).  This server
+			  is accessible under two names, pop.web.de and pop3.web.de,
+			  but the certificate is for pop3.web.de.  In addition the
+			  certificate has the host name in both the CN and 
+			  altName.domainName, allowing both code paths to be tested.
 	Server 7: Novell GroupWise, requires CRYPT_OPTION_CERT_COMPLIANCELEVEL = 
 			  CRYPT_COMPLIANCELEVEL_OBLIVIOUS due to b0rken certs.
 	Server 8: (Causes MAC failure during handshake when called from PMail, 
@@ -135,7 +141,10 @@ typedef enum {
 	Server 15: GnuTLS.
 	Server 16: GnuTLS test server with TLS 1.1.
 	Server 17: Can only do SSLv2, server hangs when sent an SSLv3 handshake.
-	Server 18: Can't handle TLS 1.1 handshake (drops connection).
+	Server 18: Can't handle TLS 1.1 handshake (drops connection).  In 
+			   addition the server returns a certificate chain leading up
+			   to a Verisign MD2 root that gets rejected due to the use of
+			   MD2.
 	Server 19: Can't handle TLS 1.1 handshake (drops connection).  Both of 
 			   these servers are sitting behind NetApp NetCaches (see also 
 			   server #9), which could be the cause of the problem.
@@ -157,7 +166,10 @@ typedef enum {
 			   server claims to support TLS 1.2 but returns a TLS 1.1 server 
 			   hello in response to a TLS 1.2 handshake request for several 
 			   different TLS 1.2 client implementations.
-	Server 25: Supports SNI extension and reports info on connect.
+	Server 25: Supports SNI extension and reports info on connect, can 
+			   connect to either alice.sni.velox.ch or carol.sni.velox.ch.
+			   A connect to the default sni.velox.ch will return a 
+			   certificate-mismatch error.
 	Server 26: Certicom server using ECDSA P256.  Returns a server cert with  
 			   a bizarro X9.62 OID with implied sub-parameters that can't be 
 			   handled (at least in a sane manner) by the AlgoID read code.
@@ -177,7 +189,11 @@ typedef enum {
 			   RSA or DHE_RSA results in the server returning a TLS 1.1 
 			   response, and an attempt to force matters with a TLS 1.2-only 
 			   cipher suite like DHE_AES_GCM returns an alert message with 
-			   the version number set to SSLv3, i.e. { 3, 0 }.
+			   the version number set to SSLv3, i.e. { 3, 0 }.  This server
+			   also has a certificate in which the CN is a combination of
+			   the server FQDN and further text, requiring a match on the
+			   altName even though the first part of the DN would also
+			   match.
 	Server 29: Microsoft interop test server that does TLS 1.2, ECC, and 
 			   unlike GnuTLS and Certicom/SECG it actually really does TLS 
 			   1.2.  This is the generic interface with all cipher suites, 
@@ -765,6 +781,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 						  "to the TLS upgrade).\n" );
 					return( TRUE );
 					}
+				if( testType == SSL_TEST_BULKTRANSER )
+					free( bulkBuffer );
 				return( FALSE );
 				}
 
@@ -793,7 +811,11 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			if( localSession )
 				{
 				if( !setLocalConnect( cryptSession, 443 ) )
+					{
+					if( testType == SSL_TEST_BULKTRANSER )
+						free( bulkBuffer );
 					return( FALSE );
+					}
 				}
 			else
 				{
@@ -818,8 +840,23 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #endif /* Different keys for different servers */
 			if( cryptStatusOK( status ) )
 				{
+				CRYPT_KEYSET cryptKeyset;
+				int localStatus;
+
 				status = cryptSetAttribute( cryptSession,
 								CRYPT_SESSINFO_PRIVATEKEY, privateKey );
+
+				/* In addition to adding the key to the session, we also try 
+				   adding it to the server's key database in case it's not 
+				   present yet */
+				localStatus = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
+								DATABASE_KEYSET_TYPE, DATABASE_KEYSET_NAME,
+								CRYPT_KEYOPT_NONE );
+				if( cryptStatusOK( localStatus ) )
+					{
+					( void ) cryptAddPublicKey( cryptKeyset, privateKey );
+					cryptKeysetClose( cryptKeyset );
+					}
 				cryptDestroyContext( privateKey );
 				}
 			}
@@ -858,9 +895,11 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 								CRYPT_SESSINFO_USERNAME, SSL_USER_NAME,
 								paramStrlen( SSL_USER_NAME ) );
 		if( cryptStatusOK( status ) )
+			{
 			status = cryptSetAttributeString( cryptSession,
 								CRYPT_SESSINFO_PASSWORD, SSL_PASSWORD,
 								paramStrlen( SSL_PASSWORD ) );
+			}
 		if( cryptStatusOK( status ) && isServer && testType == SSL_TEST_PSK )
 			{
 			/* If we're testing PSK, add several succeeding usernames and
@@ -895,6 +934,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			}
 		printf( "cryptSetAttribute/AttributeString() failed with error code "
 				"%d, line %d.\n", status, __LINE__ );
+		if( testType == SSL_TEST_BULKTRANSER )
+			free( bulkBuffer );
 		return( FALSE );
 		}
 #ifdef IS_BROKEN_SERVER
@@ -992,18 +1033,15 @@ dualThreadContinue:
 				 isServer ? "SVR: " : "", localSession ? "local " : "",
 				 versionStr[ version ] );
 		printExtError( cryptSession, strBuffer, status, __LINE__ );
-		cryptDestroySession( cryptSession );
 		if( testType == SSL_TEST_BULKTRANSER )
 			free( bulkBuffer );
-		if( !isServer && \
-			( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND ) )
+		if( !isServer && isServerDown( cryptSession, status ) )
 			{
-			/* These servers are constantly appearing and disappearing so if 
-			   we get a straight connect error we don't treat it as a 
-			   serious failure */
 			puts( "  (Server could be down, faking it and continuing...)\n" );
+			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_FAILED );
 			}
+		cryptDestroySession( cryptSession );
 		if( testType == SSL_TEST_PSK_CLIONLY || \
 			testType == SSL_TEST_PSK_SVRONLY )
 			{
@@ -1808,6 +1846,10 @@ int testSessionTLSResumeClientServer( void )
 	HANDLE hThread;
 	unsigned threadID;
 	int status;
+
+	/* Note that this function has to be called after one of the standard 
+	   TLS-connect functions has been called, since it checks for the 
+	   ability to resume a previously-cached session */
 
 	/* Start the server */
 	createMutex();

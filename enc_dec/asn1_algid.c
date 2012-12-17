@@ -158,9 +158,12 @@ static const BYTE *algorithmToOID( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 	}
 
 /* Read the start of an AlgorithmIdentifier record, used by a number of
-   routines.  'parameter' can be either a CRYPT_ALGO_TYPE or a 
-   CRYPT_MODE_TYPE, which is why it's given as a generic integer rather than 
-   a more specific type */
+   routines.  The parameters are as follows:
+   
+	Encryption: Mode for algorithm
+	PKC sig: Hash algorithm used with signature algorithm + optional hash 
+			 width for variable-width hashes.
+	Hash: Optional hash width for variable-width hashes */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readAlgoIDheader( INOUT STREAM *stream, 
@@ -298,7 +301,7 @@ static int readAlgoIDheader( INOUT STREAM *stream,
    In addition to the standard AlgorithmIdentifiers there's also a generic-
    secret pseudo-algorithm used for key-diversification purposes:
 
-	authEnc128/authEnc256: RFC xxxx / draft-gutmann-authenc-hmac
+	authEnc128/authEnc256: RFC 6476
 		SEQUENCE {
 			prf			AlgorithmIdentifier DEFAULT PBKDF2,
 			encAlgo		AlgorithmIdentifier,
@@ -352,7 +355,7 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 						   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	const int offset = stell( stream );
-	int mode, param, length, status;	/* 'mode' must be type integer */
+	int param1, param2, length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
@@ -361,24 +364,26 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 	REQUIRES_S( type > ALGOID_CLASS_NONE && type < ALGOID_CLASS_LAST );
 
 	/* Read the AlgorithmIdentifier header and OID */
-	status = readAlgoIDheader( stream, &queryInfo->cryptAlgo, &mode, &param,
-							   &length, tag, type );
+	status = readAlgoIDheader( stream, &queryInfo->cryptAlgo, &param1, 
+							   &param2, &length, tag, type );
 	if( cryptStatusError( status ) )
 		return( status );
-	queryInfo->cryptMode = mode;	/* CRYPT_MODE_TYPE vs. integer */
-	if( param != 0 )
+	if( isConvAlgo( queryInfo->cryptAlgo ) )
 		{
-		/* Remember any additional algorithm parameters.  For variable-
-		   keysize block ciphers this is the key size, for variable-
-		   blocksize hash algorithms this is the hash output size */
-		if( isConvAlgo( queryInfo->cryptAlgo ) )
-			queryInfo->keySize = param;
-		else
+		/* For conventional algorithms, the parameter is the encryption mode
+		   and the optional second parameter is the key size */
+		queryInfo->cryptMode = param1;
+		if( param2 != 0 )
+			queryInfo->keySize = param2;
+		}
+	else
+		{
+		if( isHashAlgo( queryInfo->cryptAlgo ) )
 			{
-			if( isHashAlgo( queryInfo->cryptMode ) )
-				queryInfo->hashParam = param;
-			else
-				retIntError();
+			/* For hash algorithms, the optional parameter is the hash 
+			   width */
+			if( param1 != 0 )
+				queryInfo->hashAlgoParam = param1;
 			}
 		}
 
@@ -386,12 +391,8 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 	   a hash algoID is called for, if we find one of these we modify the
 	   read AlgorithmIdentifier information to make it look like a hash
 	   algoID */
-	if( isPkcAlgo( queryInfo->cryptAlgo ) && \
-		isHashAlgo( queryInfo->cryptMode ) )
-		{
-		queryInfo->cryptAlgo = ( CRYPT_ALGO_TYPE ) queryInfo->cryptMode;
-		queryInfo->cryptMode = CRYPT_MODE_NONE;
-		}
+	if( isPkcAlgo( queryInfo->cryptAlgo ) && isHashAlgo( param1 ) )
+		queryInfo->cryptAlgo = param1;	/* Turn pkcWithHash into hash */
 
 	/* Hash algorithms will either have NULL parameters or none at all
 	   depending on which interpretation of which standard the sender used
@@ -793,26 +794,49 @@ int sizeofAlgoID( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
 	return( sizeofAlgoIDex( cryptAlgo, CRYPT_ALGO_NONE, 0 ) );
 	}
 
-/* Write an AlgorithmIdentifier record.  The associatedAlgo parameter is 
-   used for aWithB algorithms like rsaWithSHA1, with the context containing 
-   the 'A' algorithm and the parameter indicating the 'B' algorithm */
+/* Write an AlgorithmIdentifier record.  There are three versions of 
+   this:
+
+	writeAlgoID: Write an AlgorithmIdentifier record.
+
+	writeAlgoIDext: Write an AlgorithmIdentifier record.  The parameter 
+		value is used for aWithB algorithms like rsaWithSHA1, with the 
+		context containing the 'A' algorithm and the parameter indicating 
+		the 'B' algorithm, and for algorithms that have subtypes like 
+		SHA2's SHA2-256, SHA2-384, and SHA2-512 
+
+	writeAlgoIDparams: Write an AlgorithmIdentifier record, leaving extra
+		space for algorithm parameters at the end */
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int writeAlgoIDex( INOUT STREAM *stream, 
-						  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
-						  IN_ALGO_OPT const int associatedAlgo,
-						  IN_LENGTH_SHORT_Z const int extraLength )
+int writeAlgoID( INOUT STREAM *stream, 
+				 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
 	{
-	const BYTE *oid = algorithmToOID( cryptAlgo, associatedAlgo, 0, \
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES_S( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
+
+	return( writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, 0 ) );
+	}
+
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeAlgoIDex( INOUT STREAM *stream, 
+				   IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+				   IN_RANGE( 0, 999 ) const int parameter, 
+				   IN_LENGTH_SHORT_Z const int extraLength )
+	{
+	const BYTE *oid = algorithmToOID( cryptAlgo, parameter, 0, \
 									  ALGOTOOID_REQUIRE_VALID );
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	REQUIRES_S( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
-	REQUIRES_S( associatedAlgo == CRYPT_ALGO_NONE || \
-				( associatedAlgo >= CRYPT_ALGO_FIRST_HASH && \
-				  associatedAlgo <= CRYPT_ALGO_LAST_HASH ) );
+	REQUIRES_S( parameter == CRYPT_ALGO_NONE || \
+				( parameter >= CRYPT_ALGO_FIRST_HASH && \
+				  parameter <= CRYPT_ALGO_LAST_HASH ) || \
+				( isHashExtAlgo( cryptAlgo ) && \
+				  parameter >= 32 && parameter <= CRYPT_MAX_HASHSIZE ) );
 	REQUIRES_S( extraLength >= 0 && extraLength < MAX_INTLENGTH_SHORT );
 	REQUIRES_S( oid != NULL );
 
@@ -831,27 +855,16 @@ static int writeAlgoIDex( INOUT STREAM *stream,
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int writeAlgoID( INOUT STREAM *stream, 
-				 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
-	{
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-
-	REQUIRES_S( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
-
-	return( writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, 0 ) );
-	}
-
-RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeAlgoIDparam( INOUT STREAM *stream, 
 					  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
-					  IN_LENGTH_SHORT_Z const int paramLength )
+					  IN_LENGTH_SHORT_Z const int extraLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	REQUIRES_S( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
-	REQUIRES_S( paramLength >= 0 && paramLength < MAX_INTLENGTH_SHORT );
+	REQUIRES_S( extraLength >= 0 && extraLength < MAX_INTLENGTH_SHORT );
 
-	return( writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, paramLength) );
+	return( writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, extraLength ) );
 	}
 
 /* Read an AlgorithmIdentifier record.  There are three versions of 
@@ -861,9 +874,10 @@ int writeAlgoIDparam( INOUT STREAM *stream,
 		algorithm or mode and algorithm parameters present and returns an 
 		error if there are.
 
-	readAlgoIDext: Reads an algorithm and secondary algorithm or mode, 
-		assumes that there are no algorithm parameters present and returns 
-		an error if there are.
+	readAlgoIDex: Reads an algorithm, secondary algorithm or mode, 
+		and optional algorithm parameter (e.g. SHA-2 subtype when the 
+		algorithm is SHA-2).  Assumes that there are no explicit 
+		algorithm parameters present and returns an error if there are.
 
 	readAlgoIDparams: Reads an algorithm and the length of the extra 
 		information */
@@ -883,46 +897,65 @@ int readAlgoID( INOUT STREAM *stream,
 							  DEFAULT_TAG, type ) );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int readAlgoIDex( INOUT STREAM *stream, 
 				  OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
-				  OUT_ALGO_Z CRYPT_ALGO_TYPE *altCryptAlgo,
+				  OUT_OPT_ALGO_Z CRYPT_ALGO_TYPE *altCryptAlgo,
 				  OUT_INT_Z int *parameter,
 				  IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
-	int altAlgo, status;	/* 'altAlgo' must be type integer */
+	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
-	assert( isWritePtr( altCryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
+	assert( altCryptAlgo == NULL || \
+			isWritePtr( altCryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 	assert( isWritePtr( parameter, sizeof( int ) ) );
 
-	REQUIRES_S( type == ALGOID_CLASS_PKCSIG );
+	REQUIRES_S( ( type == ALGOID_CLASS_PKCSIG && altCryptAlgo != NULL ) || \
+				( type == ALGOID_CLASS_HASH && altCryptAlgo == NULL ) );
 
 	/* Clear return value (the others are cleared by readAlgoIDheader()) */
-	*altCryptAlgo = CRYPT_ALGO_NONE;
+	if( altCryptAlgo != NULL )
+		*altCryptAlgo = CRYPT_ALGO_NONE;
 	*parameter = 0;
 
-	status = readAlgoIDheader( stream, cryptAlgo, &altAlgo, parameter, 
-							   NULL, DEFAULT_TAG, type );
-	if( cryptStatusOK( status ) )
-		*altCryptAlgo = altAlgo;	/* CRYPT_MODE_TYPE vs. integer */
+	/* If we're reading a signature algorithm then there's a secondary 
+	   algorithm (e.g. RSA with SHA-1) and an optional parameter (e.g. 
+	   SHA2-512), otherwise it's a hash algorithm and there's an optional
+	   parameter (e.g. SHA2-512) */
+	if( type == ALGOID_CLASS_PKCSIG )
+		{
+		int altAlgo;	/* 'altAlgo' must be type integer */
+
+		status = readAlgoIDheader( stream, cryptAlgo, &altAlgo, parameter, 
+								   NULL, DEFAULT_TAG, type );
+		if( cryptStatusOK( status ) )
+			*altCryptAlgo = altAlgo;	/* CRYPT_MODE_TYPE vs. integer */
+		}
+	else
+		{
+		int dummy;
+
+		status = readAlgoIDheader( stream, cryptAlgo, parameter, &dummy, 
+								   NULL, DEFAULT_TAG, type );
+		}
 	return( status );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readAlgoIDparam( INOUT STREAM *stream, 
 					 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
-					 OUT_LENGTH_SHORT_Z int *paramLength,
+					 OUT_LENGTH_SHORT_Z int *extraLength,
 					 IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
-	assert( isWritePtr( paramLength, sizeof( int ) ) );
+	assert( isWritePtr( extraLength, sizeof( int ) ) );
 
 	REQUIRES_S( type == ALGOID_CLASS_PKC );
 
-	return( readAlgoIDheader( stream, cryptAlgo, NULL, NULL, paramLength, 
+	return( readAlgoIDheader( stream, cryptAlgo, NULL, NULL, extraLength, 
 							  DEFAULT_TAG, type ) );
 	}
 
@@ -944,6 +977,21 @@ int sizeofContextAlgoID( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 							  &algorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( isHashExtAlgo( algorithm ) )
+		{
+		int blockSize;
+
+		REQUIRES( parameter == 0 );
+
+		/* The extended hash algorithms can have various different hash 
+		   sizes, to get the exact variant that's being used we have to 
+		   query the block size */
+		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
+								  &blockSize, CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		return( sizeofAlgoIDex( algorithm, blockSize, 0 ) );
+		}
 	return( sizeofAlgoIDex( algorithm, parameter, 0 ) );
 	}
 
@@ -957,8 +1005,7 @@ int writeContextAlgoID( INOUT STREAM *stream,
 						IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 						IN_ALGO_OPT const int associatedAlgo )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo;
-	int status;
+	int algorithm, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
@@ -967,10 +1014,25 @@ int writeContextAlgoID( INOUT STREAM *stream,
 				isHashAlgo( associatedAlgo ) );
 
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
-							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+							  &algorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	return( writeAlgoIDex( stream, cryptAlgo, associatedAlgo, 0 ) );
+	if( isHashExtAlgo( algorithm ) )
+		{
+		int blockSize;
+
+		REQUIRES( associatedAlgo == CRYPT_ALGO_NONE );
+
+		/* The extended hash algorithms can have various different hash 
+		   sizes, to get the exact variant that's being used we have to 
+		   query the block size */
+		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
+								  &blockSize, CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		return( writeAlgoIDex( stream, algorithm, blockSize, 0 ) );
+		}
+	return( writeAlgoIDex( stream, algorithm, associatedAlgo, 0 ) );
 	}
 
 /* Turn an AlgorithmIdentifier into a context */
@@ -1020,6 +1082,16 @@ int readContextAlgoID( INOUT STREAM *stream,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( isHashExtAlgo( queryInfoPtr->cryptAlgo ) )
+		{
+		/* It's a variable-width hash algorithm, set the output width */
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE, 
+								  &queryInfoPtr->hashAlgoParam, 
+								  CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	if( queryInfoPtr->cryptAlgo > CRYPT_ALGO_LAST_CONVENTIONAL )
 		{
 		/* If it's not a conventional encryption algorithm, we're done */

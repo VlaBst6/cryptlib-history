@@ -100,7 +100,7 @@ int writeUint24( INOUT STREAM *stream, IN_LENGTH const int length )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int readEcdhValue( INOUT STREAM *stream,
-				   OUT_BUFFER( *valueLen, valueMaxLen ) void *value,
+				   OUT_BUFFER( valueMaxLen, *valueLen ) void *value,
 				   IN_LENGTH_SHORT_MIN( 64 ) const int valueMaxLen,
 				   OUT_LENGTH_PKC_Z int *valueLen )
 	{
@@ -731,6 +731,18 @@ static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 										CRYPT_SSLOPTION_MINVER_TLS11 | \
 										CRYPT_SSLOPTION_MINVER_TLS12 );
 		}
+	if( value & ( CRYPT_SSLOPTION_DISABLE_NAMEVERIFY | \
+				  CRYPT_SSLOPTION_DISABLE_CERTVERIFY ) )
+		{
+		/* By default if a certificate is used we try and verify the server 
+		   name against the name(s) in the certificate, and the certificate 
+		   itself, but since certificate use is so erratic we allow the user
+		   to disable this if required */
+		if( value & CRYPT_SSLOPTION_DISABLE_NAMEVERIFY )
+			sessionInfoPtr->protocolFlags |= SSL_PFLAG_DISABLE_NAMEVERIFY;
+		if( value & CRYPT_SSLOPTION_DISABLE_CERTVERIFY )
+			sessionInfoPtr->protocolFlags |= SSL_PFLAG_DISABLE_CERTVERIFY;
+		}
 
 	return( CRYPT_OK );
 	}
@@ -955,17 +967,6 @@ static int preparePacketFunction( INOUT SESSION_INFO *sessionInfoPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setAccessMethodSSL( INOUT SESSION_INFO *sessionInfoPtr )
 	{
-	static const ALTPROTOCOL_INFO altProtocolInfo = {
-		/* SSL/TLS tunnelled via an HTTP proxy.  This is a special case in 
-		   that the initial connection is made using HTTP but subsequent
-		   communications are via a direct TCP/IP connection that goes
-		   through the proxy */
-		STREAM_PROTOCOL_TCPIP,		/* Alt.protocol type */
-		"https://", 8,				/* Alt.protocol URI type */
-		80,							/* Alt.protocol port */
-		0,							/* Protocol flags to replace */
-		SESSION_USEHTTPTUNNEL		/* Alt.protocol flags */
-		};
 	static const PROTOCOL_INFO protocolInfo = {
 		/* General session information */
 		FALSE,						/* Request-response protocol */
@@ -1002,8 +1003,7 @@ int setAccessMethodSSL( INOUT SESSION_INFO *sessionInfoPtr )
 			/* This may be adjusted during the handshake if we're talking
 			   TLS 1.1+, which prepends extra data in the form of an IV to
 			   the payload */
-		MAX_PACKET_SIZE,			/* (Default) maximum packet size */
-		&altProtocolInfo			/* Alt.transport protocol */
+		MAX_PACKET_SIZE				/* (Default) maximum packet size */
 		};
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );

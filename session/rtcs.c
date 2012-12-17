@@ -106,6 +106,7 @@ CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -128,12 +129,12 @@ static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr )
 						   sessionInfoPtr->receiveBufSize,
 						   &sessionInfoPtr->receiveBufEnd,
 						   CRYPT_FORMAT_CMS, CRYPT_CONTENT_RTCSREQUEST,
-						   CRYPT_UNUSED );
+						   CRYPT_UNUSED, &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't CMS-envelope RTCS request data" ) );
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Couldn't CMS-envelope RTCS request data: " ) );
 		}
 	DEBUG_DUMP_FILE( "rtcs_req", sessionInfoPtr->receiveBuffer,
 					 sessionInfoPtr->receiveBufEnd );
@@ -151,6 +152,7 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
 	ACTION_TYPE actionType;
 	BYTE nonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int dataLength, sigResult, status;
@@ -184,12 +186,12 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 							   sessionInfoPtr->receiveBuffer, 
 							   sessionInfoPtr->receiveBufSize, &dataLength,
 							   CRYPT_UNUSED, &sigResult, NULL,
-							   &iCmsAttributes );
+							   &iCmsAttributes, &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Invalid CMS-enveloped RTCS response data" ) );
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Invalid CMS-enveloped RTCS response data: " ) );
 		}
 
 	/* Make sure that the nonce in the response matches the one in the
@@ -262,6 +264,7 @@ static int readClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
 	ACTION_TYPE actionType;
 	int dataLength, status;
 
@@ -293,12 +296,12 @@ static int readClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 							 sessionInfoPtr->receiveBufEnd,
 							 sessionInfoPtr->receiveBuffer, 
 							 sessionInfoPtr->receiveBufSize, &dataLength,
-							 CRYPT_UNUSED );
+							 CRYPT_UNUSED, &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Invalid CMS-enveloped RTCS request data" ) );
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Invalid CMS-enveloped RTCS request data: " ) );
 		}
 
 	/* Create an RTCS response.  We always create this since an empty
@@ -362,6 +365,7 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	{
 	CRYPT_CERTIFICATE iCmsAttributes = CRYPT_UNUSED;
 	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -407,29 +411,37 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		}
 
-	/* Sign the response data using the responder's key and send it to the
-	   client */
+	/* Extract the response data */
 	setMessageData( &msgData, sessionInfoPtr->receiveBuffer,
 					sessionInfoPtr->receiveBufSize );
 	status = krnlSendMessage( sessionInfoPtr->iCertResponse,
 							  IMESSAGE_CRT_EXPORT, &msgData,
 							  CRYPT_ICERTFORMAT_DATA );
-	if( cryptStatusOK( status ) )
+	if( cryptStatusError( status ) )
 		{
-		status = envelopeSign( sessionInfoPtr->receiveBuffer, msgData.length,
-							   sessionInfoPtr->receiveBuffer,
-							   sessionInfoPtr->receiveBufSize,
-							   &sessionInfoPtr->receiveBufEnd,
-							   CRYPT_CONTENT_RTCSRESPONSE,
-							   sessionInfoPtr->privateKey, iCmsAttributes );
+		if( iCmsAttributes != CRYPT_UNUSED )
+			krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Couldn't encode RTCS response" ) );
 		}
+
+	/* Sign the response data using the responder's key and send it to the
+	   client */
+	status = envelopeSign( sessionInfoPtr->receiveBuffer, msgData.length,
+						   sessionInfoPtr->receiveBuffer,
+						   sessionInfoPtr->receiveBufSize,
+						   &sessionInfoPtr->receiveBufEnd,
+						   CRYPT_CONTENT_RTCSRESPONSE,
+						   sessionInfoPtr->privateKey, iCmsAttributes, 
+						   &errorInfo );
 	if( iCmsAttributes != CRYPT_UNUSED )
 		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't CMS-envelope RTCS response" ) );
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Couldn't CMS-envelope RTCS response: " ) );
 		}
 	DEBUG_DUMP_FILE( "rtcs_sresp", sessionInfoPtr->receiveBuffer,
 					 sessionInfoPtr->receiveBufEnd );

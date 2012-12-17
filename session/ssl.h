@@ -78,9 +78,10 @@
 #endif /* PREFER_RSA_TO_DH with VC++ */
 
 /* SSLv2 was finally removed in MSIE and Firefox in 2008, however some 
-   implementations still send SSLv2 hellos.  Define the following to enable 
-   handling of SSLv2 client hellos.  Note that this code is not maintained,
-   and your warranty is void when you enable SSLv2 hello handling */
+   crufty old implementations will still send SSLv2 hellos.  Define the 
+   following to enable handling of SSLv2 client hellos.  Note that this 
+   code is not maintained, and your warranty is void when you enable SSLv2 
+   hello handling */
 
 /* #define ALLOW_SSLV2_HELLO */
 
@@ -92,13 +93,18 @@
 		level code may have already sent an alert so we have to remember not 
 		to send it twice.
 
+	FLAG_DISABLE_CERTVERIFY: Disable checking of the server certificate 
+	FLAG_DISABLE_NAMEVERIFY: and/or host name.  By default we check both of
+		these, but because of all of the problems surrounding certificates 
+		we allow the checking to be disabled.
+
 	FLAG_CHECKREHANDSHAKE: The header-read got a handshake packet instead of 
 		a data packet, when the body-read decrypts the payload it should 
 		check for a rehandshake request in the payload.
 
-	SSL_PFLAG_CLIAUTHSKIPPED: The client saw an auth-request from the server 
-		and responded with a no-certificates alert, if we later get a close
-		alert from the server then provide additional error information 
+	FLAG_CLIAUTHSKIPPED: The client saw an auth-request from the server and 
+		responded with a no-certificates alert, if we later get a close 
+		alert from the server then we provide additional error information 
 		indicating that this may be due to the lack of a client certificate.
 
 	FLAG_GCM: The encryption used is GCM and not the usual CBC, which 
@@ -115,7 +121,9 @@
 #define SSL_PFLAG_SUITEB_128		0x08	/* Enforce Suite B 128-bit semantics */
 #define SSL_PFLAG_SUITEB_256		0x10	/* Enforce Suite B 256-bit semantics */
 #define SSL_PFLAG_CHECKREHANDSHAKE	0x20	/* Check decrypted pkt.for rehandshake */
-#define SSL_PFLAG_MAX				0x2F	/* Maximum possible flag value */
+#define SSL_PFLAG_DISABLE_NAMEVERIFY 0x40	/* Disable host name verification */
+#define SSL_PFLAG_DISABLE_CERTVERIFY 0x80	/* Disable certificate verification */
+#define SSL_PFLAG_MAX				0xFF	/* Maximum possible flag value */
 
 /* Suite B consists of two subclasses, the 128-bit security level (AES-128 
    with P256 and SHA2-256) and the 192-bit security level (AES-256 with P384 
@@ -618,7 +626,7 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 int writeUint24( INOUT STREAM *stream, IN_LENGTH const int length );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int readEcdhValue( INOUT STREAM *stream,
-				   OUT_BUFFER( *valueLen, valueMaxLen ) void *value,
+				   OUT_BUFFER( valueMaxLen, *valueLen ) void *value,
 				   IN_LENGTH_SHORT_MIN( 64 ) const int valueMaxLen,
 				   OUT_LENGTH_PKC_Z int *valueLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
@@ -826,8 +834,8 @@ int unwrapPremasterSecret( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int initCryptoSSL( INOUT SESSION_INFO *sessionInfoPtr,
 				   INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
-				   OUT_BUFFER_FIXED( masterSecreSize ) void *masterSecret,
-				   IN_LENGTH_SHORT const int masterSecreSize,
+				   OUT_BUFFER_FIXED( masterSecretSize ) void *masterSecret,
+				   IN_LENGTH_SHORT const int masterSecretSize,
 				   const BOOLEAN isClient,
 				   const BOOLEAN isResumedSession );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \

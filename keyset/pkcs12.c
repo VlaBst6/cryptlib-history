@@ -48,7 +48,8 @@ PKCS12_INFO *pkcs12FindEntry( IN_ARRAY( noPkcs12objects ) \
 							  IN_LENGTH_SHORT const int noPkcs12objects,
 							  IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
 							  IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
-							  IN_LENGTH_KEYID_Z const int keyIDlength )
+							  IN_LENGTH_KEYID_Z const int keyIDlength,
+							  const BOOLEAN isWildcardMatch )
 	{
 	int i;
 
@@ -65,6 +66,7 @@ PKCS12_INFO *pkcs12FindEntry( IN_ARRAY( noPkcs12objects ) \
 	REQUIRES_N( ( keyID == NULL && keyIDlength == 0 ) || \
 				( keyID != NULL && \
 				  keyIDlength > 0 && keyIDlength < MAX_ATTRIBUTE_SIZE ) );
+	REQUIRES_N( ( isWildcardMatch && keyID == NULL ) || !isWildcardMatch );
 
 	/* Try and locate the appropriate object in the PKCS #12 collection */
 	for( i = 0; i < noPkcs12objects && i < FAILSAFE_ITERATIONS_MED; i++ )
@@ -75,11 +77,11 @@ PKCS12_INFO *pkcs12FindEntry( IN_ARRAY( noPkcs12objects ) \
 		if( pkcs12infoPtr->flags == PKCS12_FLAG_NONE )
 			continue;
 
-		/* An empty keyID is a wildcard that matches the first private-key 
+		/* If we're doing a wildcard matches, match the first private-key 
 		   entry.  This is required because PKCS #12 provides almost no 
 		   useful indexing information, and works because most keysets 
 		   contain only a single entry */
-		if( keyID == NULL )
+		if( isWildcardMatch )
 			{
 			if( pkcs12infoPtr->keyInfo.data == NULL )
 				continue;	/* No private-key data present, continue */
@@ -342,7 +344,7 @@ static int initContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 						IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 						IN_LENGTH_KEY const int keySize,
 						IN_BUFFER( passwordLength ) const void *password, 
-						IN_LENGTH_NAME const int passwordLength,
+						IN_LENGTH_TEXT const int passwordLength,
 						IN_BUFFER( saltLength ) const void *salt,
 						IN_LENGTH_SHORT const int saltLength,
 						IN_INT const int iterations,
@@ -401,7 +403,7 @@ static int initContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	else
 		saltData[ 0 ] = KEYWRAP_ID_MACKEY;
 	setMechanismDeriveInfo( &deriveInfo, key, keySize, password, 
-							passwordLength, CRYPT_ALGO_SHA, saltData, 
+							passwordLength, CRYPT_ALGO_SHA1, saltData, 
 							saltLength + 1, iterations );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
 							  &deriveInfo, MECHANISM_DERIVE_PKCS12 );
@@ -409,7 +411,7 @@ static int initContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 		{
 		saltData[ 0 ] = KEYWRAP_ID_IV;
 		setMechanismDeriveInfo( &deriveInfo, iv, ivSize, password, 
-								passwordLength, CRYPT_ALGO_SHA, saltData, 
+								passwordLength, CRYPT_ALGO_SHA1, saltData, 
 								saltLength + 1, iterations );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
 								  &deriveInfo, MECHANISM_DERIVE_PKCS12 );
@@ -469,7 +471,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int createPkcs12KeyWrapContext( INOUT PKCS12_OBJECT_INFO *pkcs12objectInfo,
 								IN_HANDLE const CRYPT_USER cryptOwner,
 								IN_BUFFER( passwordLength ) const char *password, 
-								IN_LENGTH_NAME const int passwordLength,
+								IN_LENGTH_TEXT const int passwordLength,
 								OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 								const BOOLEAN initParams )
 	{
@@ -514,7 +516,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int createPkcs12MacContext( INOUT PKCS12_INFO *pkcs12info,
 							IN_HANDLE const CRYPT_USER cryptOwner,
 							IN_BUFFER( passwordLength ) const char *password, 
-							IN_LENGTH_NAME const int passwordLength,
+							IN_LENGTH_TEXT const int passwordLength,
 							OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 							const BOOLEAN initParams )
 	{

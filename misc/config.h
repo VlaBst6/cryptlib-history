@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Configuration Settings  					*
-*					   Copyright Peter Gutmann 1992-2011					*
+*					   Copyright Peter Gutmann 1992-2012					*
 *																			*
 ****************************************************************************/
 
@@ -84,8 +84,7 @@
 ****************************************************************************/
 
 /* The umbrella define USE_PATENTED_ALGORITHMS can be used to drop all
-   patented algorithms (note that this removes IDEA, which is needed for PGP
-   2.x private keyring reads and message decryption),
+   patented algorithms (currently only RC5 is still left),
    USE_DEPRECATED_ALGORITHMS can be used to drop deprecated (obsolete or
    weak) algorithms, and USE_OBSCURE_ALGORITHMS can be used to drop little-
    used algorithms.  Technically both DES and MD5 are also deprecated but
@@ -102,7 +101,6 @@
 /* Patented algorithms */
 
 #ifdef USE_PATENTED_ALGORITHMS
-  #define USE_IDEA
   #define USE_RC5
 #endif /* Use of patented algorithms */
 
@@ -124,6 +122,7 @@
   #define USE_ELGAMAL
   #define USE_HMAC_MD5
   #define USE_HMAC_RIPEMD160
+  #define USE_IDEA
   #define USE_RIPEMD160
 #endif /* Obscure algorithms */
 
@@ -135,6 +134,7 @@
   #define USE_ECDH
   #define USE_ECDSA
   #define USE_GCM
+  #define USE_SHA2_EXT
 #endif /* Win32 debug */
 
 /* Other algorithms.  Note that DES/3DES and SHA1 are always enabled as
@@ -301,12 +301,19 @@
   #define USE_COMPRESSION
 #endif /* __MSDOS__ || __WIN16__ */
 
-/* PGP envelopes */
+/* PGP envelopes.  Note that we don't force USE_IDEA for PGP (even though 
+   the patents have expired and it's freely usable) since this should now 
+   hopefully be extinct */
 
 #define USE_PGP
-#if defined( USE_PGP ) && !defined( USE_ELGAMAL )
-  #define USE_ELGAMAL
-#endif /* OpenPGP requires Elgamal */
+#if defined( USE_PGP )
+  #ifndef USE_ELGAMAL
+	#define USE_ELGAMAL
+  #endif /* OpenPGP requires ElGamal */
+  #ifndef USE_CAST
+	#define USE_CAST
+  #endif /* Some OpenPGP implementations still (!!) default to CAST5 */
+#endif /* OpenPGP-specific algorithms */
 
 /* General envelope usage */
 
@@ -388,6 +395,9 @@
 	#error Use of PGP/PKCS #15 keysets requires use of PKC algorithms to be enabled
   #endif /* USE_PKC */
 #endif /* USE_PGPKEYS || USE_PKCS15 */
+#if defined( USE_PGPKEYS ) && !defined( USE_CAST )
+  #define USE_CAST
+#endif /* Some OpenPGP implementations still (!!) default to CAST5 */
 
 /* General keyset usage */
 
@@ -484,11 +494,11 @@
 
 #if defined( __AMX__  ) || defined( __BEOS__ ) || defined( __CHORUS__ ) || \
 	defined( __ECOS__ ) || defined( __EmbOS__ ) || defined( __FreeRTOS__ ) || \
-	defined( __ITRON__ ) || defined( __MQX__ ) || defined( __OS2__ ) || \
-	defined( __PALMOS__ ) || defined( __RTEMS__ ) || defined( __ThreadX__ ) || \
-	defined( __TKernel__ ) || defined( __UCOS__ ) || defined( __VDK__ ) || \
-	defined( __VXWORKS__ ) || defined( __WIN32__ ) || defined( __WINCE__ ) || \
-	defined( __XMK__ ) || defined( __VXWORKS__ )
+	defined( __ITRON__ ) || defined( __MQX__ ) || defined( __Nucleus__ ) || \
+	defined( __OS2__ ) || defined( __PALMOS__ ) || defined( __RTEMS__ ) || \
+	defined( __ThreadX__ ) || defined( __TKernel__ ) || defined( __UCOS__ ) || \
+	defined( __VDK__ ) || defined( __VXWORKS__ ) || defined( __WIN32__ ) || \
+	defined( __WINCE__ ) || defined( __XMK__ ) || defined( __VXWORKS__ )
   #define USE_THREADS
 #endif /* Non-Unix systems with threads */
 
@@ -558,6 +568,17 @@
 	( defined( __WINDOWS__ ) || defined( __UNIX__ ) ) && 0
   #define USE_DNSSRV
 #endif /* Windows || Unix */
+
+/* If we're on a particularly slow or fast CPU we disable or enable certain 
+   processor-intensive operations.  In the absence of any easy compile-time 
+   metric we define all 16-bit CPUs to be slow and all 64-bit CPUs to be 
+   fast, which is a reasonable approximation */
+
+#if defined( SYSTEM_16BIT )
+  #define CONFIG_SLOW_CPU
+#elif defined( SYSTEM_64BIT )
+  #define CONFIG_FAST_CPU
+#endif /* Approximation of CPU speeds */
 
 /****************************************************************************
 *																			*

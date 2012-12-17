@@ -106,7 +106,8 @@ static int signData( const char *algoName, const CRYPT_ALGO_TYPE algorithm,
 	   complete the hashing if it's a PGP signature since this hashes in
 	   extra data before generating the signature */
 	status = cryptCreateContext( &hashContext, CRYPT_UNUSED,
-								 useSHA2 ? CRYPT_ALGO_SHA2 : CRYPT_ALGO_SHA );
+								 useSHA2 ? CRYPT_ALGO_SHA2 : \
+										   CRYPT_ALGO_SHA1 );
 	if( cryptStatusError( status ) )
 		return( FALSE );
 	cryptEncrypt( hashContext, hashBuffer, 26 );
@@ -140,12 +141,12 @@ static int signData( const char *algoName, const CRYPT_ALGO_TYPE algorithm,
 				break;
 
 			case CRYPT_ALGO_DSA:
-				status = loadDSAContexts( CRYPT_UNUSED, &signContext,
-										  &checkContext );
+				status = loadDSAContexts( CRYPT_UNUSED, &checkContext,
+										  &signContext );
 				break;
 
 			case CRYPT_ALGO_ECDSA:
-				status = loadECDSAContexts( &signContext, &checkContext );
+				status = loadECDSAContexts( &checkContext, &signContext );
 				break;
 
 			default:
@@ -1162,7 +1163,7 @@ static int keygen( const CRYPT_ALGO_TYPE cryptAlgo, const char *algoName )
 
 			/* Create an SHA hash context and hash the test buffer */
 			status = cryptCreateContext( &hashContext, CRYPT_UNUSED, 
-										 CRYPT_ALGO_SHA );
+										 CRYPT_ALGO_SHA1 );
 			if( cryptStatusError( status ) )
 				return( FALSE );
 			cryptEncrypt( hashContext, hashBuffer, 26 );
@@ -1413,7 +1414,7 @@ int testKeygenAsync( void )
 	/* Check the context to make sure that the keygen was actually 
 	   cancelled */
 	status = cryptCreateContext( &hashContext, CRYPT_UNUSED, 
-								 CRYPT_ALGO_SHA );
+								 CRYPT_ALGO_SHA1 );
 	if( cryptStatusError( status ) )
 		return( FALSE );
 	cryptEncrypt( hashContext, hashBuffer, 26 );
@@ -1647,7 +1648,7 @@ static int signDataCMS( const char *description,
 
 	/* Create an SHA hash context and hash the test buffer */
 	status = cryptCreateContext( &hashContext, CRYPT_UNUSED, 
-								 CRYPT_ALGO_SHA );
+								 CRYPT_ALGO_SHA1 );
 	if( cryptStatusError( status ) )
 		return( FALSE );
 	cryptEncrypt( hashContext, hashBuffer, 26 );

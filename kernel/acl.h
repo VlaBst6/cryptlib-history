@@ -309,6 +309,7 @@ typedef struct { const int lowRange, highRange; } RANGE_SUBRANGE_TYPE;
 #define ACL_FLAG_ROUTE_TO_CTX	0x04
 #define ACL_FLAG_ROUTE_TO_CERT	0x08
 
+#define ACL_FLAG_MASK			0x0F
 #define ACL_FLAG_STATE_MASK		0x03
 
 /* Macros to check the misc.ACL flags */
@@ -642,13 +643,11 @@ typedef struct {
 
 typedef enum {
 	PARAM_VALUE_NONE,				/* Non-value */
-	PARAM_VALUE_BOOLEAN,			/* Boolean flag */
 	PARAM_VALUE_NUMERIC,			/* Numeric value */
 	PARAM_VALUE_STRING,				/* Byte string */
 	PARAM_VALUE_STRING_OPT,			/* Byte string or (NULL, 0) */
 	PARAM_VALUE_STRING_NONE,		/* Empty (NULL, 0) string */
 	PARAM_VALUE_OBJECT,				/* Object handle */
-	PARAM_VALUE_UNUSED,				/* CRYPT_UNUSED */
 	PARAM_VALUE_LAST				/* Last valid parameter type */
 	} PARAM_VALUE_TYPE;
 
@@ -667,9 +666,11 @@ typedef struct {
 /* Macros to set up parameter ACLs */
 
 #define MKACP_B() \
-			{ PARAM_VALUE_BOOLEAN, 0, 0, 0, 0, 0, 0 }
+			{ PARAM_VALUE_NUMERIC, FALSE, TRUE, 0, 0, 0, 0 }
 #define MKACP_N( min, max ) \
 			{ PARAM_VALUE_NUMERIC, min, max, 0, 0, 0, 0 }
+#define MKACP_N_FIXED( value ) \
+			{ PARAM_VALUE_NUMERIC, value, value, 0, 0, 0, 0 }
 #define MKACP_S( minLen, maxLen ) \
 			{ PARAM_VALUE_STRING, minLen, maxLen, 0, 0, 0, 0 }
 #define MKACP_S_OPT( minLen, maxLen ) \
@@ -678,8 +679,6 @@ typedef struct {
 			{ PARAM_VALUE_STRING_NONE, 0, 0, 0, 0, 0, 0 }
 #define MKACP_O( subTypeA, flags ) \
 			{ PARAM_VALUE_OBJECT, 0, 0, subTypeA, ST_NONE, ST_NONE, flags }
-#define MKACP_UNUSED() \
-			{ PARAM_VALUE_UNUSED, 0, 0, 0, 0, 0, 0 }
 
 /* End-of-mechanism-ACL marker */
 
@@ -698,12 +697,8 @@ typedef struct {
 /* Macros to check each parameter against a parameter ACL entry */
 
 #define checkParamNumeric( paramACL, value ) \
-		( ( paramACL.valueType == PARAM_VALUE_UNUSED && \
-			value == CRYPT_UNUSED ) || \
-		  ( paramACL.valueType == PARAM_VALUE_BOOLEAN && \
-			( value == TRUE || value == FALSE ) ) || \
-		  ( paramACL.valueType == PARAM_VALUE_NUMERIC && \
-			( value >= paramACL.lowRange && value <= paramACL.highRange ) ) )
+		( paramACL.valueType == PARAM_VALUE_NUMERIC && \
+		  ( value >= paramACL.lowRange && value <= paramACL.highRange ) )
 
 #define checkParamString( paramACL, data, dataLen ) \
 		( ( ( paramACL.valueType == PARAM_VALUE_STRING_NONE || \
@@ -716,7 +711,8 @@ typedef struct {
 			isReadPtr( data, dataLen ) ) )
 
 #define checkParamObject( paramACL, objectHandle ) \
-		( ( paramACL.valueType == PARAM_VALUE_UNUSED && \
+		( ( paramACL.valueType == PARAM_VALUE_NUMERIC && \
+			paramACL.lowRange == CRYPT_UNUSED && \
 			objectHandle == CRYPT_UNUSED ) || \
 		  ( paramACL.valueType == PARAM_VALUE_OBJECT && \
 			( ( paramACL.subTypeA & objectST( objectHandle ) ) == \
@@ -760,7 +756,7 @@ typedef struct {
 
 typedef struct CRA {
 	const OBJECT_TYPE type;			/* Object type */
-	const PARAM_ACL paramACL[ 4 ];	/* Parameter ACL information */
+	const PARAM_ACL paramACL[ 5 ];	/* Parameter ACL information */
 	const int exceptions[ 2 ];		/* Subtypes that need special handling */
 	const struct CRA *exceptionACL;	/* Special-handling ACL */
 	} CREATE_ACL;
@@ -787,6 +783,11 @@ typedef struct {
 	const OBJECT_ACL objectACL;		/* Valid objects for message type */
 	const PARAM_ACL paramACL[ 1 ];	/* Parameter ACL information */
 	} COMPARE_ACL;
+
+/* Macros to access the parameter ACLs as an array of PARAM_ACL entries */
+
+#define getParamACL( aclInfo )		( &( aclInfo )->paramACL[ 0 ] )
+#define getParamACLSize( aclInfo )	( sizeof( ( aclInfo )->paramACL ) / sizeof( PARAM_ACL ) )
 
 /* Macros to set up compare ACLs */
 

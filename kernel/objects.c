@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Kernel Object Management						*
-*						Copyright Peter Gutmann 1997-2009					*
+*						Copyright Peter Gutmann 1997-2011					*
 *																			*
 ****************************************************************************/
 
@@ -15,9 +15,10 @@
   #include "kernel/kernel.h"
 #endif /* Compiler-specific includes */
 
-/* The initial allocation size of the object table.  In memory-starved
-   environments we limit the size, in general these are embedded systems or
-   single-tasking OSes that aren't going to need many objects anyway */
+/* The initial allocation size of the object table, but default 1024 
+   entries.  In memory-starved environments we limit the size, in general 
+   these are embedded systems or single-tasking OSes that aren't going to 
+   need many objects anyway */
 
 #if defined( CONFIG_CONSERVE_MEMORY )
   #define OBJECT_TABLE_ALLOCSIZE	128
@@ -276,6 +277,9 @@ static int destroyObject( IN_HANDLE const int objectHandle )
 
 /* Destroy all objects at a given nesting level */
 
+const char *getObjectDescriptionNT( IN_HANDLE const int objectHandle );
+			/* Prototype for function in sendmsg.c */
+
 CHECK_RETVAL \
 static int destroySelectedObjects( IN_RANGE( 1, 3 ) const int currentDepth )
 	{
@@ -320,14 +324,16 @@ static int destroySelectedObjects( IN_RANGE( 1, 3 ) const int currentDepth )
 		/* If the nesting level of the object matches the current level,
 		   destroy it.  We unlock the object table around the access to
 		   prevent remaining active objects from blocking the shutdown (the
-		   closingDown flag takes care of any other messages that may arrive
-		   during this process).
+		   activation of krnlIsExiting() takes care of any other messages 
+		   that may arrive during this process).
 
 		   "For death is come up into our windows, and it is entered into
 		    our palaces, to cut off the children from the without"
 			-- Jeremiah 9:21 */
 		if( depth >= currentDepth )
 			{
+			DEBUG_PRINT(( "Destroying leftover %s.\n", 
+						  getObjectDescriptionNT( objectHandle ) ));
 			objectTable = NULL;
 			MUTEX_UNLOCK( objectTable );
 			krnlSendNotifier( objectHandle, IMESSAGE_DESTROY );
@@ -336,7 +342,7 @@ static int destroySelectedObjects( IN_RANGE( 1, 3 ) const int currentDepth )
 			objectTable = krnlData->objectTable;
 			}
 		}
-	ENSURES( objectHandle < MAX_OBJECTS );
+	ENSURES( objectHandle <= MAX_OBJECTS );
 
 	return( status );
 	}
@@ -490,11 +496,22 @@ int destroyObjects( void )
    step through the object table.  There's no strong reason for this apart
    from helping disabuse users of the notion that any cryptlib objects have
    stdin/stdout-style fixed handles, but it only costs a few extra clocks so
-   we may as well do it */
+   we may as well do it.
+   
+   There is one case in which we can still get handle reuse and that's then 
+   the object table is heavily loaded but not quite enough to trigger a 
+   resize.  For example with a table of size 1024 if the caller creates 1023
+   objects and then repeatedly creates and destroys a final object it'll 
+   always be reassigned the same handle if no other objects are destroyed in
+   the meantime.  This is rather unlikely unless the caller is using 
+   individual low-level objects (all of the high-level objects create 
+   object-table churn through their dependent objects) so it's not worth
+   adding special-case handling for it */
 
 CHECK_RETVAL \
-static int findFreeResource( int value )
+static int findFreeObjectEntry( int value )
 	{
+	BOOLEAN freeEntryAvailable = FALSE;
 	int oldValue = value, iterations;
 
 	/* Preconditions: We're starting with a valid object handle, and it's not
@@ -526,25 +543,40 @@ static int findFreeResource( int value )
 		   check as part of the loop test then deleting and creating an
 		   object would result in the handle of the deleted object being
 		   re-assigned to the new object */
-		if( isFreeObject( value ) || value == oldValue )
+		if( isFreeObject( value ) )
+			{
+			/* We've found a free entry, we're done */
+			freeEntryAvailable = TRUE;
 			break;
+			}
+		if( value == oldValue )
+			{
+			/* We've covered the entire object table, we need to expand it
+			   to make more room */
+			break;
+			}
 		}
-	ENSURES( iterations < MAX_OBJECTS );
-	if( value == oldValue || iterations >= krnlData->objectTableSize || \
-		!isValidHandle( value ) )
+	ENSURES( iterations < krnlData->objectTableSize && \
+			 iterations < MAX_OBJECTS )
+
+	/* Postcondition: We're still within the object table */
+	ENSURES( isValidHandle( value ) );
+
+	/* If we didn't find a free entry, tell the caller that the tank is 
+	   full */
+	if( !freeEntryAvailable )
 		{
 		/* Postcondition: We tried all locations and there are no free slots
 		   available (or, vastly less likely, an internal error has
 		   occurred) */
 		ENSURES( iterations == krnlData->objectTableSize - 2 );
-		FORALL( i, 0, krnlData->objectTableSize,
-				krnlData->objectTable[ i ].objectPtr != NULL );
+		FORALL( i, 0, krnlData->objectTableSize, \
+				!isFreeObject( i ) );
 
-		return( CRYPT_ERROR );
+		return( OK_SPECIAL );
 		}
 
 	/* Postconditions: We found a handle to a free slot */
-	ENSURES( isValidHandle( value ) );
 	ENSURES( isFreeObject( value ) );
 
 	return( value );
@@ -560,19 +592,25 @@ static int expandObjectTable( void )
 							   0x80027L, 0x100009L, 0x200005L, 0x400003L,
 									 0L,		0L };
 	OBJECT_INFO *newTable;
-	int objectHandle, i;
+	int objectHandle, i, status;
 	ORIGINAL_INT_VAR( oldLfsrPoly, krnlData->objectStateInfo.lfsrPoly );
 
 	/* If we're already at the maximum number of allowed objects, don't
 	   create any more.  This prevents both accidental runaway code that
 	   creates huge numbers of objects and DoS attacks */
 	if( krnlData->objectTableSize <= 0 || \
-		krnlData->objectTableSize >= MAX_OBJECTS / 2 )
+		krnlData->objectTableSize > MAX_OBJECTS / 2 )
+		{
+		DEBUG_DIAG(( "Maximum object table size of %d objects reached",
+					 MAX_OBJECTS ));
 		return( CRYPT_ERROR_OVERFLOW );
+		}
+	DEBUG_DIAG(( "Expanding object table from %d to %d entries",
+				 krnlData->objectTableSize, krnlData->objectTableSize * 2 ));
 
 	/* Precondition: We haven't exceeded the maximum number of objects */
 	REQUIRES( krnlData->objectTableSize > 0 && \
-			  krnlData->objectTableSize < MAX_OBJECTS / 2 );
+			  krnlData->objectTableSize <= MAX_OBJECTS / 2 );
 
 	/* Expand the table */
 	newTable = clDynAlloc( "krnlCreateObject", \
@@ -588,7 +626,7 @@ static int expandObjectTable( void )
 	for( i = krnlData->objectTableSize; 
 		 i < krnlData->objectTableSize * 2 && i < MAX_OBJECTS; i++ )
 		newTable[ i ] = OBJECT_INFO_TEMPLATE;
-	ENSURES( i < MAX_OBJECTS );
+	ENSURES( i <= MAX_OBJECTS );
 	zeroise( krnlData->objectTable, \
 			 krnlData->objectTableSize * sizeof( OBJECT_INFO ) );
 	clFree( "krnlCreateObject", krnlData->objectTable );
@@ -604,10 +642,13 @@ static int expandObjectTable( void )
 		}
 	ENSURES( i < 16 );
 	krnlData->objectStateInfo.lfsrPoly = lfsrPolyTable[ i ];
-	objectHandle = findFreeResource( krnlData->objectStateInfo.objectHandle );
+	status = objectHandle = \
+		findFreeObjectEntry( krnlData->objectStateInfo.objectHandle );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Postcondition: We've moved on to the next LFSR polynomial value,
-	   the LFSR output covers the entire table, and we now have roonm for
+	   the LFSR output covers the entire table, and we now have room for
 	   the new object */
 	ENSURES( ( krnlData->objectStateInfo.lfsrPoly & ~0x7F ) == \
 			 ( ( ORIGINAL_VALUE( oldLfsrPoly ) & ~0xFF ) << 1 ) );
@@ -735,19 +776,36 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 		REQUIRES( isValidHandle( owner ) );
 
 		/* Search the table for a free entry */
-		localObjectHandle = findFreeResource( localObjectHandle );
+		localObjectHandle = findFreeObjectEntry( localObjectHandle );
 		}
 
-	/* If the table is full, expand it */
-	if( !isValidHandle( localObjectHandle ) )
+	/* If there's a problem with allocating a handle that it either means 
+	   that we've run out of entries in the object table or there's a more 
+	   general error */
+	if( cryptStatusError( localObjectHandle ) )
 		{
-		localObjectHandle = expandObjectTable();
+		/* If we got an OK_SPECIAL status then we've run out of room in the
+		   object table, try expanding it to make room for more objects */
+		if( localObjectHandle == OK_SPECIAL )
+			{
+			localObjectHandle = expandObjectTable();
+			}
 		if( cryptStatusError( localObjectHandle ) )
 			{
 			MUTEX_UNLOCK( objectTable );
 
-			/* Free the object instance data storage that we allocated
-			   earlier */
+			/* If we've run into some problem unrelated to running out of 
+			   room for the object table, warn about it */
+			if( localObjectHandle != CRYPT_ERROR_OVERFLOW && \
+				localObjectHandle != CRYPT_ERROR_MEMORY )
+				{
+				DEBUG_DIAG(( "Error %d allocating new object handle", 
+							 localObjectHandle ));
+				assert( DEBUG_WARN );
+				}
+
+			/* Free the object instance data storage that we allocated 
+			   earlier and return the error status */
 			if( objectInfo.flags & OBJECT_FLAG_SECUREMALLOC )
 				{
 				int status = krnlMemfree( &objectInfo.objectPtr );
@@ -773,12 +831,12 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 		time_t theTime;
 		
 		/* Get a non-constant seed to use for the initial object handle.  
-		   See the comment in findFreeResource() for why this is done, and 
-		   why it only uses a relatively weak seed.  Since we may be running 
-		   on an embedded system with no reliable time source available we 
-		   use getApproxTime() rather than getTime(), the check for correct 
-		   functioning of the time source on non-embedded systems has 
-		   already been done in the init code */
+		   See the comment in findFreeObjectEntry() for why this is done, 
+		   and why it only uses a relatively weak seed.  Since we may be 
+		   running on an embedded system with no reliable time source 
+		   available we use getApproxTime() rather than getTime(), the check 
+		   for correct functioning of the time source on non-embedded 
+		   systems has already been done in the init code */
 		theTime = getApproxTime();
 
 		/* If this is the last system object, we've been allocating handles

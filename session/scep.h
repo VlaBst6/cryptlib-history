@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							SCEP Definitions Header File					*
-*						Copyright Peter Gutmann 1999-2007					*
+*						Copyright Peter Gutmann 1999-2011					*
 *																			*
 ****************************************************************************/
 
@@ -13,16 +13,29 @@
 
 #define SCEP_NONCE_SIZE			16
 
-/* SCEP protocol-specific flags that augment the general session flags */
+/* SCEP protocol-specific flags that augment the general session flags.  These
+   are:
+
+	PFLAG_PNPPKI: The remote systenm is PnP PKI capable.
+
+	PFLAG_PENDING: The last exchange with the server returned a 'pending' 
+		status, so the get-server-response needs to be retried without
+		genering a new request.
+
+	PFLAG_GOTCACAPS: The GetCACaps message used to determine a server's
+		capabilities has been sent */
 
 #define SCEP_PFLAG_NONE			0x00	/* No protocol-specific flags */
 #define SCEP_PFLAG_PNPPKI		0x01	/* Session is PnP PKI-capable */
+#define SCEP_PFLAG_PENDING		0x02	/* Certificate issue is pending */
+#define SCEP_PFLAG_GOTCACAPS	0x04	/* Sent GetCACaps message to server */
 
 /* The SCEP message type, status, and failure information.  For some 
    bizarre reason these integer values are communicated as text strings */
 
 #define MESSAGETYPE_CERTREP				"3"
 #define MESSAGETYPE_PKCSREQ				"19"
+#define MESSAGETYPE_GETCERTINITIAL		"20"
 
 #define MESSAGESTATUS_SUCCESS			"0"
 #define MESSAGESTATUS_FAILURE			"2"
@@ -86,7 +99,8 @@ void initSCEPprotocolInfo( OUT SCEP_PROTOCOL_INFO *protocolInfo );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void destroySCEPprotocolInfo( INOUT SCEP_PROTOCOL_INFO *protocolInfo );
 CHECK_RETVAL_BOOL \
-BOOLEAN checkCACert( IN_HANDLE const CRYPT_CERTIFICATE iCaCert );
+BOOLEAN checkSCEPCACert( IN_HANDLE const CRYPT_CERTIFICATE iCaCert,
+						 IN_FLAGS( KEYMGMT ) const int options );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int processKeyFingerprint( INOUT SESSION_INFO *sessionInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \

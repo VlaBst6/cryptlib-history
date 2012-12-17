@@ -92,16 +92,17 @@ static const EXT_CHECK_INFO extCheckInfoTbl[] = {
 	  "truncated HMAC" },
 
 	/* OCSP status request, RFC 4366.  Another bounce-attack enabler, this 
-	   time on both the server and an OCSP responder:
+	   time on both the server and an OCSP responder.  Both the responder
+	   list and the extensions list may have length zero:
 
 		byte		statusType
-		uint16		ocspResponderList
+		uint16		ocspResponderList	-- May be length 0
 			uint16	responderLength
 			byte[]	responder
-			uint16	extensionLength
+		uint16	extensionLength			-- May be length 0
 			byte[]	extensions */
 	{ TLS_EXT_STATUS_REQUEST, 
-	  1 + UINT16_SIZE + UINT16_SIZE + MIN_URL_SIZE + UINT16_SIZE, CRYPT_ERROR, 8192, 
+	  1 + UINT16_SIZE + UINT16_SIZE, CRYPT_ERROR, 8192, 
 	  "OCSP status request" },
 
 	/* User mapping.  Used with a complex RFC 4680 mechanism (the extension 
@@ -591,8 +592,7 @@ static int processExtension( INOUT SESSION_INFO *sessionInfoPtr,
 				return( status );
 			if( listLen != extLength - UINT16_SIZE || \
 				listLen < 1 + UINT16_SIZE || \
-				listLen >= MAX_INTLENGTH_SHORT || \
-				( listLen % UINT16_SIZE ) != 0 )
+				listLen >= MAX_INTLENGTH_SHORT )
 				return( CRYPT_ERROR_BADDATA );
 
 			/* Parsing of further SEQUENCE OF SEQUENCE data omitted */
@@ -825,6 +825,12 @@ int readExtensions( INOUT SESSION_INFO *sessionInfoPtr,
 								   type, extLen, &extErrorInfoSet );
 		if( cryptStatusError( status ) )
 			{
+			if( isInternalError( status ) )
+				{
+				/* If it's an internal error then we can't rely on the value
+				   of the by-reference parameters */
+				return( status );
+				}
 			if( extErrorInfoSet )
 				return( status );
 			if( extCheckInfoPtr != NULL )
@@ -866,7 +872,12 @@ int readExtensions( INOUT SESSION_INFO *sessionInfoPtr,
    This gets a bit complicated because we both have to emit the values in
    preferred-algorithm order and some combinations aren't available, so 
    instead of simply iterating down two lists we have to exhaustively
-   enumerate each possible algorithm combination */
+   enumerate each possible algorithm combination.
+
+   We disallow SHA1 (except for DSA where it's needed due to the hardcoding
+   into the signature format) since the whole point of TLS 1.2 was to move 
+   away from it, and a poll on the ietf-tls list indicated that all known 
+   implementations (both of them) work fine with this configuration */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int writeSigHashAlgoList( STREAM *stream )
@@ -881,8 +892,10 @@ static int writeSigHashAlgoList( STREAM *stream )
 		  TLS_SIGALGO_RSA, 255 },
 		{ CRYPT_ALGO_RSA, CRYPT_ALGO_SHA2, 
 		  TLS_SIGALGO_RSA, TLS_HASHALGO_SHA2 },
+#if 0	/* 2/11/11 Disabled option for SHA1 after poll on ietf-tls list */
 		{ CRYPT_ALGO_RSA, CRYPT_ALGO_SHA1, 
 		  TLS_SIGALGO_RSA, TLS_HASHALGO_SHA1 },
+#endif /* 0 */
 		{ CRYPT_ALGO_DSA, CRYPT_ALGO_SHAng, 
 		  TLS_SIGALGO_DSA, 255 },
 		{ CRYPT_ALGO_DSA, CRYPT_ALGO_SHA2, 
@@ -897,8 +910,10 @@ static int writeSigHashAlgoList( STREAM *stream )
 #endif /* CONFIG_SUITEB */
 		{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 
 		  TLS_SIGALGO_ECDSA, TLS_HASHALGO_SHA2 },
+#if 0	/* 2/11/11 Disabled option for SHA1 after poll on ietf-tls list */
 		{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA1, 
 		  TLS_SIGALGO_ECDSA, TLS_HASHALGO_SHA1 },
+#endif /* 0 */
 		{ CRYPT_ALGO_NONE, CRYPT_ERROR }, { CRYPT_ALGO_NONE, CRYPT_ERROR }
 		};
 	BYTE algoList[ 32 + 8 ];
@@ -980,7 +995,10 @@ int writeClientExtensions( INOUT STREAM *stream,
 	{
 	STREAM nullStream;
 	const void *eccCurveInfoPtr = DUMMY_INIT_PTR;
-	int serverNameExtLen = DUMMY_INIT, sigHashHdrLen = 0, sigHashExtLen = 0;
+	const BOOLEAN hasServerName = \
+		( findSessionInfo( sessionInfoPtr->attributeList,
+						   CRYPT_SESSINFO_SERVER_NAME ) != NULL ) ? TRUE : FALSE;
+	int serverNameExtLen = 0, sigHashHdrLen = 0, sigHashExtLen = 0;
 	int eccCurveTypeLen = DUMMY_INIT, eccInfoLen = 0, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -989,14 +1007,18 @@ int writeClientExtensions( INOUT STREAM *stream,
 	REQUIRES( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS );
 
 	/* Determine the overall length of the extension data, first the server 
-	   name indication (SNI) */
-	sMemNullOpen( &nullStream );
-	status = writeServerName( &nullStream, sessionInfoPtr );
-	if( cryptStatusOK( status ) )
-		serverNameExtLen = stell( &nullStream );
-	sMemClose( &nullStream );
-	if( cryptStatusError( status ) )
-		return( status );
+	   name indication (SNI) if it's present (it may not be if we're using
+	   a raw network socket) */
+	if( hasServerName )
+		{
+		sMemNullOpen( &nullStream );
+		status = writeServerName( &nullStream, sessionInfoPtr );
+		if( cryptStatusOK( status ) )
+			serverNameExtLen = stell( &nullStream );
+		sMemClose( &nullStream );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Signature and hash algorithms.  These are only used with TLS 1.2+ so 
 	   we only write them if we're using these versions of the protocol */
@@ -1076,15 +1098,18 @@ int writeClientExtensions( INOUT STREAM *stream,
 	writeUint16( stream, UINT16_SIZE + UINT16_SIZE + serverNameExtLen + \
 						 RENEG_EXT_SIZE + sigHashHdrLen + sigHashExtLen + \
 						 eccInfoLen );
-	writeUint16( stream, TLS_EXT_SERVER_NAME );
-	writeUint16( stream, serverNameExtLen );
-	status = writeServerName( stream, sessionInfoPtr );
-	if( cryptStatusError( status ) )
-		return( status );
-	DEBUG_PRINT(( "Wrote extension server name indication (%d), length %d.\n",
-				  TLS_EXT_SERVER_NAME, serverNameExtLen ));
-	DEBUG_DUMP_STREAM( stream, stell( stream ) - serverNameExtLen, 
-					   serverNameExtLen );
+	if( hasServerName )
+		{
+		writeUint16( stream, TLS_EXT_SERVER_NAME );
+		writeUint16( stream, serverNameExtLen );
+		status = writeServerName( stream, sessionInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		DEBUG_PRINT(( "Wrote extension server name indication (%d), length %d.\n",
+					  TLS_EXT_SERVER_NAME, serverNameExtLen ));
+		DEBUG_DUMP_STREAM( stream, stell( stream ) - serverNameExtLen, 
+						   serverNameExtLen );
+		}
 	status = swrite( stream, RENEG_EXT_DATA, RENEG_EXT_SIZE );
 	if( cryptStatusError( status ) )
 		return( status );

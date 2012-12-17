@@ -174,29 +174,15 @@ static const ATTRIBUTE_ACL FAR_BSS subACL_AttributeCurrent[] = {
 	MKACL_END_SUBACL(), MKACL_END_SUBACL()
 	};
 static const ATTRIBUTE_ACL FAR_BSS subACL_AttributeCurrentInstance[] = {
-	/* Only certificates are complex enough to have instances of fields
-	   (the progression being certificate-extension -> GeneralName ->
-	   GeneralName-field), for all other object types this always returns 
-	   the basic field value since it represents multiple instantiations of 
-	   the same field */
+	/* Only certificates are complex enough to have instances of fields,
+	   the progression being certificate-extension -> GeneralName ->
+	   GeneralName-field */
 	MKACL_EX(	/* Certs */
 		CRYPT_ATTRIBUTE_CURRENT_INSTANCE, ATTRIBUTE_VALUE_NUMERIC,
 		ST_CERT_ANY, ST_NONE, ST_NONE, 
 		MKPERM( RWx_RWx ), 0,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE_SUBRANGES, allowedCertCursorSubrangesEx ),
-	MKACL_N(	/* Envelopes */
-		CRYPT_ATTRIBUTE_CURRENT_INSTANCE, 
-		ST_NONE, ST_ENV_DEENV, ST_NONE, 
-		MKPERM_ENVELOPE( RWx_RWx ), 
-		ROUTE( OBJECT_TYPE_ENVELOPE ),
-		RANGE( CRYPT_CURSOR_FIRST, CRYPT_CURSOR_LAST ) ),
-	MKACL_N(	/* Sessions */
-		CRYPT_ATTRIBUTE_CURRENT_INSTANCE, 
-		ST_NONE, ST_NONE, ST_SESS_SSH | ST_SESS_SSH_SVR, 
-		MKPERM_SESSIONS( RWx_RWx ), 
-		ROUTE( OBJECT_TYPE_SESSION ),
-		RANGE( CRYPT_CURSOR_FIRST, CRYPT_CURSOR_LAST ) ),
 	MKACL_END_SUBACL(), MKACL_END_SUBACL()
 	};
 
@@ -271,9 +257,9 @@ static const ATTRIBUTE_ACL FAR_BSS genericACL[] = {
 	MKACL_X(	/* Cursor mgt: Instance in attribute list */
 /* In = cursor components, out = component type */
 		CRYPT_ATTRIBUTE_CURRENT_INSTANCE,
-		ST_CERT_ANY, ST_ENV_DEENV, ST_SESS_SSH | ST_SESS_SSH_SVR, 
+		ST_CERT_ANY, ST_NONE, ST_NONE, 
 		MKPERM( RWx_RWx ),
-		ROUTE_ALT2( OBJECT_TYPE_CERTIFICATE, OBJECT_TYPE_ENVELOPE, OBJECT_TYPE_SESSION ),
+		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		subACL_AttributeCurrentInstance ),
 	MKACL_N(	/* Internal data buffer size */
 		CRYPT_ATTRIBUTE_BUFFERSIZE,
@@ -292,7 +278,6 @@ static const ATTRIBUTE_ACL FAR_BSS genericACL[] = {
 static const RANGE_SUBRANGE_TYPE FAR_BSS allowedEncrAlgoSubranges[] = {
 	{ CRYPT_ALGO_3DES, CRYPT_ALGO_3DES },		/* No DES */
 	{ CRYPT_ALGO_AES, CRYPT_ALGO_BLOWFISH },	/* No IDEA, CAST, RC2, RC4, RC5 */
-	{ CRYPT_ALGO_RESERVED2 + 1, CRYPT_ALGO_LAST_CONVENTIONAL },/* No ex-Skipjack */
 	{ CRYPT_ERROR, CRYPT_ERROR } 
 	};
 static const int FAR_BSS allowedLDAPObjectTypes[] = {
@@ -910,7 +895,7 @@ static const ATTRIBUTE_ACL FAR_BSS certificateACL[] = {
 	MKACL_S(	/* Serial number */
 		CRYPT_CERTINFO_SERIALNUMBER,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_ATTRCERT | ST_CERT_CRL | \
-					   ST_CERT_REQ_CERT, ST_NONE, ST_NONE, 
+					   ST_CERT_REQ_REV, ST_NONE, ST_NONE, 
 		MKPERM_CERTIFICATES( Rxx_Rxx ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE( 1, 32 ) ),
@@ -1266,31 +1251,31 @@ static const ATTRIBUTE_ACL FAR_BSS certExtensionACL[] = {
 	MKACL_B(	/* Extension present flag */
 		CRYPT_CERTINFO_IPADDRESSBLOCKS,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ) ),
 	MKACL_S(	/* addressFamily */
 		CRYPT_CERTINFO_IPADDRESSBLOCKS_ADDRESSFAMILY,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE( 2, 2 ) ),
 	MKACL_S(	/* ipAddress.addressPrefix */
 		/* See the comment in ext_def.c for the length range */
 		CRYPT_CERTINFO_IPADDRESSBLOCKS_PREFIX,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE( 3, 19 ) ),
 	MKACL_S(	/* ipAddress.addressRangeMin */
 		CRYPT_CERTINFO_IPADDRESSBLOCKS_MIN,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE( 3, 19 ) ),
 	MKACL_S(	/* ipAddress.addressRangeMax */
 		CRYPT_CERTINFO_IPADDRESSBLOCKS_MAX,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE( 3, 19 ) ),
 
@@ -1298,25 +1283,25 @@ static const ATTRIBUTE_ACL FAR_BSS certExtensionACL[] = {
 	MKACL_B(	/* Extension present flag */
 		CRYPT_CERTINFO_AUTONOMOUSSYSIDS,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ) ),
 	MKACL_N(	/* asNum.id */
 		/* See the comment in ext_def.c for the AS range */
 		CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_ID,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE( 1, 500000 ) ),
 	MKACL_N(	/* asNum.min */
 		CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_MIN,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE( 1, 500000 ) ),
 	MKACL_N(	/* asNum.max */
 		CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_MAX,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_PKIUSER, ST_NONE, ST_NONE, 
-		MKPERM_CERTIFICATES( Rxx_RxD ),
+		MKPERM_CERT_PKIX_PARTIAL( Rxx_RxD ),
 		ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		RANGE( 1, 500000 ) ),
 
@@ -3069,23 +3054,10 @@ static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoContentType[] = {
 #endif /* 0 */
 	MKACL_END_SUBACL(), MKACL_END_SUBACL()
 	};
-static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoDetachedSig[] = {
-	MKACL_B(	/* Envelope: Read/write */
-		CRYPT_ENVINFO_DETACHEDSIGNATURE,
-		ST_NONE, ST_ENV_ENV | ST_ENV_ENV_PGP, ST_NONE, 
-		MKPERM_ENVELOPE( Rxx_RWx ),
-		ROUTE( OBJECT_TYPE_ENVELOPE ) ),
-	MKACL_B(	/* Deenvelope: Read-only */
-		CRYPT_ENVINFO_DETACHEDSIGNATURE,
-		ST_NONE, ST_ENV_DEENV, ST_NONE, 
-		MKPERM_ENVELOPE( Rxx_xxx ),
-		ROUTE( OBJECT_TYPE_ENVELOPE ) ),
-	MKACL_END_SUBACL(), MKACL_END_SUBACL()
-	};
 static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoIntegrity[] = {
 	MKACL_N(	/* Envelope: Write-only */
 		CRYPT_ENVINFO_INTEGRITY,
-		ST_NONE, ST_ENV_ENV, ST_NONE, 
+		ST_NONE, ST_ENV_ENV | ST_ENV_ENV_PGP, ST_NONE, 
 		MKPERM_ENVELOPE( xxx_xWx ),
 		ROUTE( OBJECT_TYPE_ENVELOPE ), 
 		RANGE( CRYPT_INTEGRITY_NONE, CRYPT_INTEGRITY_FULL ) ),
@@ -3164,12 +3136,11 @@ static const ATTRIBUTE_ACL FAR_BSS envelopeACL[] = {
 		MKPERM_ENVELOPE( Rxx_RWx ),
 		ROUTE( OBJECT_TYPE_ENVELOPE ),
 		subACL_EnvinfoContentType ),
-	MKACL_X(	/* Detached signature */
+	MKACL_B(	/* Detached signature */
 		CRYPT_ENVINFO_DETACHEDSIGNATURE,
 		ST_NONE, ST_ENV_ANY, ST_NONE, 
 		MKPERM_ENVELOPE( Rxx_RWx ),
-		ROUTE( OBJECT_TYPE_ENVELOPE ),
-		subACL_EnvinfoDetachedSig ),
+		ROUTE( OBJECT_TYPE_ENVELOPE ) ),
 	MKACL_EX(	/* Signature check result */
 		/* This is a special case because an OK status is positive but an
 		   error status is negative, which spans two range types.  To handle
@@ -3182,7 +3153,7 @@ static const ATTRIBUTE_ACL FAR_BSS envelopeACL[] = {
 		RANGE_SUBRANGES, allowedSigResultSubranges ),
 	MKACL_X(	/* Integrity-protection level */
 		CRYPT_ENVINFO_INTEGRITY,
-		ST_NONE, ST_ENV_ENV | ST_ENV_DEENV, ST_NONE, 
+		ST_NONE, ST_ENV_ANY, ST_NONE, 
 		MKPERM_ENVELOPE( Rxx_xWx ),
 		ROUTE( OBJECT_TYPE_ENVELOPE ),
 		subACL_EnvinfoIntegrity ),
@@ -4327,10 +4298,12 @@ static BOOLEAN specialRangeConsistent( const ATTRIBUTE_ACL *attributeACL )
 						return( FALSE );
 					}
 				else
+					{
 					if( !( rangeVal->lowRange >= 0 && \
 						   rangeVal->highRange >= 0 ) || \
 						rangeVal->lowRange > rangeVal->highRange )
 						return( FALSE );
+					}
 				rangeVal++;
 				}
 			if( i >= 10 )

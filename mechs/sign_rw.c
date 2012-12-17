@@ -98,7 +98,7 @@ static int readX509Signature( INOUT STREAM *stream,
 	/* Read the signature/hash algorithm information followed by the start
 	   of the signature */
 	status = readAlgoIDex( stream, &queryInfo->cryptAlgo,
-						   &queryInfo->hashAlgo, &queryInfo->hashParam, 
+						   &queryInfo->hashAlgo, &queryInfo->hashAlgoParam, 
 						   ALGOID_CLASS_PKCSIG );
 	if( cryptStatusOK( status ) )
 		{
@@ -184,7 +184,8 @@ static int readCmsSignature( INOUT STREAM *stream,
 	queryInfo->iAndSStart = stell( stream ) - startPos;
 	queryInfo->iAndSLength = length;
 	sSkip( stream, length );
-	status = readAlgoID( stream, &queryInfo->hashAlgo, ALGOID_CLASS_HASH );
+	status = readAlgoIDex( stream, &queryInfo->hashAlgo, NULL, 
+						   &queryInfo->hashAlgoParam, ALGOID_CLASS_HASH );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -295,7 +296,8 @@ static int readCryptlibSignature( INOUT STREAM *stream,
 	/* Read the key ID and hash algorithm identifier */
 	readOctetStringTag( stream, queryInfo->keyID, &queryInfo->keyIDlength,
 						8, CRYPT_MAX_HASHSIZE, CTAG_SI_SKI );
-	status = readAlgoID( stream, &queryInfo->hashAlgo, ALGOID_CLASS_HASH );
+	status = readAlgoIDex( stream, &queryInfo->hashAlgo, NULL,
+						   &queryInfo->hashAlgoParam, ALGOID_CLASS_HASH );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -433,7 +435,7 @@ static int readSignatureSubpackets( INOUT STREAM *stream,
 									INOUT QUERY_INFO *queryInfo,
 									IN_LENGTH_SHORT const int length, 
 									IN_LENGTH const int startPos,
-									const BOOLEAN isAuthenticated )
+									STDC_UNUSED const BOOLEAN isAuthenticated )
 	{
 	const int endPos = stell( stream ) + length;
 	int iterationCount;
@@ -1024,7 +1026,9 @@ static int readTls12Signature( INOUT STREAM *stream,
 	static const MAP_TABLE hashAlgoIDTbl[] = {
 		{ 1, CRYPT_ALGO_MD5 },
 		{ 2, CRYPT_ALGO_SHA1 },
-		{ 4, CRYPT_ALGO_SHA2 },
+		{ 4, CRYPT_ALGO_SHA2 },	/* SHA2-256 */
+		{ 5, CRYPT_ALGO_SHA2 },	/* SHA2-384 */
+		{ 6, CRYPT_ALGO_SHA2 },	/* SHA2-512 */
 		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 		};
 	static const MAP_TABLE sigAlgoIDTbl[] = {
@@ -1034,7 +1038,7 @@ static int readTls12Signature( INOUT STREAM *stream,
 		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 		};
 	const int startPos = stell( stream );
-	int hashAlgoID, hashParam = 0, sigAlgoID, value, length, status;
+	int hashAlgoID, sigAlgoID, value, length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
@@ -1052,21 +1056,32 @@ static int readTls12Signature( INOUT STREAM *stream,
 	status = mapValue( hashAlgoID, &value, hashAlgoIDTbl, 
 					   FAILSAFE_ARRAYSIZE( hashAlgoIDTbl, MAP_TABLE ) );
 	if( cryptStatusError( status ) )
-		{
-#ifdef USE_SHA2_EXT
-		if( hashAlgoID == 5 )
-			{
-			/* If we get an indication for SHA-384, report it as the generic
-			   SHA2 with the SHA-384 output size as the algorithm parameter */
-			value = CRYPT_ALGO_SHA2;
-			hashParam = bitsToBytes( 384 );
-			}
-		else
-#endif /* USE_SHA2_EXT */
 		return( status );
-		} 
 	queryInfo->hashAlgo = value;	/* int vs.enum */
-	queryInfo->hashParam = hashParam;
+	if( isHashExtAlgo( value ) )
+		{
+		/* If it's a parameterised algorithm then we have to return extra
+		   information to indicate the sub-algorithm type */
+		switch( hashAlgoID )
+			{
+			case 4:
+				queryInfo->hashAlgoParam = bitsToBytes( 256 );
+				break;
+
+#ifdef USE_SHA2_EXT
+			case 5:
+				queryInfo->hashAlgoParam = bitsToBytes( 384 );
+				break;
+
+			case 6:
+				queryInfo->hashAlgoParam = bitsToBytes( 512 );
+				break;
+#endif /* USE_SHA2_EXT */
+
+			default:
+				return( CRYPT_ERROR_BADDATA );
+			}
+		} 
 	status = mapValue( sigAlgoID, &value, sigAlgoIDTbl, 
 					   FAILSAFE_ARRAYSIZE( sigAlgoIDTbl, MAP_TABLE ) );
 	if( cryptStatusError( status ) )

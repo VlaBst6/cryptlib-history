@@ -297,17 +297,16 @@ int readEncodedOID( INOUT STREAM *stream,
 		( int ) sizeofObject( ( valueLength ) + \
 							  ( ( *( BYTE * )( value ) & 0x80 ) ? 1 : 0 ) )
 
-RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readIntegerTag( INOUT STREAM *stream, 
-					OUT_BUFFER_OPT( integerMaxLength, *integerLength ) \
-					BYTE *integer, 
+					OUT_BUFFER_OPT( integerMaxLength, \
+									*integerLength ) BYTE *integer, 
 					IN_LENGTH_SHORT const int integerMaxLength, 
 					OUT_OPT_LENGTH_SHORT_Z int *integerLength, 
 					IN_TAG_EXT const int tag );
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int writeInteger( INOUT STREAM *stream, 
-				  IN_BUFFER( integerLength ) \
-				  const BYTE *integer, 
+				  IN_BUFFER( integerLength ) const BYTE *integer, 
 				  IN_LENGTH_SHORT const int integerLength, 
 				  IN_TAG const int tag );
 
@@ -330,9 +329,10 @@ int readBignumTag( INOUT STREAM *stream, INOUT void *bignum,
 				   IN_LENGTH_PKC const int maxLength, 
 				   IN_OPT const void *maxRange, 
 				   IN_TAG_EXT const int tag );
-int writeBignumTag( INOUT STREAM *stream, const void *bignum, 
-					const int tag ) \
-					STDC_NONNULL_ARG( ( 1, 2 ) );
+RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writeBignumTag( INOUT STREAM *stream, 
+					IN const void *bignum, 
+					IN_TAG const int tag );
 
 #define readBignum( stream, bignum, minLen, maxLen, maxRange ) \
 		readBignumTag( stream, bignum, minLen, maxLen, maxRange, DEFAULT_TAG )

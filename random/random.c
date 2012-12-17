@@ -59,11 +59,12 @@
 #if !( defined( __BEOS__ ) || defined( __ECOS__ ) || \
 	   defined( __IBM4758__ ) || defined( __MAC__ ) || \
 	   defined( __MSDOS__ ) || defined( __MVS__ ) || \
-	   defined( __OS2__ ) || defined( __PALMOS__ ) || \
-	   defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
-	   defined( __UNIX__ ) || defined( __VMCMS__ ) || \
-	   defined( __WIN16__ ) || defined( __WIN32__ ) || \
-	   defined( __WINCE__ ) || defined( __XMK__ ) )
+	   defined( __Nucleus__ ) || defined( __OS2__ ) || \
+	   defined( __PALMOS__ ) || defined( __TANDEM_NSK__ ) || \
+	   defined( __TANDEM_OSS__ ) || defined( __UNIX__ ) || \
+	   defined( __VMCMS__ ) || defined( __WIN16__ ) || \
+	   defined( __WIN32__ ) || defined( __WINCE__ ) || \
+	   defined( __XMK__ ) )
   #error You need to create OS-specific randomness-gathering functions in random/<os-name>.c
 #endif /* Various OS-specific defines */
 

@@ -125,11 +125,19 @@
 	#define DES_UNROLL
 	#define RC4_INDEX
   #elif defined( __arm ) || defined( __arm__ )
-	#define L_ENDIAN
+	#ifdef DATA_BIGENDIAN
+	  #define B_ENDIAN
+	#else
+	  #define L_ENDIAN
+	#endif	/* Usually little-endian but may be big-endian */
 	#define BN_LLONG
 	#define DES_RISC1
   #elif defined( __mips__ )
-	#define L_ENDIAN
+	#ifdef DATA_BIGENDIAN
+	  #define B_ENDIAN
+	#else
+	  #define L_ENDIAN
+	#endif	/* Usually little-endian but may be big-endian */
 	#define BN_LLONG
 	#define BF_PTR
 	#define DES_RISC2
@@ -139,7 +147,11 @@
 	#define RC4_CHAR
 	#define RC4_CHUNK
   #elif defined( __ppc__ ) || defined( __powerpc__ )
-	#define B_ENDIAN
+	#ifdef DATA_LITTLEENDIAN
+	  #define L_ENDIAN
+	#else
+	  #define B_ENDIAN
+	#endif	/* Usually big-endian but may be little-endian */
 	#define BN_LLONG
 	#define BF_PTR
 	#define DES_RISC1
@@ -160,6 +172,29 @@
 	#define BN_LLONG
 	#define BF_PTR
 	#define DES_UNROLL
+	#define RC4_CHAR
+	#define RC4_CHUNK
+  #elif defined( __sh__ )
+	/* Super-H has defines for subtypes, __sh1__ to __sh3__ and then 
+	   __SH3__ to __SH5__, but we treat them all as the same general 
+	   architecture.
+	   
+	   There isn't any official config for Super-H (specifically SH4), the 
+	   following is the config for MIPS which seems to work OK (the only
+	   one that really matters is BN_LLONG which is generic for any 32-bit
+	   CPU, Blowfish and RC4 are disabled by default and 3DES isn't used
+	   much any more */
+	#ifdef DATA_BIGENDIAN
+	  #define B_ENDIAN
+	#else
+	  #define L_ENDIAN
+	#endif	/* Usually little-endian but may be big-endian */
+	#define BN_LLONG
+	#define BF_PTR
+	#define DES_RISC2
+	#define DES_PTR
+	#define DES_UNROLL
+	#define RC4_INDEX
 	#define RC4_CHAR
 	#define RC4_CHUNK
   #else
@@ -252,20 +287,30 @@
   #define RC4_CHUNK
 #endif /* Mac */
 
-/* Darwin PPC / Mac OS X */
+/* Mac OS X / iOS */
 #if defined( __APPLE__ ) && !defined( __MAC__ )
-  #if defined( __ppc__ )
+  #include <TargetConditionals.h>
+  #if defined( TARGET_OS_IPHONE ) || defined( TARGET_IPHONE_SIMULATOR )
+	#define L_ENDIAN
+	#define BN_LLONG
+	#define DES_RISC1
+  #elif defined( __ppc__ )
 	#define B_ENDIAN
+	#define BN_LLONG
+	#define BF_PTR
+	#define DES_RISC1
+	#define DES_UNROLL
+	#define RC4_CHAR
+	#define RC4_CHUNK
   #else
 	#define L_ENDIAN
-  #endif
-  #define BN_LLONG
-  #define BF_PTR
-  #define DES_RISC1
-  #define DES_UNROLL
-  #define RC4_CHAR
-  #define RC4_CHUNK
-#endif /* Mac OS X */
+	#define BN_LLONG
+	#define DES_PTR
+	#define DES_RISC1
+	#define DES_UNROLL
+	#define RC4_INDEX
+  #endif /* Mac OS variants */
+#endif /* Mac OS X / iOS */
 
 /* MSDOS */
 #ifdef __MSDOS__
@@ -293,6 +338,17 @@
   #define DES_UNROLL
   #define RC4_INDEX
 #endif /* UNIX_SV */
+
+/* Nucleus */
+#if defined( __Nucleus__ )
+  #ifdef DATA_BIGENDIAN
+	#define B_ENDIAN
+  #else
+	#define L_ENDIAN
+  #endif /* Big vs.little-endian */
+  #define BN_LLONG
+  #define DES_RISC1
+#endif /* __Nucleus__ */
 
 /* Palm OS: ARM */
 #if defined( __PALMSOURCE__ )
@@ -543,7 +599,11 @@
 	  #define B_ENDIAN
 	  /* Not sure what other options the MicroBlaze build should enable... */
 	#elif defined( __ppc__ )
-	  #define B_ENDIAN
+	  #ifdef DATA_LITTLEENDIAN
+		#define L_ENDIAN
+	  #else
+		#define B_ENDIAN
+	  #endif	/* Usually big-endian but may be little-endian */
 	  #define BN_LLONG
 	  #define BF_PTR
 	  #define DES_RISC1
@@ -563,7 +623,11 @@
 	#define DES_UNROLL
 	#define RC4_INDEX
   #elif defined( __ppc__ ) || defined( __powerpc__ )
-	#define B_ENDIAN
+	#ifdef DATA_LITTLEENDIAN
+	  #define L_ENDIAN
+	#else
+	  #define B_ENDIAN
+	#endif	/* Usually big-endian but may be little-endian */
 	#define BN_LLONG
 	#define BF_PTR
 	#define DES_RISC1
@@ -600,8 +664,11 @@
    section for the exception for Crays */
 
 #if !defined( _CRAY ) && !defined( L_ENDIAN ) && !defined( B_ENDIAN )
-  #error You need to add system-specific configuration settings to osconfig.h
+  #error You need to add system-specific configuration settings to osconfig.h.
 #endif /* Endianness not defined */
+#if defined( L_ENDIAN ) && defined( B_ENDIAN )
+  #error Incorrect endianness detection in osconfig.h, both L_ENDIAN and B_ENDIAN are defined.
+#endif /* Endianness defined erratically */
 #if defined( CHECK_ENDIANNESS ) && !defined( OSX_UNIVERSAL_BINARY )
   /* One-off check in des_enc.c, however for OS X universal (fat) binaries
 	 we're effectively cross-compiling for multiple targets so we don't
@@ -612,10 +679,20 @@
 	   settings in crypt.h, however for this one-off check it isn't a 
 	   problem so we fake out the include-order check in config.h */
   #include "crypt.h"
-  #if ( defined( L_ENDIAN ) && !defined( DATA_LITTLEENDIAN ) ) || \
-	  ( defined( B_ENDIAN ) && !defined( DATA_BIGENDIAN ) )
-	#error You need to synchronise the endianness configuration settings in osconfig.h and crypt.h
-  #endif /* Endianness conflict */
+  #if defined( DATA_LITTLEENDIAN ) && defined( DATA_BIGENDIAN )
+	#error Incorrect endianness detection in crypt.h, 
+	#error both DATA_LITTLEENDIAN and DATA_BIGENDIAN are defined.
+  #endif /* Global endianness defined erratically */
+  #if ( defined( L_ENDIAN ) && !defined( DATA_LITTLEENDIAN ) )
+	#error You need to synchronise the endianness configuration settings 
+	#error in osconfig.h and crypt.h.  The cryptlib config is set to 
+	#error DATA_BIGENDIAN but osconfig.h has detected L_ENDIAN.
+  #endif /* L_ENDIAN && !DATA_LITTLEENDIAN */
+  #if ( defined( B_ENDIAN ) && !defined( DATA_BIGENDIAN ) )
+	#error You need to synchronise the endianness configuration settings 
+	#error in osconfig.h and crypt.h.  The cryptlib config is set to 
+	#error DATA_LITTLEENDIAN but osconfig.h has detected B_ENDIAN.
+  #endif /* B_ENDIAN && !DATA_BIGENDIAN */
 #endif /* One-off check */
 
 #endif /* _OSCONFIG_DEFINED */

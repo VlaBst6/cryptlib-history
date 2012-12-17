@@ -233,7 +233,7 @@ time_t getTokenTime( const CK_TOKEN_INFO *tokenInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 const PKCS11_MECHANISM_INFO *getMechanismInfoConv( OUT_LENGTH_SHORT int *mechanismInfoSize );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int genericEndFunction( const CONTEXT_INFO *contextInfoPtr );
+int genericEndFunction( INOUT CONTEXT_INFO *contextInfoPtr );
 
 /* Prototypes for functions in pkcs11_init.c */
 
@@ -251,6 +251,11 @@ const PKCS11_MECHANISM_INFO *getMechanismInfoPKC( OUT int *mechanismInfoSize ) \
 
 /* Prototypes for functions in pkcs11_rd/wr.c */
 
+CHECK_RETVAL_RANGE( ACTION_PERM_FLAG_NONE, ACTION_PERM_FLAG_MAX ) STDC_NONNULL_ARG( ( 1 ) ) \
+int getActionFlags( INOUT PKCS11_INFO *pkcs11Info,
+					const CK_OBJECT_HANDLE hObject,
+					IN_ENUM( KEYMGMT_ITEM ) const KEYMGMT_ITEM_TYPE itemType,
+					IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int addIAndSToTemplate( INOUT_ARRAY_C( 2 ) CK_ATTRIBUTE *certTemplate, 
 						IN_BUFFER( iAndSLength ) const void *iAndSPtr, 

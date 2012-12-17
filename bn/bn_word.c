@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,7 +49,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
@@ -57,7 +57,7 @@
  */
 
 #include <stdio.h>
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "bn_lcl.h"
 #else
   #include "bn/bn_lcl.h"
@@ -71,6 +71,9 @@ BN_ULONG BN_mod_word(const BIGNUM *a, BN_ULONG w)
 	BN_ULLONG ret=0;
 #endif
 	int i;
+
+	if (w == 0)
+		return (BN_ULONG)-1;
 
 	bn_check_top(a);
 	w&=BN_MASK2;
@@ -97,7 +100,7 @@ BN_ULONG BN_div_word(BIGNUM *a, BN_ULONG w)
 
 	if (!w)
 		/* actually this an error (division by zero) */
-		return 0;
+		return (BN_ULONG)-1;
 	if (a->top == 0)
 		return 0;
 
@@ -105,12 +108,12 @@ BN_ULONG BN_div_word(BIGNUM *a, BN_ULONG w)
 	j = BN_BITS2 - BN_num_bits_word(w);
 	w <<= j;
 	if (!BN_lshift(a, a, j))
-		return 0;
+		return (BN_ULONG)-1;
 
 	for (i=a->top-1; i>=0; i--)
 		{
 		BN_ULONG l,d;
-
+		
 		l=a->d[i];
 		d=bn_div_words(ret,l,w);
 		ret=(l-((d*w)&BN_MASK2))&BN_MASK2;
@@ -178,7 +181,13 @@ int BN_sub_word(BIGNUM *a, BN_ULONG w)
 	/* degenerate case: w is zero */
 	if (!w) return 1;
 	/* degenerate case: a is zero */
-	if(BN_is_zero(a)) return BN_set_word(a,w);
+	if(BN_is_zero(a))
+		{
+		i = BN_set_word(a,w);
+		if (i != 0)
+			BN_set_negative(a, 1);
+		return i;
+		}
 	/* handle 'a' when negative */
 	if (a->neg)
 		{

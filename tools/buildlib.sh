@@ -12,6 +12,10 @@ if [ "$2" = "" ] ; then
 	exit 1 ;
 fi
 if [ "$3" = "" ] ; then
+	echo "$0: Missing 'ar' command name." >&2 ;
+	exit 1 ;
+fi
+if [ "$4" = "" ] ; then
 	echo "$0: Missing object filenames." >&2 ;
 	exit 1 ;
 fi
@@ -20,6 +24,8 @@ fi
 
 OSNAME=$1
 LIBNAME=$2
+AR=$3
+shift
 shift
 shift
 
@@ -34,17 +40,17 @@ shift
 
 case $OSNAME in
 	'AIX'|'HP-UX'|'Linux'|'OSF1'|'UNIX_SV')
-		ar rcs $LIBNAME $* ;;
+		$AR rcs $LIBNAME $* ;;
 
 	'Atmel')
 		echo "Need to set up Atmel link command" ;;
 
 	'BSD/OS'|'FreeBSD'|'iBSD'|'NetBSD'|'OpenBSD')
-		ar rc $LIBNAME $* ;
+		$AR rc $LIBNAME $* ;
 		ranlib $LIBNAME ;;
 
 	'CRAY')
-		ar -rc $LIBNAME $* ;;
+		$AR -rc $LIBNAME $* ;;
 
 	'PalmOS')
 		palib -add $LIBNAME $* ;
@@ -56,20 +62,20 @@ case $OSNAME in
 		arm-palmos-ranlib $LIBNAME ;;
 
 	'QNX')
-		ar rc $LIBNAME $* ;;
+		$AR rc $LIBNAME $* ;;
 
 	'SunOS')
 		if [ `which ar | grep -c "no ar"` = '1' ] ; then
 			/usr/ccs/bin/ar rcs $LIBNAME $* ;
 		else
-			ar rcs $LIBNAME $* ;
+			$AR rcs $LIBNAME $* ;
 		fi ;;
 
 	'ucLinux')
 		echo "Need to set up ucLinux link command" ;;
 
 	*)
-		ar rcs $LIBNAME $* || \
-		( ar rc $LIBNAME $* && ranlib $LIBNAME )
+		$AR rcs $LIBNAME $* || \
+		( $AR rc $LIBNAME $* && ranlib $LIBNAME )
 
 esac

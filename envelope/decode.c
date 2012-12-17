@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Datagram Decoding Routines					*
-*						Copyright Peter Gutmann 1996-2009					*
+*						Copyright Peter Gutmann 1996-2011					*
 *																			*
 ****************************************************************************/
 
@@ -139,6 +139,20 @@ static int processDataEnd( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	envelopeInfoPtr->dataFlags |= ENVDATA_ENDOFCONTENTS;
 	envelopeInfoPtr->dataLeft = envelopeInfoPtr->bufPos;
 
+	/* If this is PGP data and there's an MDC packet tacked onto the end of 
+	   the payload, record the fact that it's non-payload data 
+	   (processPgpSegment() has ensured that there's enough data present to 
+	   contain a full MDC packet) */
+#ifdef USE_PGP
+	if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP && \
+		( envelopeInfoPtr->dataFlags & ENVDATA_HASATTACHEDOOB ) )
+		{
+		envelopeInfoPtr->dataLeft -= PGP_MDC_PACKET_SIZE;
+		ENSURES( envelopeInfoPtr->dataLeft > 0 && \
+				 envelopeInfoPtr->dataLeft < MAX_INTLENGTH );
+		}
+#endif /* USE_PGP */
+
 	ENSURES( sanityCheck( envelopeInfoPtr ) );
 
 	return( CRYPT_OK );
@@ -220,29 +234,26 @@ static int processPgpSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		return( status );
 		}
 
-	/* We've read a length that doesn't use the indefinite-length encoding 
-	   so it's the last data segment, shift from indefinite to definite-
-	   length mode */
-#if 0	/* 2/04/08 It's not really a NOSEGMENT it's just a short definite-
-				   length segment */
-	envelopeInfoPtr->dataFlags |= ENVDATA_NOSEGMENT;
-#endif /* 0 */
+	/* If it's a terminating zero-length segment, wrap up the processing.
+	   Unlike CMS, PGP can add other odds and ends at this point so we don't 
+	   exit yet but fall through to the code that follows */
 	if( *segmentLength <= 0 )
 		{
-		/* It's a terminating zero-length segment, wrap up the processing.
-		   Unlike CMS, PGP can add other odds and ends at this point so we
-		   don't exit yet but fall through to the code that follows */
 		status = processDataEnd( envelopeInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 
-	/* If this is a packet with an MDC packet tacked on, adjust the data 
-	   length for the length of the MDC packet */
+#if 0	/* 28/12/11 This should be adjusted later since we still need to 
+					process the encrypted MDC data even if it's not part of 
+					the payload */
+	/* We've now reached the last segment, if this is a packet with an MDC 
+	   packet tacked on, adjust the data length to account for the length of 
+	   the MDC packet */
 	if( envelopeInfoPtr->dataFlags & ENVDATA_HASATTACHEDOOB )
 		{
 		/* If the MDC data is larger than the length of the last segment, 
-		   adjust its effefctive size to zero.  This is rather problematic 
+		   adjust its effective size to zero.  This is rather problematic 
 		   in that if the sender chooses to break the MDC packet across the 
 		   partial-header boundary it'll include some of the MDC data with 
 		   the payload, but there's no easy solution to this, the problem 
@@ -260,6 +271,42 @@ static int processPgpSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			*segmentLength = 0;
 			}
 		}
+#else
+	/* We've now reached the last segment, if this is a packet with an MDC 
+	   packet tacked on and the MDC data is larger than the length of the 
+	   last segment, adjust its effective size to zero and pretend that it's 
+	   not there since we can't process it and trying to do so would only 
+	   give a false-positive error.
+	   
+	   This is rather problematic in that if the sender chooses to break the 
+	   MDC packet across the partial-header boundary it'll include some of 
+	   the MDC data with the payload, but there's no easy solution to this, 
+	   the problem lies in the PGP spec for allowing a length encoding form 
+	   that makes one-pass processing impossible.  Hopefully implementations 
+	   will realise this and never break the MDC data over a partial-length 
+	   header.
+	   
+	   What's worse though is that with this strategy an attacker can force 
+	   us to skip processing the MDC by rewriting (with some effort because 
+	   of PGP's weird power-of-two segment length constraints) the packet 
+	   segments so that the MDC is always split across packets.  The "cure" 
+	   to this is probably far worse than the disease since it would require 
+	   buffering the last PGP_MDC_PACKET_SIZE - 1 bytes until we're sure 
+	   that the next packet isn't an EOC so that we still need the previous 
+	   lot of decrypted data.  This would lead to severe usability problems 
+	   because the user can never be allowed to extract the last 
+	   PGP_MDC_PACKET_SIZE - 1 bytes of data that they've pushed, all for a 
+	   capability that they don't even know exists */
+	if( ( envelopeInfoPtr->dataFlags & ENVDATA_HASATTACHEDOOB ) && \
+		*segmentLength < PGP_MDC_PACKET_SIZE )
+		{
+		DEBUG_DIAG(( "MDC data was broken over a partial-length segment" ));
+		assert( DEBUG_WARN );
+
+		envelopeInfoPtr->dataFlags &= ~ENVDATA_HASATTACHEDOOB;
+		*segmentLength = 0;
+		}
+#endif /* 0 */
 
 	/* Convert the last segment into a definite-length segment.  When we 
 	   return from this the calling code will immediately call 
@@ -323,6 +370,22 @@ static int getNextSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		return( OK_SPECIAL );
 		}
 
+	/* If the payload data is segmented but the first segment doesn't have 
+	   an explicit length then the length of the first segment is defined 
+	   as "whatever's left".  This is used to handle PGP's odd indefinite-
+	   length encoding, for which the initial length has already been read 
+	   when the packet header was read */
+	if( envelopeInfoPtr->dataFlags & ENVDATA_NOFIRSTSEGMENT )
+		{
+		REQUIRES( envelopeInfoPtr->type == CRYPT_FORMAT_PGP );
+
+		envelopeInfoPtr->dataFlags &= ~ENVDATA_NOFIRSTSEGMENT;
+		envelopeInfoPtr->segmentSize = envelopeInfoPtr->payloadSize;
+		envelopeInfoPtr->payloadSize = CRYPT_UNUSED;
+		*segmentStatus = SEGMENT_FIXEDLENGTH;
+		return( OK_SPECIAL );
+		}
+
 	/* If we're using the definite encoding form there's a single segment 
 	   equal in length to the entire payload */
 	if( envelopeInfoPtr->payloadSize != CRYPT_UNUSED )
@@ -333,19 +396,20 @@ static int getNextSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		}
 
 	/* If we're using the indefinite form but it's an envelope type that
-	   doesn't segment data the length is implicitly defined as "until we 
-	   run out of input".  This odd situation is encountered in some cases
-	   when working with PGP data such as compressed data for which there's
-	   no length stored or when we're synchronising the envelope data prior 
-	   to processing and there are abitrary further packets (typically PGP 
+	   doesn't segment data then the length is implicitly defined as "until 
+	   we run out of input".  This odd situation is encountered for PGP
+	   envelopes when working with compressed data for which there's no 
+	   length stored or when we're synchronising the envelope data prior to 
+	   processing and there are abitrary further packets (typically PGP 
 	   signature packets, where we want to process the packets in a 
-	   connected series rather than stopping at the end of the first packet
+	   connected series rather than stopping at the end of the first packet 
 	   in the series) following the current one.  In both cases we don't 
-	   know the overall length because we'd need to be able to look ahead
-	   an arbitrary distance in the stream to figure out where the 
-	   compressed data or any further packets end */
+	   know the overall length because we'd need to be able to look ahead an 
+	   arbitrary distance in the stream to figure out where the compressed 
+	   data or any further packets end */
 	if( envelopeInfoPtr->dataFlags & ENVDATA_NOLENGTHINFO )
 		{
+		REQUIRES( envelopeInfoPtr->type == CRYPT_FORMAT_PGP );
 		REQUIRES( envelopeInfoPtr->segmentSize <= 0 );
 
 		*segmentStatus = SEGMENT_FIXEDLENGTH;
@@ -358,8 +422,8 @@ static int getNextSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   a PGP envelope a partial header is a single byte, for a PKCS #7/CMS 
 	   envelope it's two bytes (tag + length) but most segments will be 
 	   longer than 256 bytes, requiring at least three bytes of tag + length 
-	   data.  A reasonable tradeoff seems to be to require three bytes 
-	   before trying to decode the length */
+	   data.  A reasonable tradeoff is to require three bytes before trying 
+	   to decode the length */
 	if( length < 3 )
 		{
 		*segmentStatus = SEGMENT_INSUFFICIENTDATA;
@@ -667,8 +731,8 @@ static int copyData( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		bytesToCopy = bytesLeft;
 	ENSURES( bytesToCopy > 0 && bytesToCopy <= length );
 
-	/* If its a block encryption mode we need to provide special handling for
-	   odd data lengths that don't match the block size */
+	/* If its a block encryption mode then we need to provide special 
+	   handling for odd data lengths that don't match the block size */
 	if( envelopeInfoPtr->blockSize > 1 )
 		{
 		return( copyEncryptedDataBlocks( envelopeInfoPtr, buffer,
@@ -683,8 +747,9 @@ static int copyData( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		{
 		if( envelopeInfoPtr->dataFlags & ENVDATA_AUTHENCACTIONSACTIVE )
 			{
-			/* We're performing authenticated encryotion, hash the 
-			   ciphertext before decrypting it */
+			/* We're performing authenticated encryption, MAC the 
+			   ciphertext before decrypting it (this is the technique that's 
+			   used for CMS data) */
 			status = hashEnvelopeData( envelopeInfoPtr->actionList, bufPtr,
 									   bytesToCopy );
 			if( cryptStatusError( status ) )
@@ -695,13 +760,47 @@ static int copyData( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 								  bytesToCopy );
 		if( cryptStatusError( status ) )
 			return( status );
+		if( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE )
+			{
+			int bytesToHash = bytesToCopy;
+
+			/* We're performing integrity-protected encryption, hash the 
+			   plaintext after decrypting it (this is the technique that's
+			   used for PGP data).
+
+			   PGP complicates things further by optionally tacking an
+			   MDC packet onto the end of the data payload, which is 
+			   encrypted but not hashed.  To handle this, if there's an
+			   MDC packet present and we've reached the end of the payload 
+			   data then we have to adjust the amount of data that gets 
+			   hashed.  Using the length check to detect EOF is safe even
+			   in the presence of indefinite-length data because 
+			   processPgpSegment() converts the last segment of indefinite-
+			   length data into a definite-length one (so payloadSize != 
+			   CRYPT_UNUSED), and also ensures that there's enough data 
+			   present to contain a full MDC packet */
+			if( ( envelopeInfoPtr->dataFlags & ENVDATA_HASATTACHEDOOB ) && \
+				envelopeInfoPtr->payloadSize != CRYPT_UNUSED && \
+				bytesToCopy >= envelopeInfoPtr->segmentSize )
+				{
+				bytesToHash -= PGP_MDC_PACKET_SIZE;
+				ENSURES( bytesToHash > 0 && bytesToHash < MAX_INTLENGTH );
+				}
+			status = hashEnvelopeData( envelopeInfoPtr->actionList, bufPtr,
+									   bytesToHash );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
 		}
 	envelopeInfoPtr->bufPos += bytesToCopy;
 	if( !( envelopeInfoPtr->dataFlags & ENVDATA_NOLENGTHINFO ) )
 		envelopeInfoPtr->segmentSize -= bytesToCopy;
 
 	/* If the payload has a definite length and we've reached its end, set
-	   the EOC flag to make sure that we don't go any further */
+	   the EOC flag to make sure that we don't go any further (this also
+	   handles PGP's form of indefinite-length encoding in which each 
+	   segment except the last is indefinite-length and the last one is a
+	   standard definite-length segment) */
 	if( envelopeInfoPtr->payloadSize != CRYPT_UNUSED && \
 		envelopeInfoPtr->segmentSize <= 0 )
 		{
@@ -742,7 +841,7 @@ static int copyToDeenvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* If we're verifying a detached signature, just hash the data and exit.
 	   We don't have to check whether hashing is active or not because it'll
-	   always be active for detached data sicne this is the only thing 
+	   always be active for detached data since this is the only thing 
 	   that's done with it */
 	if( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG )
 		{
@@ -1106,10 +1205,24 @@ static int copyFromDeenvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		   end-of-contents yet and there's no data waiting in the block
 		   buffer (which would mean that there's more data to come), we
 		   can't copy out the last block because it might contain padding,
-		   so we decrease the effective data amount by one block's worth */
+		   so we decrease the effective data amount by one block's worth.
+
+		   Note that this overestimates the amount to retain by up to 
+		   blockSize bytes since we really need to count from the start 
+		   rather than the end of the data.  That is, if the caller pushes 
+		   in blockSize + 1 bytes then we could pop up to blockSize bytes 
+		   since the caller has to push at least blockSize - 1 further bytes 
+		   to complete the next block.  The current strategy of always 
+		   reserving a full block only allows 1 byte to be popped. 
+
+		   Keeping track of how many complete blocks have been processed 
+		   just to handle this obscure corner case really isn't worth it, 
+		   due to a coding bug this check was performed incorrectly and it 
+		   took nine years before anyone triggered it so it's not worth 
+		   adding additional handling for this situation */
 		if( envelopeInfoPtr->blockSize > 1 && \
 			!( envelopeInfoPtr->dataFlags & ENVDATA_ENDOFCONTENTS ) && \
-			envelopeInfoPtr->blockBufferPos > 0 )
+			envelopeInfoPtr->blockBufferPos <= 0 )
 			bytesToCopy -= envelopeInfoPtr->blockSize;
 
 		/* If we've ended up with nothing to copy (e.g. due to blocking
@@ -1141,8 +1254,13 @@ static int copyFromDeenvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			return( CRYPT_OK );
 			}
 
-		/* Hash the payload data if necessary */
-		if( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE )
+		/* Hash the payload data if necessary.  This is used for signed/
+		   authenticated-data hashing, PGP also hashes the payload for 
+		   encrypted data when it's generating an MDC but that needs to be 
+		   done as part of the decryption due to special-case processing 
+		   requirements */
+		if( ( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE ) && \
+			envelopeInfoPtr->usage != ACTION_CRYPT )
 			{
 			status = hashEnvelopeData( envelopeInfoPtr->actionList,
 									   envelopeInfoPtr->buffer, 

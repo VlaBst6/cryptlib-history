@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Internal STREAM Header File							*
-*					  Copyright Peter Gutmann 1993-2007						*
+*					  Copyright Peter Gutmann 1993-2011						*
 *																			*
 ****************************************************************************/
 
@@ -111,9 +111,24 @@ typedef enum {
 
 	NFLAG_HTTP10: This is an HTTP 1.0 (rather than 1.1) HTTP stream.
 
-	NFLAG_HTTPPROXY/NFLAG_HTTPTUNNEL: HTTP proxy control flags.
+	NFLAG_HTTPPROXY/NFLAG_HTTPTUNNEL: HTTP proxy control flags.  When the 
+		proxy flag is set, HTTP requests are sent as 
+		"GET http://destination-url/location" rather than "GET location".
+		When the tunnel flag is set, HTTP requests are sent as explicit
+		proxy commands "CONNECT http://destiation-url/".
+
+		Note that the HTTP tunnel flag is currently never set by anything
+		due to the removal of the SESSION_USEHTTPTUNNEL flag at a higher
+		level, which was only ever set implicitly by being set in the 
+		SSL/TLS altProtocolInfo, which in turn was never selected outside
+		a USE_CMP_TRANSPORT block.  The location at which it would be
+		selected (except for the presence of a USE_CMP_TRANSPORT ifdef) is 
+		at line 195 of session/sess_attr.c in versions up to 3.4.1.
 
 	NFLAG_HTTPGET/NFLAG_HTTPPOST: HTTP allowed-actions flags.
+
+	NFLAG_HTTPPOST_AS_GET: Modify the POST to encode it as a GET (ugh), for 
+		b0rken servers that don't do POST.
 
 	NFLAG_ISSERVER: The stream is a server stream (default is client).
 
@@ -132,10 +147,12 @@ typedef enum {
 #define STREAM_NFLAG_HTTPTUNNEL	0x0010	/* Use HTTP proxy tunnel for connect */
 #define STREAM_NFLAG_HTTPGET	0x0020	/* Allow HTTP GET */
 #define STREAM_NFLAG_HTTPPOST	0x0040	/* Allow HTTP POST */
-#define STREAM_NFLAG_LASTMSG	0x0080	/* Last message in exchange */
-#define STREAM_NFLAG_ENCAPS		0x0100	/* Network transport is encapsulated */
-#define STREAM_NFLAG_FIRSTREADOK 0x0200	/* First data read succeeded */
-#define STREAM_NFLAG_HTTPREQMASK ( STREAM_NFLAG_HTTPGET | STREAM_NFLAG_HTTPPOST )
+#define STREAM_NFLAG_HTTPPOST_AS_GET 0x0080	/* Implement POST as GET */
+#define STREAM_NFLAG_LASTMSG	0x0100	/* Last message in exchange */
+#define STREAM_NFLAG_ENCAPS		0x0200	/* Network transport is encapsulated */
+#define STREAM_NFLAG_FIRSTREADOK 0x0400	/* First data read succeeded */
+#define STREAM_NFLAG_HTTPREQMASK ( STREAM_NFLAG_HTTPGET | STREAM_NFLAG_HTTPPOST | \
+								   STREAM_NFLAG_HTTPPOST_AS_GET )
 										/* Mask for permitted HTTP req.types */
 
 /* Network transport-specific flags.  These are:
@@ -217,6 +234,11 @@ typedef struct NS {
 	char clientAddress[ ( CRYPT_MAX_TEXTSIZE / 2 ) + 4 ];
 	int clientAddressLen;		/* Client IP address (dotted-decimal) */
 	int clientPort;				/* Client port */
+
+	/* Sometimes we can fingerprint the application running on the peer 
+	   system, which is useful for working around buggy implementations.  
+	   The following value stores the peer application type, if known */
+	STREAM_PEER_TYPE systemType;
 
 	/* If a network error condition is fatal we set the persistentStatus 
 	   value.  This is checked by the higher-level stream code and copied 

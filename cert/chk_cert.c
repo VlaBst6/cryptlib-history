@@ -1126,8 +1126,11 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 	const BOOLEAN subjectSelfSigned = \
 					( subjectCertInfoPtr->flags & CERT_FLAG_SELFSIGNED ) ? \
 					TRUE : FALSE;
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
 	BOOLEAN subjectIsCA = FALSE, issuerIsCA = FALSE;
-	int value, complianceLevel, status;
+	int value;
+#endif /* USE_CERTLEVEL_PKIX_PARTIAL */
+	int complianceLevel, status;
 
 	assert( isWritePtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( issuerCertInfoPtr == NULL || \
@@ -1279,18 +1282,6 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 			}
 		}
 
-	/* Determine whether the subject or issuer are CA certificates */
-	status = getAttributeFieldValue( subjectAttributes, 
-									 CRYPT_CERTINFO_CA, 
-									 CRYPT_ATTRIBUTE_NONE, &value );
-	if( cryptStatusOK( status ) )
-		subjectIsCA = ( value > 0 ) ? TRUE : FALSE;
-	status = getAttributeFieldValue( issuerAttributes,
-									 CRYPT_CERTINFO_CA, 
-									 CRYPT_ATTRIBUTE_NONE, &value );
-	if( cryptStatusOK( status ) )
-		issuerIsCA = ( value > 0 ) ? TRUE : FALSE;
-
 	/* If we're doing a reduced level of checking, we're done */
 	if( complianceLevel < CRYPT_COMPLIANCELEVEL_STANDARD )
 		{
@@ -1372,6 +1363,18 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 			subjectCertInfoPtr->cCertCert->maxCheckLevel = complianceLevel;
 		return( CRYPT_OK );
 		}
+
+	/* Determine whether the subject or issuer are CA certificates */
+	status = getAttributeFieldValue( subjectAttributes, 
+									 CRYPT_CERTINFO_CA, 
+									 CRYPT_ATTRIBUTE_NONE, &value );
+	if( cryptStatusOK( status ) )
+		subjectIsCA = ( value > 0 ) ? TRUE : FALSE;
+	status = getAttributeFieldValue( issuerAttributes,
+									 CRYPT_CERTINFO_CA, 
+									 CRYPT_ATTRIBUTE_NONE, &value );
+	if( cryptStatusOK( status ) )
+		issuerIsCA = ( value > 0 ) ? TRUE : FALSE;
 
 	/* Constraints can only be present in CA certificates.  The issuer may 
 	   not be a proper CA if it's a self-signed end entity certificate or 

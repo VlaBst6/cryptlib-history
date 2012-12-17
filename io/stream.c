@@ -1371,9 +1371,16 @@ int sioctlSet( INOUT STREAM *stream,
 					netStream->nFlags |= STREAM_NFLAG_HTTPPOST;
 					break;
 
+				case STREAM_HTTPREQTYPE_POST_AS_GET:
+					/* This flag modifies the HTTP POST to encode it as a 
+					   GET, for b0rken servers that don't support POST */
+					netStream->nFlags |= STREAM_NFLAG_HTTPPOST | \
+										 STREAM_NFLAG_HTTPPOST_AS_GET;
+					break;
+
 				case STREAM_HTTPREQTYPE_ANY:
 					netStream->nFlags |= STREAM_NFLAG_HTTPGET | \
-									  STREAM_NFLAG_HTTPPOST;
+										 STREAM_NFLAG_HTTPPOST;
 					break;
 
 				default:
@@ -1395,8 +1402,7 @@ int sioctlSet( INOUT STREAM *stream,
 
 		case STREAM_IOCTL_LASTMESSAGE:
 			REQUIRES_S( value == TRUE );
-			REQUIRES_S( netStream->protocol == STREAM_PROTOCOL_HTTP || \
-						netStream->protocol == STREAM_PROTOCOL_CMP );
+			REQUIRES_S( netStream->protocol == STREAM_PROTOCOL_HTTP );
 
 			netStream->nFlags |= STREAM_NFLAG_LASTMSG;
 			return( CRYPT_OK );
@@ -1533,6 +1539,13 @@ int sioctlGet( INOUT STREAM *stream,
 			if( netStream->clientAddressLen <= 0 )
 				return( CRYPT_ERROR_NOTFOUND );
 			*( ( int * ) data ) = netStream->clientAddressLen;
+
+			return( CRYPT_OK );
+
+		case STREAM_IOCTL_GETPEERTYPE:
+			REQUIRES_S( dataMaxLen == sizeof( STREAM_PEER_TYPE ) );
+
+			*( ( STREAM_PEER_TYPE * ) data ) = netStream->systemType;
 
 			return( CRYPT_OK );
 

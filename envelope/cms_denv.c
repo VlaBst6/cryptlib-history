@@ -175,6 +175,7 @@ static int initPkcContentInfo( CONTENT_LIST *contentListItem,
 		{
 		contentListItem->envInfo = CRYPT_ENVINFO_SIGNATURE;
 		contentListItem->clSigInfo.hashAlgo = queryInfo->hashAlgo;
+		contentListItem->clSigInfo.hashAlgoParam = queryInfo->hashAlgoParam;
 		}
 	if( queryInfo->formatType == CRYPT_FORMAT_CMS )
 		{
@@ -573,7 +574,8 @@ static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	{
 	CRYPT_CONTEXT iHashContext;
 	ACTION_LIST *actionListPtr;
-	int hashAlgo = DUMMY_INIT, iterationCount, status;
+	int hashAlgo = DUMMY_INIT, hashAlgoParam = 0;
+	int iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -584,6 +586,9 @@ static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 								  &hashAlgo, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) && isHashExtAlgo( hashAlgo ) )
+		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
+								  &hashAlgoParam, CRYPT_CTXINFO_BLOCKSIZE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -594,12 +599,18 @@ static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		 actionListPtr != NULL && iterationCount < FAILSAFE_ITERATIONS_MED; 
 		 actionListPtr = actionListPtr->next, iterationCount++ )
 		{
-		int actionHashAlgo;
+		int actionHashAlgo, actionHashAlgoParam = 0;
 
 		status = krnlSendMessage( actionListPtr->iCryptHandle,
 								  IMESSAGE_GETATTRIBUTE, &actionHashAlgo, 
 								  CRYPT_CTXINFO_ALGO );
-		if( cryptStatusOK( status ) && actionHashAlgo == hashAlgo )
+		if( cryptStatusOK( status ) && isHashExtAlgo( actionHashAlgo ) )
+			status = krnlSendMessage( actionListPtr->iCryptHandle, 
+									  IMESSAGE_GETATTRIBUTE, &actionHashAlgoParam, 
+									  CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusOK( status ) && \
+			actionHashAlgo == hashAlgo && \
+			actionHashAlgoParam == hashAlgoParam )
 			{
 			/* There's a duplicate action present, destroy the one that 
 			   we've just created and continue */

@@ -230,11 +230,11 @@ BOOLEAN compareSerialNumber( IN_BUFFER( canonSerialNumberLength ) \
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int setXyzzyInfo( INOUT CERT_INFO *certInfoPtr )
 	{
+	CRYPT_ATTRIBUTE_TYPE dummy1;
+	CRYPT_ERRTYPE_TYPE dummy2;
 	ATTRIBUTE_PTR *attributePtr;
-	const int keyUsage = KEYUSAGE_SIGN | KEYUSAGE_CA | \
-						 CRYPT_KEYUSAGE_KEYENCIPHERMENT;
 	const time_t currentTime = getApproxTime();
-	int status;
+	int isXyzzyCert, keyUsage = CRYPT_KEYUSAGE_NONE, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
@@ -244,24 +244,41 @@ static int setXyzzyInfo( INOUT CERT_INFO *certInfoPtr )
 
 	/* Make sure that we haven't already set up this certificate as a XYZZY
 	   certificate */
-	attributePtr = findAttributeField( certInfoPtr->attributes,
-									   CRYPT_CERTINFO_CERTPOLICYID,
-									   CRYPT_ATTRIBUTE_NONE );
-	if( attributePtr != NULL )
+	status = getCertComponent( certInfoPtr, CRYPT_CERTINFO_XYZZY, 
+							   &isXyzzyCert );
+	if( cryptStatusOK( status ) && isXyzzyCert )
 		{
-		void *policyOidPtr;
-		int policyOidLength;
+		setErrorInfo( certInfoPtr, CRYPT_CERTINFO_XYZZY,
+					  CRYPT_ERRTYPE_ATTR_PRESENT );
+		return( CRYPT_ERROR_INITED );
+		}
 
-		status = getAttributeDataPtr( attributePtr, &policyOidPtr, 
-									  &policyOidLength );
-		if( cryptStatusOK( status ) && \
-			policyOidLength == sizeofOID( OID_CRYPTLIB_XYZZYCERT ) && \
-			!memcmp( policyOidPtr, OID_CRYPTLIB_XYZZYCERT,
-					 sizeofOID( OID_CRYPTLIB_XYZZYCERT ) ) )
+	/* Get the appropriate key usage types that are possible for this
+	   certificate.  We only do this if there's a key present, if it hasn't 
+	   been set yet (in other words if the caller sets CRYPT_CERTINFO_XYZZY 
+	   before they set CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO) then this will
+	   be done in the code that sets the public key */
+	if( certInfoPtr->publicKeyAlgo != CRYPT_ALGO_NONE )
+		{
+		status = checkKeyUsage( certInfoPtr, CHECKKEY_FLAG_NONE, 
+								CRYPT_KEYUSAGE_KEYENCIPHERMENT,
+								CRYPT_COMPLIANCELEVEL_STANDARD,
+								&dummy1, &dummy2 );
+		if( cryptStatusOK( status ) )
+			keyUsage = CRYPT_KEYUSAGE_KEYENCIPHERMENT;
+		status = checkKeyUsage( certInfoPtr, CHECKKEY_FLAG_NONE, 
+								CRYPT_KEYUSAGE_DIGITALSIGNATURE,
+								CRYPT_COMPLIANCELEVEL_STANDARD,
+								&dummy1, &dummy2 );
+		if( cryptStatusOK( status ) )
+			keyUsage |= KEYUSAGE_SIGN | KEYUSAGE_CA;
+		if( !( keyUsage & CRYPT_KEYUSAGE_DIGITALSIGNATURE ) )
 			{
-			setErrorInfo( certInfoPtr, CRYPT_CERTINFO_XYZZY,
-						  CRYPT_ERRTYPE_ATTR_PRESENT );
-			return( CRYPT_ERROR_INITED );
+			/* We have to have at least a signing capability available in 
+			   order to create a self-signed certificate */
+			setErrorInfo( certInfoPtr, CRYPT_CERTINFO_KEYUSAGE,
+						  CRYPT_ERRTYPE_ATTR_VALUE );
+			return( CRYPT_ERROR_INVALID );
 			}
 		}
 
@@ -283,14 +300,18 @@ static int setXyzzyInfo( INOUT CERT_INFO *certInfoPtr )
 	certInfoPtr->endTime = certInfoPtr->startTime + ( 86400L * 365 * 20 );
 	certInfoPtr->flags |= CERT_FLAG_SELFSIGNED;
 	status = addCertComponent( certInfoPtr, CRYPT_CERTINFO_CA, TRUE );
-	if( cryptStatusOK( status ) )
+	if( cryptStatusOK( status ) && keyUsage != CRYPT_KEYUSAGE_NONE )
+		{
 		status = addCertComponent( certInfoPtr, CRYPT_CERTINFO_KEYUSAGE,
 								   keyUsage );
+		}
 	if( cryptStatusOK( status ) )
+		{
 		status = addCertComponentString( certInfoPtr, 
 										 CRYPT_CERTINFO_CERTPOLICYID,
 										 OID_CRYPTLIB_XYZZYCERT,
 										 sizeofOID( OID_CRYPTLIB_XYZZYCERT ) );
+		}
 	if( cryptStatusOK( status ) )
 		{
 		attributePtr = findAttributeFieldEx( certInfoPtr->attributes,

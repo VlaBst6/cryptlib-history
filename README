@@ -1,3 +1,11 @@
+Changes in 3.4.2 release
+========================
+
+This is a maintenance release that adds improved diagnostics for various types
+of session-related errors, more flexible handling of a variety of rarely-used
+protocol options and capabilities added at the request of users, and the usual
+ongoing updates for OSes and compiler versions.
+
 Changes in 3.4.1 release
 ========================
 

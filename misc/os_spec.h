@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib OS-Specific Defines Header File 				*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2012					*
 *																			*
 ****************************************************************************/
 
@@ -39,9 +39,14 @@
    different versions of Visual C (it's different for each of VC 2.0, 2.1,
    4.0, and 4.1.  It actually remains the same after 4.1) */
 
-#if !defined( __WINDOWS__ ) && ( defined( _Windows ) || defined( _WINDOWS ) )
-  #define __WINDOWS__
-#endif /* Win16 */
+#ifndef __WINDOWS__
+  #if defined( _Windows ) || defined( _WINDOWS )
+	#define __WINDOWS__
+  #endif /* Older Windows compilers */
+  #ifdef __MINGW32__
+	#define __WINDOWS__
+  #endif /* MinGW */
+#endif /* Windows */
 #if !defined( __WIN32__ ) && ( defined( WIN32 ) || defined( _WIN32 ) )
   #ifndef __WINDOWS__
 	#define __WINDOWS__		/* Win32 or WinCE */
@@ -77,8 +82,8 @@
   #endif /* 32-bit DOS */
 #endif /* Watcom C under DOS */
 
-/* Make the Tandem, Macintosh, AS/400, PalmOS, and VMS defines look a bit 
-   more like the usual ANSI defines used to identify the other OS types */
+/* Make the defines for various OSes look a bit more like the usual ANSI 
+  defines that are used to identify the other OS types */
 
 #ifdef __TANDEM
   #if defined( _OSS_TARGET )
@@ -106,17 +111,27 @@
   #define __VMS__
 #endif /* VMS */
 
+#if defined( __APPLE__ )
+  /* Apple provides an environment-specific file that gives you detailed
+	 information about the target enviroment */
+  #include <TargetConditionals.h>
+  #if defined( TARGET_OS_IPHONE ) || defined( TARGET_IPHONE_SIMULATOR )
+	#define __iOS__
+  #endif /* iOS/iOS simulator */
+#endif /* __APPLE__ */
+
 /* In some cases we're using a Windows system as an emulated cross-
    development platform, in which case we are we add extra defines to turn 
    off some Windows-specific features.  The override for BOOLEAN is required 
    because once __WIN32__ is turned off we try and typedef BOOLEAN, but 
    under Windows it's already typedef'd which leads to error messages */
 
-#if defined( __WIN32__ ) && ( _MSC_VER == 1200 ) && 0
+#if defined( __WIN32__ ) && ( _MSC_VER == 1200 ) && defined( CROSSCOMPILE )
   /* Embedded OS variant */
 //  #define __EmbOS__ 
 //  #define __FreeRTOS__
 //	#define __ITRON__
+//	#define __Nucleus__
 //	#define __RTEMS__
 //	#define __ThreadX__
 //	#define __TKernel__
@@ -125,9 +140,12 @@
   /* Undo Windows defines */
   #undef __WINDOWS__
   #undef __WIN32__
-  #ifndef __UCOS__		
+  #if !defined( __Nucleus__ ) && !defined( __UCOS__ )
 	#define BOOLEAN			FNORDIAN
   #endif /* Systems that typedef BOOLEAN */
+  #ifdef __Nucleus__
+	#undef FAR
+  #endif /* Systems that define FAR */
 
   /* In addition '__i386__' (assuming gcc with an x86 target) needs to be 
      defined globally via Project Settings | C/C++ | Preprocessor.  This
@@ -161,6 +179,7 @@
 
 #ifdef _MSC_VER
   #define VC_16BIT( version )		( version <= 800 )
+  #define VC_LE_VC6( version )		( version <= 1200 )
   #define VC_GE_2002( version )		( version >= 1300 )
   #define VC_LT_2005( version )		( version < 1400 )
   #define VC_GE_2005( version )		( version >= 1400 )
@@ -170,6 +189,7 @@
   /* These aren't specifically required on non-VC++ systems, but some 
      preprocessors get confused if they aren't defined since they're used */
   #define VC_16BIT( version )		0
+  #define VC_LE_VC6( version )		0
   #define VC_GE_2002( version )		0
   #define VC_LT_2005( version )		0
   #define VC_GE_2005( version )		0
@@ -258,6 +278,48 @@
 	 best to only enable them for one-off test builds requiring manual
 	 checking for real errors */
   #pragma warning( disable: 4100 )	/* Unreferenced parameter */
+#endif /* Visual C++ */
+
+/* Under VC++ a number of warnings are disabled by default, including some 
+   potentially useful ones, so we re-enable them.  The warnings are:
+
+	C4287 'operator': unsigned/negative constant mismatch.
+	C4296 'operator': expression is always false.
+	C4431 missing type specifier - int assumed.
+	C4546 function call before comma missing argument list.
+	C4547 'operator' : operator before comma has no effect; expected 
+		  operator with side-effect.
+	C4548 expression before comma has no effect; expected expression with 
+		  side-effect.
+	C4549 'operator' : operator before comma has no effect; did you intend 
+		  'operator'?
+	C4555 expression has no effect; expected expression with side-effect.
+	C4668 'symbol' is not defined as a preprocessor macro, replacing with 
+		  '0' for 'directives'.  
+		  Note that enabling this check causes warnings in Windows header 
+		  files.
+	C4826 Conversion from 'type1 ' to 'type2' is sign-extended.
+
+   These are all defined only for newer versions of VC++ (2005 and 2010), so 
+   they need a recent compiler in order to be evaluated.
+
+   These versions also have the potentially useful warning 'C4390 empty 
+   controlled statement found' (e.g. 'if( i );'), on by default for W3 and 
+   above, however this warning has no effect in either VS 2005 or VS 2010,
+   it seems to be triggered by random misplaced semicolons rather than the
+   presence of empty controlled statements, e.g. 'if( foo; )' */
+
+#if defined( _MSC_VER )
+  #pragma warning( 3: 4287 )
+  #pragma warning( 3: 4296 )
+  #pragma warning( 3: 4431 )
+  #pragma warning( 3: 4546 )
+  #pragma warning( 3: 4547 )
+  #pragma warning( 3: 4548 )
+  #pragma warning( 3: 4549 )
+  #pragma warning( 3: 4555 )
+  #pragma warning( 3: 4668 )
+  #pragma warning( 3: 4826 )
 #endif /* Visual C++ */
 
 /* VC++ 2005 implements the TR 24731 security extensions but doesn't yet 
@@ -388,9 +450,14 @@ typedef unsigned char		BYTE;
 #elif defined( __WIN32__ ) || defined( __WINCE__ ) 
   /* VC++ typedefs BOOLEAN so we need to use the preprocessor to override it */
   #define BOOLEAN			int
-#elif defined ( __UCOS__ )
+#elif defined( __UCOS__ )
   /* uC/OS-II typedefs BOOLEAN and it's probably not worth changing so we 
      leave it as is */
+  #define BOOLEAN			int
+#elif defined( __Nucleus__ )
+  /* Nucleus defines BOOLEAN as 'unsigned char' so we override it to be an
+     int */
+  #undef  BOOLEAN
   #define BOOLEAN			int
 #else
   typedef int				BOOLEAN;
@@ -490,6 +557,7 @@ typedef unsigned char		BYTE;
 #if ( defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 ) ) || \
 	defined( __VMCMS__ ) || defined( __MVS__ ) || defined( __MRC__ ) || \
 	defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
+	( defined( __UNIX__ ) && ( defined( __HP_cc ) || defined( __HP_aCC ) ) ) || \
 	( defined( __UNIX__ ) && defined( _MPRAS ) )
   #define STATIC_DATA
 #else
@@ -515,11 +583,12 @@ typedef unsigned char		BYTE;
    work */
 
 #if ( defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 ) ) || \
+	defined( _CRAY ) || \
 	( defined( __hpux ) && !defined( __GNUC__ ) ) || \
 	( defined( __QNX__ ) && ( OSVERSION <= 4 ) ) || \
+	defined( __RVCT2_1__ ) || \
 	( defined( __SUNPRO_C ) && ( __SUNPRO_C <= 0x570 ) ) || \
-	defined( __SCO_VERSION__ ) || \
-	defined( _CRAY )
+	defined( __SCO_VERSION__ ) || defined(  __TANDEM )
   #define CONST_INIT
   #define CONST_INIT_STRUCT_3( decl, init1, init2, init3 ) \
 		  decl
@@ -604,19 +673,31 @@ typedef unsigned char		BYTE;
    'struct __va_list { void *__ap; }', breaking compatibility with all 
    existing code.  We can detect this by taking advantage of the fact that 
    support for the change was added in gcc 4.4, so any newer version with 
-   ARM_EABI defined will have a scalar va_list */
+   ARM_EABI defined will have a scalar va_list.
+   
+   Super-H variants also have scalar va_lists, the Super-H varargs header 
+   va-sh.h uses a complex structure to handle va_lists for all SH3 and SH4 
+   variants, this presumably extends to SH5 as well so we treat va_lists on 
+   Super-H as scalars */
 
-#if defined( __GNUC__ ) && \
-	( ( __GNUC__ == 4 && __GNUC_MINOR__ >= 4 ) || ( __GNUC__ > 4 ) ) && \
-	defined( __ARM_EABI__ )
+#if defined( __GNUC__ )
+  #if( defined( __ARM_EABI__ ) && \
+	   ( __GNUC__ == 4 && __GNUC_MINOR__ >= 4 ) || ( __GNUC__ > 4 ) )
 	/* In theory we could check __ap but in practice it's too risky to rely 
 	   on the type and state of hidden internal fields, and in any case it's 
 	   only a sanity check, not a hard requirement, so we just no-op the 
 	   check out */
+	#define verifyVAList( x ) TRUE
+  #elif defined( __sh__ )
+	#define verifyVAList( x ) TRUE
+  #endif /* Architecture-specific scalar va_lists */
+#elif defined( __RVCT2_1__ )
+  /* The RealView compiler has the same issue */
   #define verifyVAList( x ) TRUE
-#else
-  #define verifyVAList( x ) ( ( x ) != NULL )
 #endif /* Nonstandard va_list types */
+#ifndef verifyVAList
+  #define verifyVAList( x ) ( ( x ) != NULL )
+#endif /* Verify function for vector arg lists */
 
 /* cryptlib has many code sequences of the form:
 
@@ -667,12 +748,16 @@ typedef unsigned char		BYTE;
 #if defined( __WINDOWS__ ) || \
 	( defined( __UNIX__ ) && \
 	  ( ( defined( sun ) && OSVERSION > 4 ) || defined( __linux__ ) || \
-		defined( _AIX ) || ( defined( __APPLE__ ) && !defined( __MAC__ ) ) ) )
+		defined( _AIX ) || ( defined( __APPLE__ ) && !defined( __MAC__ ) ) ) ) || \
+	defined( __ANDROID__ )
   #define DYNAMIC_LOAD
 
   /* Macros to map OS-specific dynamic-load values to generic ones */
   #if defined( __WINDOWS__ )
-	HMODULE WINAPI SafeLoadLibrary( LPCTSTR lpFileName );
+	#ifndef _ANALYSE_DEFINED
+	  #define IN_STRING	/* No-op out PREfast annotation for non-clib files */
+	#endif /* Included via non-cryptlib source file */
+	HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName );
 
 	#define INSTANCE_HANDLE		HINSTANCE
 	#define NULL_INSTANCE		( HINSTANCE ) NULL
@@ -683,7 +768,7 @@ typedef unsigned char		BYTE;
 	#endif /* Win32 vs. WinCE */
 	#define DynamicUnload		FreeLibrary
 	#define DynamicBind			GetProcAddress
-  #elif defined( __UNIX__ )
+  #elif defined( __UNIX__ ) || defined( __ANDROID__ )
     /* Older versions of OS X didn't have dlopen() support but required
 	   the use of the rather painful low-level dyld() interface.  If you're
 	   running an older version of OS X and don't have the dlcompat wrapper
@@ -762,6 +847,12 @@ typedef unsigned char		BYTE;
   #elif defined( __SYMBIAN32__ ) && \
 		( defined( __MARM__ ) || defined( __EMU_SYMBIAN_OS__ ) )
 	#define DATA_LITTLEENDIAN	/* Symbian on ARM/x86 always little-endian */
+  #elif defined( __Nucleus__ ) && defined( __RVCT2_1__ )
+	#if defined( __BIG_ENDIAN )	/* Realview for Nucleus */
+	  #define DATA_BIGENDIAN
+	#else
+	  #define DATA_LITTLEENDIAN
+	#endif /* Big vs.little-endian */
   #elif defined( __m68k__  )
 	#define DATA_BIGENDIAN		/* 68K always big-endian */
   #elif defined __GNUC__
@@ -915,14 +1006,14 @@ typedef unsigned char		BYTE;
 #endif /* > 16-bit OSes */
 
 
-/* The EOL convention used when outputting text.  Technically speaking
-   XMK doesn't use any particular EOL convention, but since the
-   typical development environment is debug output sent to a Windows
+/* The EOL convention used when outputting text.  Technically speaking 
+   Nucleus and XMK don't use any particular EOL convention, but since the 
+   typical development environment is debug output sent to a Windows 
    terminal emulator, we use CRLF */
 
 #if defined( __MSDOS16__ ) || defined( __MSDOS32__ ) || \
-	defined( __OS2__ ) || defined( __SYMBIAN32__ ) || \
-	defined( __WINDOWS__ ) || defined( __XMK__ )
+	defined( __Nucleus__ ) || defined( __OS2__ ) || \
+	defined( __SYMBIAN32__ ) || defined( __WINDOWS__ ) || defined( __XMK__ )
   #define EOL		"\r\n"
   #define EOL_LEN	2
 #elif ( defined( __APPLE__ ) && !defined( __MAC__ ) ) || \
@@ -1007,7 +1098,12 @@ typedef unsigned char		BYTE;
   #define sprintf_s			sPrintf_s
   #define vsprintf_s		sPrintf_s
 #else
-  #include <ctype.h>
+  #if defined( __Nucleus__ )
+	#include <nu_ctype.h>
+	#include <nu_string.h>
+  #else
+	#include <ctype.h>
+  #endif /* OS-specific includes */
 
   #define isAlnum( ch )		isalnum( byteToInt( ch ) )
   #define isAlpha( ch )		isalpha( byteToInt( ch ) )

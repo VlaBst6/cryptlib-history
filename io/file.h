@@ -57,6 +57,16 @@
 
 /****************************************************************************
 *																			*
+*						 			Nucleus									*
+*																			*
+****************************************************************************/
+
+#elif defined( __Nucleus__ )
+
+#include <pcdisk.h>
+
+/****************************************************************************
+*																			*
 *						 				OS/2								*
 *																			*
 ****************************************************************************/
@@ -102,10 +112,10 @@
 *																			*
 ****************************************************************************/
 
-#elif defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __MVS__ ) || \
-	  defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
-	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
-	  defined( __UNIX__ )
+#elif defined( __iOS__ ) || defined( __BEOS__ ) || defined( __ECOS__ ) || \
+	  defined( __MVS__ ) || defined( __RTEMS__ ) || \
+	  defined( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
+	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ )
 
 #if defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ )
   /* Needed for lstat() in sys/lstat.h */
@@ -119,22 +129,15 @@
   #include <sys/file.h>
 #endif /* Tandem */
 #include <sys/stat.h>
-#if !( defined( __APPLE__ ) || defined( __BEOS__ ) || \
-	   defined( __bsdi__ ) || defined( _CRAY ) || \
-	   defined( __CYGWIN__ ) || defined( __FreeBSD__ ) || \
-	   defined( __hpux ) || defined( __linux__ ) || \
-	   defined( _M_XENIX ) || defined( __MVS__ ) || \
-	   defined( __NetBSD__ ) || defined( __OpenBSD__ ) || \
-	   defined( __QNX__ ) || ( defined( sun ) && OSVERSION == 4 ) || \
-	   defined ( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
-	   defined( __TANDEM_OSS__ ) || defined( USE_EMBEDDED_OS ) )
+#if defined( _AIX ) || defined( __alpha__ ) || defined( _MPRAS ) || \
+	defined( __osf__ ) || defined( __SCO_VERSION__ )
   #include <sys/mode.h>
-#endif /* Vaguely non-SYSV-ish systems */
+#endif /* Vaguely SYSV-ish systems */
 #include <unistd.h>
 #if defined( _AIX ) || defined( __alpha__ ) || defined( __BEOS__ ) || \
 	defined( __bsdi__ ) || defined( _CRAY ) || defined( __FreeBSD__ ) || \
-	defined( __linux__ ) || defined( _MPRAS ) || defined( __MVS__ ) || \
-	defined( _M_XENIX ) || defined( __NetBSD__ ) || \
+	defined( __iOS__ ) || defined( __linux__ ) || defined( _MPRAS ) || \
+	defined( __MVS__ ) || defined( _M_XENIX ) || defined( __NetBSD__ ) || \
 	defined( __OpenBSD__ ) || defined( __osf__ ) || defined( __QNX__ ) || \
 	defined( __SCO_VERSION__ ) || defined( sun ) || \
 	defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ )

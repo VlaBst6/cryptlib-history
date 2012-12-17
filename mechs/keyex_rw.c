@@ -440,7 +440,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readPgpKek( INOUT STREAM *stream, 
 					   OUT QUERY_INFO *queryInfo )
 	{
-	int value, status;
+	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
@@ -463,50 +463,10 @@ static int readPgpKek( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Read the S2K specifier */
-	value = sgetc( stream );
-	if( value != 0 && value != 1 && value != 3 )
-		return( cryptStatusError( value ) ? value : CRYPT_ERROR_BADDATA );
-	status = readPgpAlgo( stream, &queryInfo->keySetupAlgo, 
-						  PGP_ALGOCLASS_HASH );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( value == 0 )
-		{
-		/* It's a straight hash, we're done */
-		return( CRYPT_OK );
-		}
-	status = sread( stream, queryInfo->salt, PGP_SALTSIZE );
-	if( cryptStatusError( status ) )
-		return( status );
-	queryInfo->saltLength = PGP_SALTSIZE;
-	if( value != 3 )
-		{
-		/* It's a non-iterated hash, we're done */
-		return( CRYPT_OK );
-		}
-
-	/* Salted iterated hash, decode the iteration count from the bizarre 
-	   fixed-point encoded value, limiting the result to a sane value range:
-
-		count = ( ( Int32 ) 16 + ( c & 15 ) ) << ( ( c >> 4 ) + 6 )
-		   
-	   The "iteration count" is actually a count of how many bytes are 
-	   hashed, this is because the "iterated hashing" treats the salt + 
-	   password as an infinitely-repeated sequence of values and hashes the 
-	   resulting string for PGP-iteration-count bytes worth.  The value that 
-	   we calculate here (to prevent overflow on 16-bit machines) is the 
-	   count without the base * 64 scaling, this also puts the range within 
-	   the value of the standard iteration-count sanity check */
-	value = sgetc( stream );
-	if( cryptStatusError( value ) )
-		return( value );
-	queryInfo->keySetupIterations = \
-				( 16 + ( ( long ) value & 0x0F ) ) << ( value >> 4 );
-	if( queryInfo->keySetupIterations <= 0 || \
-		queryInfo->keySetupIterations > MAX_KEYSETUP_ITERATIONS )
-		return( CRYPT_ERROR_BADDATA );
-	return( CRYPT_OK );
+	/* Read the S2K information */
+	return( readPgpS2K( stream, &queryInfo->keySetupAlgo, queryInfo->salt,  
+						PGP_SALTSIZE, &queryInfo->saltLength,
+						&queryInfo->keySetupIterations ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \

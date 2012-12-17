@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Certificate Signing Routines						*
-*						Copyright Peter Gutmann 1997-2008					*
+*						Copyright Peter Gutmann 1997-2011					*
 *																			*
 ****************************************************************************/
 
@@ -24,7 +24,10 @@
 /* Recover information normally set up on certificate import.  After 
    signing the certificate the data is present without the certificate 
    having been explicitly imported so we have to go back and perform the 
-   actions normally performed on certificate import here */
+   actions normally performed on certificate import here.  The subject DN 
+   and public key data length was recorded when the certificate data was 
+   written but the position of the other elements in the certificate can't 
+   be determined until the certificate has been signed */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
@@ -36,25 +39,50 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 								const int encodedCertDataLength )
 	{
 	STREAM stream;
-	int length, status;
+	int status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isReadPtr( encodedCertData, encodedCertDataLength ) );
 
 	REQUIRES( certType == CRYPT_CERTTYPE_CERTIFICATE || \
 			  certType == CRYPT_CERTTYPE_CERTCHAIN || \
+			  certType == CRYPT_CERTTYPE_CERTREQUEST || \
 			  certType == CRYPT_CERTTYPE_REQUEST_CERT || \
 			  certType == CRYPT_CERTTYPE_PKIUSER );
 	REQUIRES( encodedCertDataLength >= 16 && \
 			  encodedCertDataLength < MAX_INTLENGTH_SHORT );
 
 	/* If there's public-key data stored with the certificate free it since 
-	   we now have a copy as part of the encoded certificate */
+	   we now have a copy as part of the encoded certificate.  Since the 
+	   publicKeyInfo pointer points at the public-key data, we clear this as 
+	   well */
 	if( certInfoPtr->publicKeyData != NULL )
 		{
 		zeroise( certInfoPtr->publicKeyData, certInfoPtr->publicKeyInfoSize );
 		clFree( "recoverCertData", certInfoPtr->publicKeyData );
-		certInfoPtr->publicKeyData = NULL;
+		certInfoPtr->publicKeyData = certInfoPtr->publicKeyInfo = NULL;
+		}
+
+	/* If it's a PKCS #10 request parse the encoded form to locate the 
+	   subject DN and public key */
+	if( certType == CRYPT_CERTTYPE_CERTREQUEST )
+		{
+		sMemConnect( &stream, encodedCertData, encodedCertDataLength );
+		readSequence( &stream, NULL );				/* Outer wrapper */
+		readSequence( &stream, NULL );				/* Inner wrapper */
+		status = readShortInteger( &stream, NULL );	/* Version */
+		if( cryptStatusOK( status ) )
+			status = sMemGetDataBlock( &stream, &certInfoPtr->subjectDNptr, 
+									   certInfoPtr->subjectDNsize );
+		if( cryptStatusOK( status ) )
+			status = readUniversal( &stream );
+		if( cryptStatusOK( status ) )
+			status = sMemGetDataBlock( &stream, &certInfoPtr->publicKeyInfo, 
+									   certInfoPtr->publicKeyInfoSize );
+		sMemDisconnect( &stream );
+		ENSURES( cryptStatusOK( status ) );
+
+		return( CRYPT_OK );
 		}
 
 	/* If it's a CRMF request parse the signed form to locate the start of
@@ -77,11 +105,13 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 			status = readUniversal( &stream );	/* Validity */
 		if( cryptStatusOK( status ) && \
 			peekTag( &stream ) == MAKE_CTAG( 5 ) )
-			{
-			status = readConstructed( &stream, &length, 5 );
-			if( cryptStatusOK( status ) )		/* Subj.name wrapper */
+			{									/* Subj.name wrapper */
+			status = readConstructed( &stream, NULL, 5 );
+			if( cryptStatusOK( status ) && certInfoPtr->subjectDNsize > 0 )
+				{
 				status = sMemGetDataBlock( &stream, &certInfoPtr->subjectDNptr, 
 										   certInfoPtr->subjectDNsize );
+				}
 			ENSURES( cryptStatusOK( status ) );
 			status = readUniversal( &stream );	/* Subject name */
 			}
@@ -92,20 +122,17 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 			status = sMemGetDataBlock( &stream, &certInfoPtr->publicKeyInfo, 
 									   certInfoPtr->publicKeyInfoSize );
 		ENSURES( cryptStatusOK( status ) );
-		ENSURES( cryptStatusOK( getStreamObjectLength( &stream, &length ) ) && \
-				 length == certInfoPtr->publicKeyInfoSize );
 		sMemDisconnect( &stream );
 
 		return( CRYPT_OK );
 		}
 
-	/* If it's PKI user data parse the encoded form to locate the start of
-	   the user DN */
-	if( certInfoPtr->type == CRYPT_CERTTYPE_PKIUSER )
+	/* If it's PKI user data parse the encoded form to locate the start of 
+	   the PKI user DN */
+	if( certType == CRYPT_CERTTYPE_PKIUSER )
 		{
 		sMemConnect( &stream, encodedCertData, encodedCertDataLength );
-		readSequence( &stream, NULL );		/* Outer wrapper */
-		status = readSequence( &stream, &length );
+		status = readSequence( &stream, NULL );		/* Wrapper */
 		if( cryptStatusOK( status ) )
 			status = sMemGetDataBlock( &stream, &certInfoPtr->subjectDNptr, 
 									   certInfoPtr->subjectDNsize );
@@ -119,10 +146,7 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 			 certType == CRYPT_CERTTYPE_CERTCHAIN );
 
 	/* It's a certificate, parse the signed form to locate the start of the
-	   encoded issuer and subject DN and public key (the length is recorded
-	   when the certificate data is written but the position of the other 
-	   elements in the certificate can't be determined until the certificate 
-	   has been signed) */
+	   encoded issuer and subject DN and public key */
 	sMemConnect( &stream, encodedCertData, encodedCertDataLength );
 	readSequence( &stream, NULL );			/* Outer wrapper */
 	status = readSequence( &stream, NULL );	/* Inner wrapper */
@@ -146,8 +170,6 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 		status = sMemGetDataBlock( &stream, &certInfoPtr->publicKeyInfo, 
 								   certInfoPtr->publicKeyInfoSize );
 	ENSURES( cryptStatusOK( status ) );
-	ENSURES( cryptStatusOK( getStreamObjectLength( &stream, &length ) ) && \
-			 length == certInfoPtr->publicKeyInfoSize );
 	sMemDisconnect( &stream );
 
 	/* Since the certificate may be used for public-key operations as soon 
@@ -177,16 +199,19 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int checkSigningKey( INOUT CERT_INFO *certInfoPtr,
 							const CERT_INFO *issuerCertInfoPtr,
+							IN_HANDLE const CRYPT_CONTEXT iSignContext,
 							const BOOLEAN isCertificate,
 							IN_RANGE( CRYPT_COMPLIANCELEVEL_OBLIVIOUS, \
 									  CRYPT_COMPLIANCELEVEL_LAST - 1 ) \
 								const int complianceLevel )
 	{
+	MESSAGE_DATA msgData;
 	int status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isReadPtr( issuerCertInfoPtr, sizeof( CERT_INFO ) ) );
 
+	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( complianceLevel >= CRYPT_COMPLIANCELEVEL_OBLIVIOUS && \
 			  complianceLevel < CRYPT_COMPLIANCELEVEL_LAST );
 
@@ -240,8 +265,14 @@ static int checkSigningKey( INOUT CERT_INFO *certInfoPtr,
 		return( status );
 		}
 
-	/* It's a self-signed object, there are no further key-related checks 
-	   required */
+	/* It's a self-signed certificate, the signing key must match the key in 
+	   the certificate */
+	setMessageData( &msgData, certInfoPtr->publicKeyID, KEYID_SIZE );
+	status = krnlSendMessage( iSignContext, IMESSAGE_COMPARE, &msgData,
+							  MESSAGE_COMPARE_KEYID );
+	if( cryptStatusError( status ) )
+		return( CRYPT_ARGERROR_VALUE );
+
 	return( CRYPT_OK );
 	}
 
@@ -851,7 +882,8 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 
 		/* Check the signing key */
 		status = checkSigningKey( certInfoPtr, issuerCertInfoPtr, 
-								  isCertificate, complianceLevel );
+								  iSignContext, isCertificate, 
+								  complianceLevel );
 		if( cryptStatusError( status ) )
 			{
 			if( issuerCertAcquired )
@@ -1002,6 +1034,7 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 	   requirements we're done */
 	if( certInfoPtr->type != CRYPT_CERTTYPE_CERTIFICATE && \
 		certInfoPtr->type != CRYPT_CERTTYPE_CERTCHAIN && \
+		certInfoPtr->type != CRYPT_CERTTYPE_CERTREQUEST && \
 		certInfoPtr->type != CRYPT_CERTTYPE_REQUEST_CERT )
 		return( CRYPT_OK );
 

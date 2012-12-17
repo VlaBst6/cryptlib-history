@@ -7,10 +7,12 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
+  #include "asn1.h"
   #include "session.h"
   #include "cmp.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
@@ -76,6 +78,11 @@ int initServerAuthentMAC( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		krnlSendNotifier( cmpInfo->userInfo, IMESSAGE_DECREFCOUNT );
 		cmpInfo->userInfo = CRYPT_ERROR;
+		}
+	if( protocolInfo->altMacKeySize > 0 )
+		{
+		zeroise( protocolInfo->altMacKey, CRYPT_MAX_HASHSIZE );
+		protocolInfo->altMacKeySize = 0;
 		}
 
 	/* Get the user information for the user identified by the user ID from 
@@ -145,6 +152,25 @@ int initServerAuthentMAC( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Couldn't copy PKI user data from PKI user object to "
 				  "session object" ) );
 		}
+
+	/* Things get a bit complicated for password-authenticated operations 
+	   because there's a second password that may (optionally) be used for
+	   revocations that doesn't fit into the standard pattern of username+
+	   password.  In order to handle MAC'd revocation requests, we keep a 
+	   copy of the revocation MAC key and use it in place of the standard
+	   password if we get a revocation request rather than an issue
+	   request */
+	setMessageData( &msgData, password, CRYPT_MAX_TEXTSIZE );
+	status = krnlSendMessage( cmpInfo->userInfo, IMESSAGE_GETATTRIBUTE_S, 
+							  &msgData, CRYPT_CERTINFO_PKIUSER_REVPASSWORD );
+	if( cryptStatusOK( status ) )
+		{
+		status = decodePKIUserValue( protocolInfo->altMacKey, CRYPT_MAX_HASHSIZE, 
+									 &protocolInfo->altMacKeySize, password, 
+									 msgData.length );
+		ENSURES( cryptStatusOK( status ) );
+		}
+	zeroise( password, CRYPT_MAX_TEXTSIZE );
 
 	return( CRYPT_OK );
 	}
@@ -316,6 +342,7 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
 	MESSAGE_CERTMGMT_INFO certMgmtInfo;
 	MESSAGE_KEYMGMT_INFO setkeyInfo;
+	STREAM stream;
 	CMP_PROTOCOL_INFO protocolInfo;
 	const ATTRIBUTE_LIST *userNamePtr;
 	int status;
@@ -387,6 +414,27 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 		destroyCMPprotocolInfo( &protocolInfo );
 		return( status );
 		}
+
+	/* Basic lint filter to check for approximately-OK requests before we
+	   try applying message-processing operations to the data:
+
+		SEQUENCE {
+			SEQUENCE {
+				INTEGER 1	-- version
+				... */
+	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
+				 sessionInfoPtr->receiveBufEnd );
+	readSequence( &stream, NULL );
+	readSequence( &stream, NULL );
+	status = readInteger( &stream, NULL, 2, NULL );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		{
+		retExt( status, 
+				( status, SESSION_ERRINFO, "Invalid CMP request header" ) );
+		}
+
+	/* Process the initial client message */
 	status = readPkiMessage( sessionInfoPtr, &protocolInfo,
 							 CTAG_PB_READ_ANY );
 	if( cryptStatusOK( status ) )
@@ -410,7 +458,7 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 		if( cryptStatusOK( status ) )
 			{
 			DEBUG_DUMP_CMP( CTAG_PB_GENM, 2, sessionInfoPtr );
-			status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
+			status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE, 
 									   CMP_CONTENT_TYPE_LEN );
 			}
 		if( cryptStatusError( status ) )
@@ -609,10 +657,13 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 
 		/* The client rejected the certificate, this isn't a protocol error 
 		   so we send back a standard ack */
-		status = writePkiMessage( sessionInfoPtr, &protocolInfo, CMPBODY_ACK );
+		status = writePkiMessage( sessionInfoPtr, &protocolInfo, 
+								  CMPBODY_ACK );
 		if( cryptStatusOK( status ) )
-			status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
+			{
+			status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE, 
 									   CMP_CONTENT_TYPE_LEN );
+			}
 		destroyCMPprotocolInfo( &protocolInfo );
 
 		/* Reverse the certificate issue operation by revoking the 

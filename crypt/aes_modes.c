@@ -78,10 +78,14 @@ aligned_array(unsigned long, dec_hybrid_table, 12, 16) = NEH_DEC_HYBRID_DATA;
 /* NOTE: These control word macros must only be used after  */
 /* a key has been set up because they depend on key size    */
 
+#ifdef NEH_KEY_TYPE
 #if NEH_KEY_TYPE == NEH_LOAD
 #define kd_adr(c)   ((uint_8t*)(c)->ks)
 #elif NEH_KEY_TYPE == NEH_GENERATE
 #define kd_adr(c)   ((uint_8t*)(c)->ks + (c)->inf.b[0])
+#else
+#error Invalid NEH_KEY_TYPE value
+#endif /* NEH_KEY_TYPE */
 #else
 #define kd_adr(c)   ((uint_8t*)(c)->ks + ((c)->inf.b[0] == 160 ? 160 : 0))
 #endif

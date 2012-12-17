@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate Attribute Definitions					*
-*						Copyright Peter Gutmann 1996-2010					*
+*						Copyright Peter Gutmann 1996-2011					*
 *																			*
 ****************************************************************************/
 
@@ -128,7 +128,7 @@
 							FIELDTYPE_##tag, outerTag
 #define RANGE( min, max )	min, max, 0, NULL
 #define RANGE_ATTRIBUTEBLOB	1, MAX_ATTRIBUTE_SIZE, 0, NULL
-#define RANGE_BLOB			32, MAX_ATTRIBUTE_SIZE, 0, NULL
+#define RANGE_BLOB			16, MAX_ATTRIBUTE_SIZE, 0, NULL
 #define RANGE_BOOLEAN		FALSE, TRUE, FALSE, NULL 
 #define RANGE_NONE			0, 0, 0, NULL
 #define RANGE_OID			MIN_OID_SIZE, MAX_OID_SIZE, 0, NULL
@@ -227,7 +227,7 @@ static const ATTRIBUTE_INFO FAR_BSS extensionInfo[] = {
 	  DESCRIPTION( "challengePassword" )
 	  ENCODING_SPECIAL( TEXTSTRING ),
 	  ATTR_TYPEINFO( CERTREQ, STANDARD ) | FL_ATTR_ATTREND | FL_ATTR_NOCOPY, 
-	  0, RANGE_TEXTSTRING },
+	  FL_SPECIALENCODING, RANGE_TEXTSTRING },
 #endif /* USE_CERTREQ */
 
 #if defined( USE_CERTREV )
@@ -495,7 +495,7 @@ static const ATTRIBUTE_INFO FAR_BSS extensionInfo[] = {
 	{ MKOID( "\x06\x08\x2B\x06\x01\x05\x05\x07\x01\x07" ), CRYPT_CERTINFO_IPADDRESSBLOCKS,
 	  DESCRIPTION( "ipAddrBlocks" )
 	  ENCODING( SEQUENCE ),
-	  ATTR_TYPEINFO( CERT, STANDARD ), 
+	  ATTR_TYPEINFO( CERT, PKIX_PARTIAL ), 
 	  FL_SETOF, RANGE_NONE },
 	{ NULL, 0,
 	  DESCRIPTION( "ipAddrBlocks.ipAddressFamily" )
@@ -552,7 +552,7 @@ static const ATTRIBUTE_INFO FAR_BSS extensionInfo[] = {
 	{ MKOID( "\x06\x08\x2B\x06\x01\x05\x05\x07\x01\x08" ), CRYPT_CERTINFO_AUTONOMOUSSYSIDS,
 	  DESCRIPTION( "autonomousSysIds" )
 	  ENCODING( SEQUENCE ),
-	  ATTR_TYPEINFO( CERT, STANDARD ), 
+	  ATTR_TYPEINFO( CERT, PKIX_PARTIAL ), 
 	  0, RANGE_NONE },
 	{ NULL, 0,
 	  DESCRIPTION( "autonomousSysIds.asnum" )
@@ -2313,17 +2313,12 @@ STATIC_DATA const ATTRIBUTE_INFO FAR_BSS holdInstructionInfo[] = {
 
    ends up looking like:
 
-	[ 0 ] SEQUENCE {
-		option1				PrintableString	OPTIONAL,
-		option2				T61String OPTIONAL,
-		option3				UTF8String OPTIONAL,
-		option4				BMPString OPTIONAL
-		}
+	[ 0 ] CHOICE { PrintableString | T61String | UTF8String | BMPString }
 
-   Newer versions of the PKIX core RFC allow the use of 8- and 32-byte CIDR
-   forms for 4- and 16-byte IP addresses in some instances when they're
-   being used as constraints.  We'll add support for this if anyone ever
-   asks for it */
+   In addition to the above complications, newer versions of the PKIX core 
+   RFC allow the use of 8- and 32-byte CIDR forms for 4- and 16-byte IP 
+   addresses in some instances when they're being used as constraints.  We 
+   can add support for this if anyone ever asks for it */
 
 STATIC_DATA const ATTRIBUTE_INFO FAR_BSS generalNameInfo[] = {
 	/* otherName */
@@ -3660,6 +3655,17 @@ static BOOLEAN checkExtension( IN_ARRAY( noAttributeInfoEntries ) \
 				return( FALSE );
 			}
 
+		/* Check any remaining miscellaneous conditions */
+		if( attributeInfoPtr->encodingFlags & FL_SPECIALENCODING )
+			{
+			/* This flag is only valid for certificate requests, and the 
+			   attribute that it applies to can only have a single field */
+			if( ( attributeInfoPtr->typeInfoFlags & \
+								FL_VALID_MASK ) != FL_VALID_CERTREQ || \
+				!( attributeInfoPtr->typeInfoFlags & FL_ATTR_ATTREND ) )
+				return( FALSE );
+			}
+
 		/* If we've reached the end of the extension, we're done */
 		if( attributeInfoPtr->typeInfoFlags & FL_ATTR_ATTREND )
 			break;
@@ -3840,36 +3846,6 @@ BOOLEAN checkExtensionTables( void )
 *						Extended Validity Checking Functions				*
 *																			*
 ****************************************************************************/
-
-/* Valid list of TLDs for checking FQDNs, from 
-   http://data.iana.org/TLD/tlds-alpha-by-domain.txt */
-
-static const char *tldNames[] = { 
-	"ac", "ad", "ae", "aero", "af", "ag", "ai", "al", "am", "an", "ao", 
-	"aq", "ar", "arpa", "as", "asia", "at", "au", "aw", "ax", "az", "ba", 
-	"bb", "bd", "be", "bf", "bg", "bh", "bi", "biz", "bj", "bm", "bn", "bo", 
-	"br", "bs", "bt", "bv", "bw", "by", "bz", "ca", "cat", "cc", "cd", "cf", 
-	"cg", "ch", "ci", "ck", "cl", "cm", "cn", "co", "com", "coop", "cr", 
-	"cu", "cv", "cx", "cy", "cz", "de", "dj", "dk", "dm", "do", "dz", "ec", 
-	"edu", "ee", "eg", "er", "es", "et", "eu", "fi", "fj", "fk", "fm", "fo", 
-	"fr", "ga", "gb", "gd", "ge", "gf", "gg", "gh", "gi", "gl", "gm", "gn", 
-	"gov", "gp", "gq", "gr", "gs", "gt", "gu", "gw", "gy", "hk", "hm", "hn", 
-	"hr", "ht", "hu", "id", "ie", "il", "im", "in", "info", "int", "io", 
-	"iq", "ir", "is", "it", "je", "jm", "jo", "jobs", "jp", "ke", "kg", 
-	"kh", "ki", "km", "kn", "kp", "kr", "kw", "ky", "kz", "la", "lb", "lc", 
-	"li", "lk", "lr", "ls", "lt", "lu", "lv", "ly", "ma", "mc", "md", "me", 
-	"mg", "mh", "mil", "mk", "ml", "mm", "mn", "mo", "mobi", "mp", "mq", 
-	"mr", "ms", "mt", "mu", "museum", "mv", "mw", "mx", "my", "mz", "na", 
-	"name", "nc", "ne", "net", "nf", "ng", "ni", "nl", "no", "np", "nr", 
-	"nu", "nz", "om", "org", "pa", "pe", "pf", "pg", "ph", "pk", "pl", "pm", 
-	"pn", "pr", "pro", "ps", "pt", "pw", "py", "qa", "re", "ro", "rs", "ru", 
-	"rw", "sa", "sb", "sc", "sd", "se", "sg", "sh", "si", "sj", "sk", "sl", 
-	"sm", "sn", "so", "sr", "st", "su", "sv", "sy", "sz", "tc", "td", "tel", 
-	"tf", "tg", "th", "tj", "tk", "tl", "tm", "tn", "to", "tp", "tr", 
-	"travel", "tt", "tv", "tw", "tz", "ua", "ug", "uk", "us", "uy", "uz", 
-	"va", "vc", "ve", "vg", "vi", "vn", "vu", "wf", "ws", "xxx", "ye", "yt", 
-	"za", "zm", "zw", NULL, NULL 
-	};
 
 /* Determine whether a variety of URIs are valid and return a 
    CRYPT_ERRTYPE_TYPE describing the type of error if there's a problem.  

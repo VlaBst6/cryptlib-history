@@ -31,7 +31,7 @@ shift
 
 MAJ="3"
 MIN="4"
-PLV="1"
+PLV="2"
 PROJ="cl"
 SHARED_OBJ_PATH="./shared-obj/"
 if [ $OSNAME = "Darwin" ] ; then
@@ -128,21 +128,36 @@ fi
 # compiler suckage).  For these systems we build with gcc if it's present,
 # otherwise we fall back to the native development tools.
 
-case $OSNAME in
+checkForGcc()
+	{
+	OSNAME=$1
+	SHARED=$2
 
-	'AIX'|'HP-UX')
-		if gcc -v > /dev/null 2>&1 ; then
-			BUILDWITHGCC=1 ;
-		fi ;;
+	# If we're not running gcc, there's nothing to do
+	if gcc -v > /dev/null 2>&1 -lt 0 ; then
+		return ;
+	fi
 
-	'SunOS')
-		if [ ! -x /opt/SUNWspro/bin/cc -a \
-			 `/usr/ucb/cc 2>&1 | grep -c installed` = '1' ] ; then
-			BUILDWITHGCC=1 ;
-		fi ;;
-esac
-if [ $BUILDWITHGCC ] ; then
+	# We don't provide a gcc option for AIX because mixing gcc-created and
+	# IBM-sourced components isn't a good idea, and it seems that anyone
+	# who's using AIX also has the IBM tools installed with it.
+	if [ $OSNAME = "AIX" ] ; then
+		return ;
+	fi
+
+	# gcc is available, use that by default
 	echo "Building with gcc instead of the default $OSNAME compiler."
+	echo "  (Re-scanning for build options under gcc)."
+	BUILDWITHGCC=1
+	if [ $SHARED ] ; then
+		CFLAGS="`./tools/ccopts.sh gcc $OSNAME`" ;
+	else
+		CFLAGS="`./tools/ccopts.sh gcc`" ;
+	fi
+	}
+
+if [ $OSNAME = "AIX" -o $OSNAME = "HP-UX" -o $OSNAME = "SunOS" ] ; then
+	checkForGcc $OSNAME $SHARED ;
 fi
 
 # Build the appropriate target with the given compiler.  If we're overriding
@@ -154,8 +169,7 @@ buildWithGcc()
 	OSNAME=$1
 	shift
 
-	make CC=gcc LD=gcc \
-		 CFLAGS="$* `./tools/ccopts.sh gcc` -DOSVERSION=$OSVERSION" $OSNAME
+	make CC=gcc LD=gcc CFLAGS="$* $CFLAGS -DOSVERSION=$OSVERSION" $OSNAME
 	}
 
 buildWithNativeTools()
@@ -176,7 +190,7 @@ buildWithGccShared()
 	shift
 
 	make CC=gcc LD=gcc TARGET=$SLIBNAME OBJPATH=$SHARED_OBJ_PATH \
-		 CFLAGS="$* `./tools/ccopts.sh gcc $OSNAME` -DOSVERSION=$OSVERSION" $OSNAME
+		 CFLAGS="$* $CFLAGS -DOSVERSION=$OSVERSION" $OSNAME
 	}
 
 buildWithNativeToolsShared()
@@ -188,73 +202,22 @@ buildWithNativeToolsShared()
 	shift
 	shift
 
-	make TARGET=$SLIBNAME OBJPATH=$SHARED_OBJ_PATH \
-		 CC=$CC CFLAGS="$* $CFLAGS -DOSVERSION=$OSVERSION" $OSNAME
+	make CC=$CC TARGET=$SLIBNAME OBJPATH=$SHARED_OBJ_PATH \
+		 CFLAGS="$* $CFLAGS -DOSVERSION=$OSVERSION" $OSNAME
 	}
 
-# Build cryptlib, taking into account OS-specific quirks.  Note that we
-# don't provide a gcc option for AIX because mixing gcc-created and
-# IBM-sourced components isn't a good idea, and it seems that anyone who's
-# using AIX also has the IBM tools installed with it.
-
-buildStatic()
-	{
-	OSNAME=$1
-	shift
-
-	case $OSNAME in
-
-		'HP-UX')
-			if [ $BUILDWITHGCC ] ; then
-				buildWithGcc "HP-UX" $* ;
-			else
-				buildWithNativeTools "HP-UX" $CC $* ;
-			fi ;;
-
-		'SunOS')
-			if [ -x /opt/SUNWspro/bin/cc ] ; then
-				buildWithNativeTools "SunOS" /opt/SUNWspro/bin/cc $* ;
-			elif [ $BUILDWITHGCC ] ; then
-				buildWithGcc "SunOS" $* ;
-			else
-				buildWithNativeTools "SunOS" $CC $* ;
-			fi ;;
-
-		*)
-			buildWithNativeTools $OSNAME $CC $* ;;
-	esac
-	}
-
-buildShared()
-	{
-	OSNAME=$1
-	shift
-
-	case $OSNAME in
-
-		'HP-UX')
-			if [ $BUILDWITHGCC ] ; then
-				buildWithGccShared "HP-UX" $SLIBNAME $* ;
-			else
-				buildWithNativeToolsShared "HP-UX" $SLIBNAME $CC $* ;
-			fi ;;
-
-		'SunOS')
-			if [ -x /opt/SUNWspro/bin/cc ] ; then
-				buildWithNativeToolsShared "SunOS" $SLIBNAME "/opt/SUNWspro/bin/cc" $* ;
-			elif [ $BUILDWITHGCC ] ; then
-				buildWithGccShared "SunOS" $SLIBNAME $* ;
-			else
-				buildWithNativeToolsShared "SunOS" $SLIBNAME $CC $* ;
-			fi ;;
-
-		*)
-			buildWithNativeToolsShared $OSNAME $SLIBNAME $CC $* ;;
-	esac
-	}
+# Build cryptlib, taking into account OS-specific quirks
 
 if [ $SHARED ] ; then
-	buildShared $OSNAME $* ;
+	if [ $BUILDWITHGCC ] ; then
+		buildWithGccShared $OSNAME $SLIBNAME $* ;
+	else
+		buildWithNativeToolsShared $OSNAME $SLIBNAME $CC $* ;
+	fi
 else
-	buildStatic $OSNAME $* ;
+	if [ $BUILDWITHGCC ] ; then
+		buildWithGcc $OSNAME $* ;
+	else
+		buildWithNativeTools $OSNAME $CC $* ;
+	fi
 fi

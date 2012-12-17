@@ -1,7 +1,7 @@
 #****************************************************************************
 #*																			*
 #*							Makefile for cryptlib 3.4.x						*
-#*						Copyright Peter Gutmann 1995-2010					*
+#*						Copyright Peter Gutmann 1995-2012					*
 #*																			*
 #****************************************************************************
 
@@ -16,7 +16,7 @@
 #														- Chris Wedgwood.
 # At least it doesn't pipe itself through sed yet.
 #
-# (Note that as of 3.1 beta 3, it does pipe itself through sed on non-Unix
+# (Note that as of 3.1 beta 3 it does pipe itself through sed on non-Unix
 #  systems to retarget Unix-specific files to OS-specific ones and perform
 #  various other operations that aren't easily possible by adding another
 #  level of recursion).
@@ -36,7 +36,7 @@
 
 MAJ		= 3
 MIN		= 4
-PLV		= 1
+PLV		= 2
 PROJ	= cl
 LIBNAME	= lib$(PROJ).a
 SLIBNAME = lib$(PROJ).so.$(MAJ).$(MIN).$(PLV)
@@ -54,11 +54,14 @@ DYLIBNAME = lib$(PROJ).$(MAJ).$(MIN).dylib
 # register on x86 (which desperately needs it), this may screw up some
 # versions of gdb if you try and debug a version (compile with '-g')
 # compiled with this option.  As a general comment, to build the debug
-# version remove the -DNDEBUG below and build with 'make CFLAGS="-g3 -ggdb"',
-# or use the debug target "make debug".  This assumes a certain amount of
-# gnu-ishness in the debug environment (which seems to be the universal
-# default), if you're using something else then you'll have to modify
-# CFLAGS_DEBUG below.
+# version remove the -DNDEBUG below and build with
+# 'make CFLAGS="-g3 -ggdb -O0"' (the -O0 is required because the default
+# is -O1, which is enough to mess up debugging at times), or use the debug
+# target "make debug".  This assumes a certain amount of gnu-ishness in the
+# debug environment (which seems to be the universal default), if you're
+# using something else then you'll have to modify CFLAGS_DEBUG below.  In
+# addition it's probably a good idea to remove -fomit-frame-pointer if it's
+# set for the target environment.
 #
 # If the OS supports it, the multithreaded version of cryptlib will be built.
 # To specifically disable this add -DNO_THREADS.
@@ -70,8 +73,8 @@ DYLIBNAME = lib$(PROJ).$(MAJ).$(MIN).dylib
 # Further cc flags are gathered dynamically at runtime via the ccopts.sh
 # script.
 
-CFLAGS		= "-c -D__UNIX__ -DNDEBUG -I."
-CFLAGS_DEBUG = "-c -D__UNIX__ -I. -g3 -ggdb"
+CFLAGS		= -c -D__UNIX__ -DNDEBUG -I.
+CFLAGS_DEBUG = -c -D__UNIX__ -I. -g3 -ggdb -O0
 
 # Paths and command names.  We have to be careful with comments attached to
 # path defines because some makes don't strip trailing spaces.
@@ -89,6 +92,7 @@ CPP			= $(CC) -E
 LD			= $(CC)
 LDFLAGS		=
 AR			= ar
+STRIP		= strip
 SHELL		= /bin/sh
 OSNAME		= `uname`
 LINKFILE	= link.tmp
@@ -157,7 +161,8 @@ CERTOBJS	= $(OBJPATH)certrev.o $(OBJPATH)certschk.o $(OBJPATH)certsign.o \
 
 CRYPTOBJS	= $(OBJPATH)aes_modes.o $(OBJPATH)aescrypt.o $(OBJPATH)aeskey.o \
 			  $(OBJPATH)aestab.o $(OBJPATH)bfecb.o $(OBJPATH)bfenc.o \
-			  $(OBJPATH)bfskey.o $(OBJPATH)descbc.o $(OBJPATH)desecb.o \
+			  $(OBJPATH)bfskey.o $(OBJPATH)castecb.o $(OBJPATH)castenc.o \
+			  $(OBJPATH)castskey.o $(OBJPATH)descbc.o $(OBJPATH)desecb.o \
 			  $(OBJPATH)desecb3.o $(OBJPATH)desenc.o $(OBJPATH)desskey.o \
 			  $(OBJPATH)gcm.o $(OBJPATH)gf128mul.o $(OBJPATH)icbc.o \
 			  $(OBJPATH)iecb.o $(OBJPATH)iskey.o $(OBJPATH)rc2cbc.o \
@@ -166,16 +171,17 @@ CRYPTOBJS	= $(OBJPATH)aes_modes.o $(OBJPATH)aescrypt.o $(OBJPATH)aeskey.o \
 			  $(OBJPATH)rc5skey.o
 
 CTXOBJS		= $(OBJPATH)ctx_3des.o $(OBJPATH)ctx_aes.o $(OBJPATH)ctx_attr.o \
-			  $(OBJPATH)ctx_bf.o $(OBJPATH)ctx_des.o $(OBJPATH)ctx_dh.o \
-			  $(OBJPATH)ctx_dsa.o $(OBJPATH)ctx_ecdh.o $(OBJPATH)ctx_ecdsa.o \
-			  $(OBJPATH)ctx_elg.o $(OBJPATH)ctx_generic.o $(OBJPATH)ctx_hmd5.o \
-			  $(OBJPATH)ctx_hrmd.o $(OBJPATH)ctx_hsha.o $(OBJPATH)ctx_hsha2.o \
-			  $(OBJPATH)ctx_idea.o $(OBJPATH)ctx_md5.o $(OBJPATH)ctx_misc.o \
-			  $(OBJPATH)ctx_rc2.o $(OBJPATH)ctx_rc4.o $(OBJPATH)ctx_rc5.o \
-			  $(OBJPATH)ctx_ripe.o $(OBJPATH)ctx_rsa.o $(OBJPATH)ctx_sha.o \
-			  $(OBJPATH)ctx_sha2.o $(OBJPATH)kg_dlp.o $(OBJPATH)kg_ecc.o \
-			  $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o $(OBJPATH)keyload.o \
-			  $(OBJPATH)key_id.o $(OBJPATH)key_rd.o $(OBJPATH)key_wr.o
+			  $(OBJPATH)ctx_bf.o $(OBJPATH)ctx_cast.o $(OBJPATH)ctx_des.o \
+			  $(OBJPATH)ctx_dh.o $(OBJPATH)ctx_dsa.o $(OBJPATH)ctx_ecdh.o \
+			  $(OBJPATH)ctx_ecdsa.o $(OBJPATH)ctx_elg.o \
+			  $(OBJPATH)ctx_generic.o $(OBJPATH)ctx_hmd5.o $(OBJPATH)ctx_hrmd.o \
+			  $(OBJPATH)ctx_hsha.o $(OBJPATH)ctx_hsha2.o $(OBJPATH)ctx_idea.o \
+			  $(OBJPATH)ctx_md5.o $(OBJPATH)ctx_misc.o $(OBJPATH)ctx_rc2.o \
+			  $(OBJPATH)ctx_rc4.o $(OBJPATH)ctx_rc5.o $(OBJPATH)ctx_ripe.o \
+			  $(OBJPATH)ctx_rsa.o $(OBJPATH)ctx_sha.o $(OBJPATH)ctx_sha2.o \
+			  $(OBJPATH)kg_dlp.o $(OBJPATH)kg_ecc.o $(OBJPATH)kg_prime.o \
+			  $(OBJPATH)kg_rsa.o $(OBJPATH)keyload.o $(OBJPATH)key_id.o \
+			  $(OBJPATH)key_rd.o $(OBJPATH)key_wr.o
 
 DEVOBJS		= $(OBJPATH)dev_attr.o $(OBJPATH)hardware.o $(OBJPATH)hw_dummy.o \
 			  $(OBJPATH)pkcs11.o $(OBJPATH)pkcs11_init.o $(OBJPATH)pkcs11_pkc.o \
@@ -193,11 +199,11 @@ ENVOBJS		= $(OBJPATH)cms_denv.o $(OBJPATH)cms_env.o $(OBJPATH)cms_envpre.o \
 HASHOBJS	= $(OBJPATH)md5dgst.o $(OBJPATH)rmddgst.o $(OBJPATH)sha1dgst.o \
 			  $(OBJPATH)sha2.o
 
-IOOBJS		= $(OBJPATH)cmp_tcp.o $(OBJPATH)dns.o $(OBJPATH)dns_srv.o \
-			  $(OBJPATH)file.o $(OBJPATH)http_rd.o $(OBJPATH)http_parse.o \
-			  $(OBJPATH)http_wr.o $(OBJPATH)memory.o $(OBJPATH)net.o \
-			  $(OBJPATH)net_proxy.o $(OBJPATH)net_trans.o $(OBJPATH)net_url.o \
-			  $(OBJPATH)stream.o $(OBJPATH)tcp.o
+IOOBJS		= $(OBJPATH)dns.o $(OBJPATH)dns_srv.o $(OBJPATH)file.o \
+			  $(OBJPATH)http_rd.o $(OBJPATH)http_parse.o $(OBJPATH)http_wr.o \
+			  $(OBJPATH)memory.o $(OBJPATH)net.o $(OBJPATH)net_proxy.o \
+			  $(OBJPATH)net_trans.o $(OBJPATH)net_url.o $(OBJPATH)stream.o \
+			  $(OBJPATH)tcp.o
 
 KEYSETOBJS	= $(OBJPATH)dbms.o $(OBJPATH)ca_add.o $(OBJPATH)ca_clean.o \
 			  $(OBJPATH)ca_issue.o $(OBJPATH)ca_misc.o $(OBJPATH)ca_rev.o \
@@ -215,7 +221,8 @@ KEYSETOBJS	= $(OBJPATH)dbms.o $(OBJPATH)ca_add.o $(OBJPATH)ca_clean.o \
 KRNLOBJS	= $(OBJPATH)attr_acl.o $(OBJPATH)certm_acl.o $(OBJPATH)init.o \
 			  $(OBJPATH)int_msg.o $(OBJPATH)key_acl.o $(OBJPATH)mech_acl.o \
 			  $(OBJPATH)msg_acl.o $(OBJPATH)obj_acc.o $(OBJPATH)objects.o \
-			  $(OBJPATH)sec_mem.o $(OBJPATH)semaphore.o $(OBJPATH)sendmsg.o
+			  $(OBJPATH)sec_mem.o $(OBJPATH)selftest.o $(OBJPATH)semaphore.o \
+			  $(OBJPATH)sendmsg.o
 
 LIBOBJS		= $(OBJPATH)cryptapi.o $(OBJPATH)cryptcrt.o $(OBJPATH)cryptctx.o \
 			  $(OBJPATH)cryptdev.o $(OBJPATH)cryptenv.o $(OBJPATH)cryptkey.o \
@@ -262,6 +269,14 @@ OBJS		= $(BNOBJS) $(CERTOBJS) $(CRYPTOBJS) $(CTXOBJS) $(DEVOBJS) \
 			  $(KRNLOBJS) $(LIBOBJS) $(MECHOBJS) $(MISCOBJS) $(SESSOBJS) \
 			  $(ZLIBOBJS) $(OSOBJS)
 
+# Win32 object files that replace ASMOBJS when building for Win32
+# using Unix tools
+
+WIN32ASMOBJS= bn/bn-win32.obj crypt/aescrypt2.obj crypt/b-win32.obj \
+			  crypt/c-win32.obj crypt/d-win32.obj crypt/m5-win32.obj \
+			  crypt/r4-win32.obj crypt/r5-win32.obj crypt/rm-win32.obj \
+			  crypt/s1-win32.obj zlib/inffas32.obj zlib/match686.obj
+
 # Object files for the self-test code
 
 TESTOBJS	= certimp.o certproc.o certs.o devices.o envelope.o highlvl.o \
@@ -281,7 +296,7 @@ CERT_DEP = cert/cert.h cert/certfn.h
 CRYPT_DEP	= cryptlib.h crypt.h cryptkrn.h misc/config.h misc/consts.h \
 			  misc/debug.h misc/int_api.h misc/os_spec.h
 
-KERNEL_DEP	= kernel/acl.h kernel/kernel.h kernel/thread.h
+KERNEL_DEP	= kernel/acl.h kernel/acl_perm.h kernel/kernel.h kernel/thread.h
 
 ZLIB_DEP = zlib/zconf.h zlib/zlib.h zlib/zutil.h
 
@@ -589,6 +604,9 @@ $(OBJPATH)ctx_attr.o:	$(CRYPT_DEP) context/context.h context/ctx_attr.c
 $(OBJPATH)ctx_bf.o:		$(CRYPT_DEP) context/context.h crypt/blowfish.h context/ctx_bf.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_bf.o context/ctx_bf.c
 
+$(OBJPATH)ctx_cast.o:	$(CRYPT_DEP) context/context.h crypt/cast.h context/ctx_cast.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_cast.o context/ctx_cast.c
+
 $(OBJPATH)ctx_des.o:	$(CRYPT_DEP) context/context.h crypt/testdes.h crypt/des.h \
 						context/ctx_des.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_des.o context/ctx_des.c
@@ -700,6 +718,16 @@ $(OBJPATH)bfenc.o:		crypt/osconfig.h crypt/blowfish.h crypt/bflocl.h crypt/bfenc
 $(OBJPATH)bfskey.o:		crypt/osconfig.h crypt/blowfish.h crypt/bflocl.h crypt/bfpi.h \
 						crypt/bfskey.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)bfskey.o crypt/bfskey.c
+
+$(OBJPATH)castecb.o:	crypt/osconfig.h crypt/cast.h crypt/castlcl.h crypt/castecb.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)castecb.o crypt/castecb.c
+
+$(OBJPATH)castenc.o:	crypt/osconfig.h crypt/cast.h crypt/castlcl.h crypt/castenc.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)castenc.o crypt/castenc.c
+
+$(OBJPATH)castskey.o:	crypt/osconfig.h crypt/cast.h crypt/castlcl.h crypt/castsbox.h \
+						crypt/castskey.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)castskey.o crypt/castskey.c
 
 $(OBJPATH)descbc.o:		crypt/osconfig.h crypt/des.h crypt/deslocl.h crypt/descbc.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)descbc.o crypt/descbc.c
@@ -878,9 +906,6 @@ $(OBJPATH)res_env.o:	$(CRYPT_DEP) envelope/envelope.h envelope/res_env.c
 
 # io subdirectory
 
-$(OBJPATH)cmp_tcp.o:	$(CRYPT_DEP) io/cmp_tcp.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)cmp_tcp.o io/cmp_tcp.c
-
 $(OBJPATH)dns.o:		$(CRYPT_DEP) io/tcp.h io/dns.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)dns.o io/dns.c
 
@@ -951,6 +976,9 @@ $(OBJPATH)objects.o:	$(CRYPT_DEP) $(KERNEL_DEP) kernel/objects.c
 
 $(OBJPATH)sec_mem.o:	$(CRYPT_DEP) $(KERNEL_DEP) kernel/sec_mem.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)sec_mem.o kernel/sec_mem.c
+
+$(OBJPATH)selftest.o:	$(CRYPT_DEP) $(KERNEL_DEP) kernel/selftest.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)selftest.o kernel/selftest.c
 
 $(OBJPATH)semaphore.o:	$(CRYPT_DEP) $(KERNEL_DEP) kernel/semaphore.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)semaphore.o kernel/semaphore.c
@@ -1445,12 +1473,12 @@ testlib.o:				cryptlib.h crypt.h test/test.h test/testlib.c
 # step based on the $(OSNAME) setting supplied to the build script.
 
 $(LIBNAME):		$(OBJS) $(EXTRAOBJS) $(TESTOBJS)
-				@./tools/buildlib.sh $(OSNAME) $(LIBNAME) $(OBJS) $(EXTRAOBJS)
-
+				@./tools/buildlib.sh $(OSNAME) $(LIBNAME) $(AR) \
+					$(OBJS) $(EXTRAOBJS)
 
 $(SLIBNAME):	$(OBJS) $(EXTRAOBJS) $(TESTOBJS)
-				@./tools/buildsharedlib.sh $(OSNAME) $(SLIBNAME) $(LD) $(OBJS) \
-					$(EXTRAOBJS)
+				@./tools/buildsharedlib.sh $(OSNAME) $(SLIBNAME) $(LD) \
+					$(STRIP) $(OBJS) $(EXTRAOBJS)
 
 $(DYLIBNAME):	$(OBJS) $(EXTRAOBJS) $(TESTOBJS)
 				@$(LD) -dynamiclib -compatibility_version $(MAJ).$(MIN) \
@@ -1569,7 +1597,7 @@ stestlib:		$(TESTOBJS)
 
 AIX:
 	@if [ $(CC) = "gcc" ] ; then \
-		make $(DEFINES) CFLAGS=3D"$(CFLAGS) -O3 -D_REENTRANT" ; \
+		make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -D_REENTRANT" ; \
 	else \
 		make $(DEFINES) CFLAGS="$(CFLAGS) -O2 -qmaxmem=-1 -qroconst -D_REENTRANT" ; \
 	fi
@@ -1663,12 +1691,12 @@ CRAY:
 
 # Cygwin: cc is gcc.
 
-CYGWIN_NT-5.0:
+CYGWIN_NT-5.1:
 	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
 		-fomit-frame-pointer -O3 -D__CYGWIN__ -I/usr/local/include"
 
-CYGWIN_NT-5.1:
+CYGWIN_NT-6.1:
 	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
 		-fomit-frame-pointer -O3 -D__CYGWIN__ -I/usr/local/include"
@@ -1792,7 +1820,7 @@ HP-UX:
 					./tools/buildasm.sh $(AS) $(OBJPATH) ; \
 					make $(DEFINES) CFLAGS="$(CFLAGS) +O3 +ESlit +DA2.0 +DS2.0 -Ae +W 563,604 -D_REENTRANT" ; \
 				else \
-					make $(DEFINES) CFLAGS="$(CFLAGS) +O3 -D_REENTRANT" ; \
+					make $(DEFINES) CFLAGS="$(CFLAGS) +O3 +ESlit -Ae +W 563,604 -D_REENTRANT" ; \
 				fi ; \
 			fi ;; \
 	esac
@@ -1848,6 +1876,25 @@ Linux:
 
 Darwin:
 	@make $(DEFINES) CFLAGS="$(CFLAGS) -fomit-frame-pointer" LDFLAGS="-object -s"
+
+# MinGW: cc is gcc.  Note that we have to use the cross-compile flags
+# XCFLAGS rather than CFLAGS because the latter implies a native Unix
+# build, and we also need to execute the target-init rule in order to
+# reconfigure ourselves to use the Win32 randomness-polling
+# system rather than the Unix one, and we need to use the pre-built
+# Win32 COFF object files because the assembler included with MinGW
+# is a rather minimal one that seems to be intended mostly as a back-
+# end for MinGW's gcc.
+
+MINGW32_NT-5.1:
+	@make OSNAME=win32 target-init
+	@make $(DEFINES) CFLAGS="$(XCFLAGS) -fomit-frame-pointer -O3"
+
+MINGW32_NT-6.1:
+	@make OSNAME=win32 target-init
+	@make $(DEFINES) EXTRAOBJS="$(WIN32ASMOBJS)" \
+		CFLAGS="$(XCFLAGS) -fomit-frame-pointer -O3 \
+		-Wl,--subsystem,windows,--output-def,cl32.def"
 
 # NCR MP-RAS: Use the NCR cc.  The "-DNCR_UST" is needed to enable threading
 #			  (User-Space Threads).
@@ -2011,31 +2058,31 @@ itgoaway:
 #				since it's 32-bit only.
 
 SunOS:
-	@if [ `echo $(CFLAGS) | grep -c -- '-m64'` = 0 ] ; then \
-		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
-	fi
-	@- if [ `uname -r | tr -d '[A-Z].' | cut -c 1` = '4' ] ; then \
-		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CC=gcc \
-			CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3" ; \
+	@if [ $(CC) = "gcc" ] ; then \
+		make SunOS-gcc $(DEFINES) CFLAGS="$(CFLAGS)" ; \
 	else \
-		if [ $(CC) = "gcc" ] ; then \
-			if [ `uname -m` = 'i86pc' ] ; then \
-				make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CC=$(CC) \
-					CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3 -DUSE_ASM -D_REENTRANT" ; \
-			else \
-				make $(DEFINES) CC=$(CC) CFLAGS="$(CFLAGS) -fomit-frame-pointer \
-					-O3 -D_REENTRANT" ; \
-			fi ; \
-		else \
-			if [ `uname -m` = 'i86pc' ] ; then \
-				make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" \
-					CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
-					-xO2 -DUSE_ASM -D_REENTRANT" ; \
-			else \
-				make $(DEFINES) CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
-					-xO2 -D_REENTRANT" ; \
-			fi ; \
-		fi ; \
+		make SunOS-SunPro $(DEFINES) CFLAGS="$(CFLAGS)" ; \
+	fi
+
+SunOS-gcc:
+	@- if [ `uname -m` = 'i86pc' -a `echo $(CFLAGS) | grep -c -- '-m64'` = 0 ] ; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CC=gcc \
+			CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3 -DUSE_ASM -D_REENTRANT" ; \
+	else \
+		make $(DEFINES) CC=gcc CFLAGS="$(CFLAGS) -fomit-frame-pointer \
+			-O3 -D_REENTRANT" ; \
+	fi
+
+SunOS-SunPro:
+	@- if [ `uname -m` = 'i86pc' -a `echo $(CFLAGS) | grep -c -- '-m64'` = 0 ] ; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" \
+			CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
+			-xO2 -DUSE_ASM -D_REENTRANT" ; \
+	else \
+		make $(DEFINES) CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
+			-xO2 -D_REENTRANT" ; \
 	fi
 
 # SVR4: Better results can be obtained by upgrading your OS to 4.4 BSD.
@@ -2177,7 +2224,7 @@ NONSTOP_KERNEL:
 #
 # target-X:
 #	@make directories
-#	make $(DEFINES) OSNAME=target-X CFLAGS="$(XCFLAGS) \
+#	make $(DEFINES) OSNAME=target-X CC=target-cc CFLAGS="$(XCFLAGS) \
 #		-DCONFIG_DATA_xxxENDIAN -DOSVERSION=major_version \
 #		-fomit-frame-pointer -O3 -D_REENTRANT"
 #
@@ -2281,27 +2328,45 @@ target-freertos-ppc:
 		-DCONFIG_DATA_BIGENDIAN -D__FREERTOS__ -O2 \
 		`./tools/ccopts-crosscompile.sh $(CC)`"
 
+# Apple iOS hosted on OS X.
+
+target-ios:
+	@make directories
+	@make OSNAME=iOS target-init
+	make $(XDEFINES) OSNAME=iOS CC=/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/cc \
+		CFLAGS="$(XCFLAGS) -DCONFIG_DATA_LITTLEENDIAN -fomit-frame-pointer -O2 \
+		-D_REENTRANT -arch armv7 \
+		-isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS5.0.sdk"
+	make $(SLIBNAME) OBJPATH=$(OBJPATH) CROSSCOMPILE=1 OSNAME=iOS
+
 # Embedded Linux.  Note that we don't have to perform the 'make target-init'
 # as for the other systems since the target environment is the same as the
 # source environment, and we use $(CFLAGS) rather than $(XCFLAGS) for the
 # same reason.
 
+target-linux-arm:
+	@make directories
+	make $(XDEFINES) OSNAME=Linux CC=arm-linux-gnueabi-gcc AR=arm-linux-gnueabi-ar \
+		CFLAGS="$(CFLAGS) -DCONFIG_DATA_LITTLEENDIAN -fomit-frame-pointer \
+		-O2 -D_REENTRANT"
+	make $(SLIBNAME) OBJPATH=$(OBJPATH) LD=arm-linux-gnueabi-ld \
+		STRIP=arm-linux-gnueabi-strip CROSSCOMPILE=1 OSNAME=Linux
+
+target-linux-sh4:
+	@make directories
+	make $(XDEFINES) OSNAME=Linux CC=sh4-linux-gnu-gcc AR=sh4-linux-gnu-ar \
+		CFLAGS="$(CFLAGS) -DCONFIG_DATA_LITTLEENDIAN -fomit-frame-pointer \
+		-O2 -D_REENTRANT"
+	make $(SLIBNAME) OBJPATH=$(OBJPATH) LD=sh4-linux-gnu-ld \
+		STRIP=sh4-linux-gnu-strip CROSSCOMPILE=1 OSNAME=Linux
+
 target-linux-ppc:
 	@make directories
-	make $(XDEFINES) OSNAME=Linux CFLAGS="$(CFLAGS) \
-		-DCONFIG_DATA_BIGENDIAN -fomit-frame-pointer -O2 \
-		-D_REENTRANT -DUSE_PKCS11"
-	make $(SLIBNAME) OBJPATH=$(OBJPATH) CROSSCOMPILE=1 OSNAME=Linux
-
-# MinGW: Gnu Win32 SDK hosted under Cygwin or non-Windows OS.  This is
-# effectively a cross-compile since although the host environment is Unix
-# (or at least emulated Unix), the target is Win32.
-
-target-mingw:
-	@make OSNAME=win32 target-init
-	@make asm_elf OBJPATH=$(OBJPATH)
-	make $(XDEFINES) OSNAME=MinGW CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DWIN32 -DUSE_ASM -fomit-frame-pointer -O3"
+	make $(XDEFINES) OSNAME=Linux CC=powerpc-eabi-gcc AR=powerpc-eabi-ar \
+		CFLAGS="$(CFLAGS) -DCONFIG_DATA_BIGENDIAN -fomit-frame-pointer \
+		-O2 -D_REENTRANT"
+	make $(SLIBNAME) OBJPATH=$(OBJPATH) LD=powerpc-eabi-ld \
+		STRIP=powerpc-eabi-strip CROSSCOMPILE=1 OSNAME=Linux
 
 # MIPS running Linux: Little-endian, 2.x kernel.  Note that we use $(CFLAGS)
 # rather than $(XCFLAGS) since this is a Unix system, just not the same as
@@ -2411,36 +2476,50 @@ target-symbian-emulator:
 	make $(XDEFINES) OSNAME=Symbian CC=mwccsym2 CFLAGS="$(XCFLAGS) \
 		-D__SYMBIAN32__ -O2 -I$(CARBIDE_INCLUDE_PATH)"
 
-# ThreadX: Gnu toolchain under Cygwin or Unix.  The front-end is usually
-# Eclipse, but it's not really needed for building cryptlib.
+# ThreadX: Usually the Gnu toolchain under Cygwin or Unix (with occasional
+# exceptions for vendor-specific compilers, in the rules below the ones that
+# invoke ccopts-crosscompile.sh are for the Gnu toolchain).  The front-end
+# when gcc is used is usually Eclipse, but it's not really needed for
+# building cryptlib.
+
+THREADX_IAR_PATH = "C:/Program Files (x86)/IAR Systems/Embedded Workbench 6.4"
+THREADX_INCLUDE_PATH = "../../../uk_smets_integ_01_crypto/projects/threadx"
 
 target-threadx-arm:
 	@make OSNAME=threadx target-init
 	make $(XDEFINES) OSNAME=ThreadX CC=armcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -D__THREADX__ -O2"
+		-DCONFIG_DATA_LITTLEENDIAN -D__ThreadX__ -O2"
 
 target-threadx-mb:
 	@make OSNAME=threadx target-init
 	make $(XDEFINES) OSNAME=ThreadX CC=mb-elf-gcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_BIGENDIAN -D__THREADX__ -O2 \
+		-DCONFIG_DATA_BIGENDIAN -D__ThreadX__ -O2 \
 		`./tools/ccopts-crosscompile.sh $(CC)`"
 
 target-threadx-mips:
 	@make OSNAME=threadx target-init
 	make $(XDEFINES) OSNAME=ThreadX CC=mips-elf-gcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -D__THREADX__ -O2 \
+		-DCONFIG_DATA_LITTLEENDIAN -D__ThreadX__ -O2 \
 		`./tools/ccopts-crosscompile.sh $(CC)`"
 
 target-threadx-ppc:
 	@make OSNAME=threadx target-init
 	make $(XDEFINES) OSNAME=ThreadX CC=powerpc-eabi-gcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_BIGENDIAN -D__THREADX__ -O2 \
+		-DCONFIG_DATA_BIGENDIAN -D__ThreadX__ -O2 \
 		`./tools/ccopts-crosscompile.sh $(CC)`"
+
+target-threadx-rx:
+	@make OSNAME=threadx target-init
+	make $(XDEFINES) OSNAME=ThreadX CC=iccrx CFLAGS="$(XCFLAGS) \
+		-D__ThreadX__ -DDEBUG_DIAGNOSTIC_ENABLE -DCONFIG_DEBUG_MALLOC \
+		-DCONFIG_DATA_LITTLEENDIAN -DOPENSSL_NO_FP_API -DCONFIG_NO_STDIO \
+		-Ohs --core RX610 -r -I $(THREADX_INCLUDE_PATH) \
+		--dlib_config '$(THREADX_IAR_PATH)/rx/LIB/dlrxfllf.h'"
 
 target-threadx-x86:
 	@make OSNAME=threadx target-init
 	make $(XDEFINES) OSNAME=ThreadX CC=i386-elf-gcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -D__THREADX__ -O2 \
+		-DCONFIG_DATA_LITTLEENDIAN -D__ThreadX__ -O2 \
 		`./tools/ccopts-crosscompile.sh $(CC)`"
 
 # uC/OS-II: Generic toolchain for various architectures.

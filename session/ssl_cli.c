@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib SSL v3/TLS Client Management					*
-*					   Copyright Peter Gutmann 1998-2010					*
+*					   Copyright Peter Gutmann 1998-2011					*
 *																			*
 ****************************************************************************/
 
@@ -96,8 +96,10 @@ static int checkSuiteBSelection( IN_RANGE( SSL_FIRST_VALID_SUITE, \
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int writeCipherSuiteList( INOUT STREAM *stream, 
+								 IN_RANGE( SSL_MINOR_VERSION_SSL, \
+										   SSL_MINOR_VERSION_TLS12 ) \
+									const int sslVersion,
 								 const BOOLEAN usePSK, 
-								 const BOOLEAN useTLS12,
 								 const BOOLEAN isServer,
 								 IN_FLAGS_Z( SSL ) const int suiteBinfo )
 	{
@@ -110,6 +112,8 @@ static int writeCipherSuiteList( INOUT STREAM *stream,
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
+	REQUIRES( sslVersion >= SSL_MINOR_VERSION_SSL && \
+			  sslVersion <= SSL_MINOR_VERSION_TLS12 );
 #ifdef CONFIG_SUITEB
 	REQUIRES( suiteBinfo >= SSL_PFLAG_NONE && suiteBinfo < SSL_PFLAG_MAX );
 #endif /* CONFIG_SUITEB */
@@ -152,10 +156,22 @@ static int writeCipherSuiteList( INOUT STREAM *stream,
 			}
 #endif /* CONFIG_SUITEB */
 
-		/* If it's a PSK or TLS 1.2 suite but we're not using PSK or a TLS 
-		   1.2 handshake, skip it */
-		if( ( ( suiteFlags & CIPHERSUITE_FLAG_PSK ) && !usePSK ) || \
-			( ( suiteFlags & CIPHERSUITE_FLAG_TLS12 ) && !useTLS12 ) )
+		/* Make sure that the suite is appropriate for the SSL/TLS version
+		   that we're using.  Normally we can use TLS suites in SSL (e.g. 
+		   the AES suites), but we can't use ECC both because this requires 
+		   extensions and because the SSLv3 PRF mechanisms can't handle 
+		   ECC's premaster secrets */
+		if( ( ( suiteFlags & CIPHERSUITE_FLAG_ECC ) && \
+			  sslVersion <= SSL_MINOR_VERSION_SSL ) || \
+			( ( suiteFlags & CIPHERSUITE_FLAG_TLS12 ) && \
+			  sslVersion <= SSL_MINOR_VERSION_TLS11 ) )
+			{
+			suiteIndex++;
+			continue;
+			}
+
+		/* If it's a PSK suite but we're not using PSK, skip it */
+		if( ( suiteFlags & CIPHERSUITE_FLAG_PSK ) && !usePSK )
 			{
 			suiteIndex++;
 			continue;
@@ -311,6 +327,317 @@ static int processServerKeyex( INOUT STREAM *stream,
 
 /****************************************************************************
 *																			*
+*					Server Certificate Checking Functions					*
+*																			*
+****************************************************************************/
+
+/* Matching names in certificates can get quite tricky due to the usual 
+   erratic nature of what gets put in them.  Firstly, supposed FQDNs can be 
+   unqualified names and/or can be present as full URLs rather than just 
+   domain names, so we use sNetParseURL() on them before doing anything else 
+   with them.  Secondly, PKIX tries to pretend that wildcard certificates 
+   don't exist, and so there are no official guidelines for how they should 
+   be laid out.  To minimise the potential for mischief we only allow a
+   wildcard at the start of the domain, and don't allow wildcards for the 
+   first- or second-level names.
+   
+   Since this code is going to result in server names (and therefore 
+   connections) being rejected, it's unusually loquacious about the reasons 
+   for the rejection */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static int matchName( INOUT_BUFFER_FIXED( serverNameLength ) BYTE *serverName,
+					  IN_LENGTH_DNS const int serverNameLength,
+					  INOUT_BUFFER_FIXED( certNameLength ) BYTE *certName,
+					  IN_LENGTH_DNS const int originalCertNameLength,
+					  INOUT ERROR_INFO *errorInfo )
+	{
+	URL_INFO urlInfo;
+	BOOLEAN hasWildcard = FALSE;
+	int certNameLength, dotCount = 0, i, status;
+
+	assert( isWritePtr( serverName, serverNameLength ) );
+	assert( isWritePtr( certName, originalCertNameLength ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	REQUIRES( serverNameLength > 0 && serverNameLength <= MAX_DNS_SIZE );
+	REQUIRES( originalCertNameLength > 0 && \
+			  originalCertNameLength <= MAX_DNS_SIZE );
+
+	/* Extract the FQDN portion from the certificate name */
+	status = sNetParseURL( &urlInfo, certName, originalCertNameLength, 
+						   URL_TYPE_NONE );
+	if( cryptStatusError( status ) )
+		{
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, errorInfo,
+				  "Invalid host name '%s' in server's certificate",
+				  sanitiseString( certName, CRYPT_MAX_TEXTSIZE,
+								  originalCertNameLength ) ) );
+		}
+	certName = ( BYTE * ) urlInfo.host;
+	certNameLength = urlInfo.hostLen;
+
+	/* If the name in the certificate is longer than the server name then it 
+	   can't be a match */
+	if( certNameLength > serverNameLength )
+		{
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, errorInfo,
+				  "Server name '%s' doesn't match host name '%s' in "
+				  "server's certificate", 
+				  sanitiseString( serverName, CRYPT_MAX_TEXTSIZE,
+								  serverNameLength ),
+				  sanitiseString( certName, CRYPT_MAX_TEXTSIZE,
+								  certNameLength ) ) );
+		}
+
+	/* Make sure that, if it's a wildcarded name, it follows the pattern 
+	   "'*' ... '.' ... '.' ..." */
+	for( i = 0; i < certNameLength; i++ )
+		{
+		const int ch = byteToInt( certName[ i ] );
+
+		if( ch == '*' )
+			{
+			if( i != 0 )
+				{
+				/* The wildcard character isn't the first one in the name, 
+				   it's invalid */
+				retExt( CRYPT_ERROR_INVALID,
+						( CRYPT_ERROR_INVALID, errorInfo,
+						  "Host name '%s' in server's certificate contains "
+						  "wildcard in invalid position",
+						  sanitiseString( certName, CRYPT_MAX_TEXTSIZE,
+										  certNameLength ) ) );
+				}
+			hasWildcard = TRUE;
+			}
+		if( ch == '.' )
+			dotCount++;
+		}
+	if( hasWildcard && dotCount < 2 )
+		{
+		/* The wildcard applies to the first- or second-level domain, it's 
+		   invalid */
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, errorInfo,
+				  "Host name '%s' in server's certificate contains "
+				  "wildcard in invalid position",
+				  sanitiseString( certName, CRYPT_MAX_TEXTSIZE,
+								  certNameLength ) ) );
+		}
+
+	/* Match the certificate name and the server name, taking into account
+	   wildcarding */
+	if( hasWildcard )
+		{
+		const int delta = serverNameLength - ( certNameLength - 1 );
+
+		ENSURES_B( delta > 0 && delta < serverNameLength );
+
+		/* Match the suffix past the wildcard */
+		if( !memcmp( certName + 1, serverName + delta, certNameLength - 1 ) )
+			return( CRYPT_OK );
+		}
+	else
+		{
+		/* It's a straight match */
+		if( certNameLength == serverNameLength && \
+			!memcmp( certName, serverName, certNameLength ) )
+			return( CRYPT_OK );
+		}
+
+	/* The name doesn't match */
+	retExt( CRYPT_ERROR_INVALID,
+			( CRYPT_ERROR_INVALID, errorInfo,
+			  "Server name '%s' doesn't match host name '%s' in server's " 
+			  "certificate", 
+			  sanitiseString( serverName, CRYPT_MAX_TEXTSIZE,
+							  serverNameLength ),
+			  sanitiseString( certName, CRYPT_MAX_TEXTSIZE,
+							  certNameLength ) ) );
+	}
+
+/* Check the remote host name against one or more server names in the 
+   certificate */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 5 ) ) \
+static int checkHostName( const CRYPT_CERTIFICATE iCryptCert,
+						  INOUT_BUFFER_FIXED( serverNameLength ) void *serverName,
+						  IN_LENGTH_DNS const int serverNameLength,
+						  const BOOLEAN multipleNamesPresent,
+						  INOUT ERROR_INFO *errorInfo )
+	{
+	MESSAGE_DATA msgData;
+	static const int nameValue = CRYPT_CERTINFO_SUBJECTNAME;
+	static const int altNameValue = CRYPT_CERTINFO_SUBJECTALTNAME;
+	static const int dnsNameValue = CRYPT_CERTINFO_DNSNAME;
+	char certName[ MAX_DNS_SIZE + 8 ];
+	int certNameLength = CRYPT_ERROR, status;
+
+	assert( isWritePtr( serverName, serverNameLength ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iCryptCert ) );
+	REQUIRES( serverNameLength > 0 && serverNameLength <= MAX_DNS_SIZE );
+
+	/* Get the CN and check it against the host name */
+	setMessageData( &msgData, certName, MAX_DNS_SIZE );
+	status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S, 
+							  &msgData, CRYPT_CERTINFO_COMMONNAME );
+	if( cryptStatusOK( status ) )
+		{
+		certNameLength = msgData.length;
+		status = matchName( serverName, serverNameLength, certName,
+							certNameLength, errorInfo );
+		if( cryptStatusOK( status ) )
+			return( status );
+
+		/* If this was the only name that's present then we can't go any 
+		   further (the extended error information will have been provided 
+		   by matchName()) */
+		if( !multipleNamesPresent )
+			return( CRYPT_ERROR_INVALID );
+		}
+
+	/* The CN didn't match, check the altName */
+	status = krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+							  ( MESSAGE_CAST ) &altNameValue, 
+							  CRYPT_ATTRIBUTE_CURRENT );
+	if( cryptStatusOK( status ) )
+		{
+		status = krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+								  ( MESSAGE_CAST ) &dnsNameValue, 
+								  CRYPT_ATTRIBUTE_CURRENT_INSTANCE );
+		}
+	if( cryptStatusError( status ) )
+		{
+		/* We couldn't find a DNS name in the altName, which means that the 
+		   server name doesn't match the name (from the previously-used CN) 
+		   in the certificate.
+		   
+		   If there's no CN present then there's no certificate host name to 
+		   use in the error message and we have to construct our own one, 
+		   otherwise it'll have been provided by the previous call to 
+		   matchName() */
+		krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+						 ( MESSAGE_CAST ) &nameValue, 
+						 CRYPT_ATTRIBUTE_CURRENT );	/* Re-select subject DN */
+		if( certNameLength == CRYPT_ERROR )
+			{
+			retExt( CRYPT_ERROR_INVALID,
+					( CRYPT_ERROR_INVALID, errorInfo,
+					  "Server name '%s' doesn't match host name in "
+					  "server's certificate",
+					  sanitiseString( serverName, CRYPT_MAX_TEXTSIZE,
+									  serverNameLength ) ) );
+			}
+		return( CRYPT_ERROR_INVALID );	/* See comment above */
+		}
+	do
+		{
+		setMessageData( &msgData, certName, MAX_DNS_SIZE );
+		status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S, 
+								  &msgData, CRYPT_CERTINFO_DNSNAME );
+		if( cryptStatusOK( status ) )
+			{
+			status = matchName( serverName, serverNameLength, certName,
+								msgData.length, errorInfo );
+			if( cryptStatusOK( status ) )
+				return( status );
+			}
+		}
+	while( krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+							MESSAGE_VALUE_CURSORNEXT,
+							CRYPT_ATTRIBUTE_CURRENT_INSTANCE ) == CRYPT_OK );
+	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+					 ( MESSAGE_CAST ) &nameValue, CRYPT_ATTRIBUTE_CURRENT );
+					 /* Re-select subject DN */
+
+	/* We couldn't find any name that matches the server name */
+	retExt( CRYPT_ERROR_INVALID,
+			( CRYPT_ERROR_INVALID, errorInfo,
+			  "Server name '%s' doesn't match any of the host names in "
+			  "server's certificate",
+			  sanitiseString( serverName, CRYPT_MAX_TEXTSIZE,
+							  serverNameLength ) ) );
+	}
+
+/* Check that the certificate from the remote system is in order.  This 
+   involves checking that the name of the host that we've connect to
+   matches one of the names in the certificate, and that the certificate 
+   itself is in order */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkCertificateInfo( INOUT SESSION_INFO *sessionInfoPtr )
+	{
+	const CRYPT_CERTIFICATE iCryptCert = sessionInfoPtr->iKeyexCryptContext;
+	MESSAGE_DATA msgData;
+	const ATTRIBUTE_LIST *serverNamePtr = \
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_SERVER_NAME );
+	static const int nameValue = CRYPT_CERTINFO_SUBJECTNAME;
+	static const int altNameValue = CRYPT_CERTINFO_SUBJECTALTNAME;
+	const int verifyFlags = sessionInfoPtr->protocolFlags & \
+			( SSL_PFLAG_DISABLE_NAMEVERIFY | SSL_PFLAG_DISABLE_CERTVERIFY );
+	BOOLEAN multipleNamesPresent = FALSE;
+	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* If all verification has been disabled then there's nothing to do */
+	if( verifyFlags == ( SSL_PFLAG_DISABLE_NAMEVERIFY | \
+						 SSL_PFLAG_DISABLE_CERTVERIFY ) )
+		return( CRYPT_OK );
+
+	/* The server name is traditionally given as the certificate's CN, 
+	   however it may also be present as an altName.  First we check whether 
+	   there's an altName present, this is used to control error handling 
+	   since if there isn't one present we stop after a failed CN check and 
+	   if there is one present we continue on to the altName(s) */
+	status = krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+							  ( MESSAGE_CAST ) &altNameValue, 
+							  CRYPT_ATTRIBUTE_CURRENT );
+	if( cryptStatusOK( status ) )
+		{
+		setMessageData( &msgData, NULL, 0 );
+		status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S, 
+								  &msgData, CRYPT_CERTINFO_DNSNAME );
+		if( cryptStatusOK( status ) )
+			multipleNamesPresent = TRUE;
+		}
+	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+					 ( MESSAGE_CAST ) &nameValue, CRYPT_ATTRIBUTE_CURRENT );
+					 /* Re-select the subject DN */
+
+	/* If there's a server name present and name checking hasn't been 
+	   disabled, make sure that it matches one of the names in the 
+	   certificate */
+	if( serverNamePtr != NULL && \
+		!( verifyFlags & SSL_PFLAG_DISABLE_NAMEVERIFY ) )
+		{
+		status = checkHostName( iCryptCert, serverNamePtr->value, 
+								serverNamePtr->valueLength, 
+								multipleNamesPresent, SESSION_ERRINFO );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* If certificate verification hasn't been disabled, make sure that the 
+	   server's certificate verifies */
+	if( !( verifyFlags & SSL_PFLAG_DISABLE_CERTVERIFY ) )
+		{
+		/* This is still too risky to enable by default because most users
+		   outside of web browsing don't go for the commercial CA
+		   racket */
+		}
+
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
 *							Client-side Connect Functions					*
 *																			*
 ****************************************************************************/
@@ -426,11 +753,9 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 				handshakeInfo->sessionIDlength );
 		sessionIDsent = TRUE;
 		}
-	status = writeCipherSuiteList( stream,
+	status = writeCipherSuiteList( stream, sessionInfoPtr->version,
 						findSessionInfo( sessionInfoPtr->attributeList,
 										 CRYPT_SESSINFO_USERNAME ) != NULL ? \
-							TRUE : FALSE,
-						( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 ) ? \
 							TRUE : FALSE,
 						isServer( sessionInfoPtr ),
 						sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB );
@@ -623,6 +948,14 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		status = readSSLCertChain( sessionInfoPtr, handshakeInfo,
 							stream, &sessionInfoPtr->iKeyexCryptContext,
 							FALSE );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( stream );
+			return( status );
+			}
+
+		/* Check the details in the certificate chain */
+		status = checkCertificateInfo( sessionInfoPtr );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );

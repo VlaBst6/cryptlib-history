@@ -91,15 +91,15 @@ static const FAR_BSS URL_PARSE_INFO urlParseInfo[] = {
 	{ TEXT( "http://www.server.com/" ), TEXT( "www.server.com" ), 0, NULL },
 	{ TEXT( "http://www.server.com:80" ), TEXT( "www.server.com" ), 80, NULL },
 	{ TEXT( "http://user@www.server.com:80" ), TEXT( "www.server.com" ), 80, TEXT( "user" ) },
-	{ TEXT( "http://www.server.com/location.php" ), TEXT( "www.server.com/location.php" ), 0, NULL },
-	{ TEXT( "http://www.server.com:80/location.php" ), TEXT( "www.server.com/location.php" ), 80, NULL },
-	{ TEXT( "http://www.server.com/location1/location2/location.php" ), TEXT( "www.server.com/location1/location2/location.php" ), 0, NULL },
+	{ TEXT( "http://www.server.com/location.php" ), TEXT( "www.server.com" ), 0, NULL },
+	{ TEXT( "http://www.server.com:80/location.php" ), TEXT( "www.server.com" ), 80, NULL },
+	{ TEXT( "http://www.server.com/location1/location2/location.php" ), TEXT( "www.server.com" ), 0, NULL },
 
 	/* Spurious whitespace */
 	{ TEXT( "  www.server.com  :   80 " ), TEXT( "www.server.com" ), 80, NULL },
 	{ TEXT( " user  @  www.server.com  :   80 " ), TEXT( "www.server.com" ), 80, NULL },
 	{ TEXT( "http:// user  @ www.server.com  :   80 " ), TEXT( "www.server.com" ), 80, TEXT( "user" ) },
-	{ TEXT( "www.server.com  :   80 /location.php" ), TEXT( "www.server.com/location.php" ), 80, NULL },
+	{ TEXT( "www.server.com  :   80 /location.php" ), TEXT( "www.server.com" ), 80, NULL },
 
 	{ NULL, NULL, 0, NULL }
 	};
@@ -1091,21 +1091,19 @@ dualThreadContinue:
 					   "SVR: Attempt to activate SSH server session" : \
 					   "Attempt to activate SSH client session", status,
 					   __LINE__ );
-		cryptDestroySession( cryptSession );
 		if( localSession )
 			{
 			/* If it's a local session then none of the following soft-
 			   failure conditions are valid */
 			return( FALSE );
 			}
-		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND )
+		if( !isServer && isServerDown( cryptSession, status ) )
 			{
-			/* These servers are constantly appearing and disappearing so if
-			   we get a straight connect error we don't treat it as a serious
-			   failure */
 			puts( "  (Server could be down, faking it and continuing...)\n" );
+			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_FAILED );
 			}
+		cryptDestroySession( cryptSession );
 		if( status == CRYPT_ERROR_WRONGKEY )
 			{
 			/* This is another possible soft error condition, the default

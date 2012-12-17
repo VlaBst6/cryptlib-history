@@ -1109,7 +1109,13 @@ static int getDevRandomData( void )
 	   the blocking interface blocks a lot more often than the original 
 	   /dev/random implementation would.  In addition it stops gathering 
 	   entropy (from interrupts) when it thinks it has enough, and only 
-	   resumes when the value falls below a certain value */
+	   resumes when the value falls below a certain value.  OTOH this may
+	   still be better than the Linux implementation, which in 2009
+	   stopped gathering any information from interrupts at all by removing
+	   the IRQF_SAMPLE_RANDOM flag.  Apparent intention was to replace it
+	   with something else, but after much bikeshedding this never 
+	   happened, which makes the Linux /dev/random particularly bad on 
+	   headless and embedded systems */
 	noBytes = read( randFD, buffer, DEVRANDOM_BYTES );
 	close( randFD );
 	if( noBytes < 1 )

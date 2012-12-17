@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib SSL v3/TLS Key Management Routines					*
-*					 Copyright Peter Gutmann 1998-2008						*
+*					 Copyright Peter Gutmann 1998-2012						*
 *																			*
 ****************************************************************************/
 
@@ -945,59 +945,6 @@ static int masterToKeys( const SESSION_INFO *sessionInfoPtr,
 *																			*
 ****************************************************************************/
 
-/* Update the session cache with information on the current session */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static int updateSessionCache( INOUT SESSION_INFO *sessionInfoPtr,
-							   INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
-							   IN_BUFFER( masterSecretSize ) void *masterSecret,
-							   IN_LENGTH_SHORT const int masterSecretSize,
-							   const BOOLEAN isClient )
-	{
-	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
-	int cachedID, status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
-	assert( isWritePtr( masterSecret, masterSecretSize ) );
-
-	REQUIRES( masterSecretSize > 0 && \
-			  masterSecretSize < MAX_INTLENGTH_SHORT );
-
-	/* If we're the client then we have to add additional information to the
-	   cache, in this case the server's name/address so that we can look up
-	   the information if we try to reconnect later */
-	if( isClient )
-		{
-		const ATTRIBUTE_LIST *attributeListPtr;
-
-		attributeListPtr = findSessionInfo( sessionInfoPtr->attributeList,
-											CRYPT_SESSINFO_SERVER_NAME );
-		ENSURES( attributeListPtr != NULL );
-		status = cachedID = \
-				addScoreboardEntryEx( sslInfo->scoreboardInfoPtr,
-									  handshakeInfo->sessionID,
-									  handshakeInfo->sessionIDlength,
-									  attributeListPtr->value,
-									  attributeListPtr->valueLength,
-									  masterSecret, masterSecretSize );
-		if( !cryptStatusError( status ) )
-			sslInfo->sessionCacheID = cachedID;
-		return( status );
-		}
-
-	/* We're the server, add the client's state information indexed by the 
-	   sessionID */
-	status = cachedID = \
-				addScoreboardEntry( sslInfo->scoreboardInfoPtr,
-									handshakeInfo->sessionID,
-									handshakeInfo->sessionIDlength,
-									masterSecret, masterSecretSize );
-	if( !cryptStatusError( status ) )
-		sslInfo->sessionCacheID = cachedID;
-	return( status );
-	}
-
 /* Load the SSL/TLS cryptovariables */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
@@ -1158,20 +1105,6 @@ int initCryptoSSL( INOUT SESSION_INFO *sessionInfoPtr,
 									masterSecret, masterSecretSize );
 		if( cryptStatusError( status ) )
 			return( status );
-
-		/* Everything is OK so far, add the master secret to the session 
-		   cache */
-		if( handshakeInfo->sessionIDlength > 0 )
-			{
-			status = updateSessionCache( sessionInfoPtr, handshakeInfo, 
-										 masterSecret, masterSecretSize,
-										 isClient );
-			if( cryptStatusError( status ) )
-				{
-				zeroise( masterSecret, masterSecretSize );
-				return( status );
-				}
-			}
 		}
 	else
 		{
@@ -1185,7 +1118,8 @@ int initCryptoSSL( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Convert the master secret into keying material.  Unfortunately we
 	   can't delete the master secret at this point because it's still 
-	   needed to calculate the MAC for the handshake messages */
+	   needed to calculate the MAC for the handshake messages and because 
+	   we may still need it in order to add it to the session cache */
 	status = masterToKeys( sessionInfoPtr, handshakeInfo, masterSecret,
 						   masterSecretSize, keyBlock, MAX_KEYBLOCK_SIZE );
 	if( cryptStatusError( status ) )

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Internal General Header File 				*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2012					*
 *																			*
 ****************************************************************************/
 
@@ -298,17 +298,15 @@
    not dealing with a stream.  Usage:
    
 	mget/putWord(): 
-		CMP "TCP" protocol (disabled by default).
 		SSHv1 (disabled by default).
 		SOCKS wrapper in network code (disabled by default).
 
 	mget/putLong(): 
-		CMP "TCP" protocol, also used in TSP (disabled by default in both).
 		SSHv1 (disabled by default).
 		Sampling data from the crypto RNG to detect stuck-at faults.
 		Debug version of clAlloc() */
 
-#if defined( USE_CMP_TRANSPORT ) || defined( USE_SSH1 ) 
+#if defined( USE_SSH1 ) 
 
 #define mgetWord( memPtr ) \
 		( ( ( unsigned int ) memPtr[ 0 ] << 8 ) | \
@@ -319,8 +317,7 @@
 		memPtr[ 0 ] = ( BYTE ) ( ( ( data ) >> 8 ) & 0xFF ); \
 		memPtr[ 1 ] = ( BYTE ) ( ( data ) & 0xFF ); \
 		memPtr += 2
-
-#endif /* USE_CMP_TRANSPORT || USE_SSH1 */
+#endif /* USE_SSH1 */
 
 #define mgetLong( memPtr ) \
 		( ( ( unsigned long ) memPtr[ 0 ] << 24 ) | \
@@ -391,7 +388,7 @@ typedef struct {
 
 	/* The hash algorithm for signatures */
 	CRYPT_ALGO_TYPE hashAlgo;		/* Hash algorithm */
-	int hashParam;					/* Optional algorithm parameter */
+	int hashAlgoParam;				/* Optional algorithm parameter */
 
 	/* The encoded parameter data for authenticated encryption, and the
 	   encryption and MAC algorithm parameter data within that */
@@ -576,6 +573,9 @@ typedef struct {
 #define isHashAlgo( algorithm ) \
 		( ( algorithm ) >= CRYPT_ALGO_FIRST_HASH && \
 		  ( algorithm ) <= CRYPT_ALGO_LAST_HASH )
+#define isHashExtAlgo( algorithm ) \
+		( ( algorithm ) == CRYPT_ALGO_SHA2 || \
+		  ( algorithm ) == CRYPT_ALGO_SHAng )
 #define isMacAlgo( algorithm ) \
 		( ( algorithm ) >= CRYPT_ALGO_FIRST_MAC && \
 		  ( algorithm ) <= CRYPT_ALGO_LAST_MAC )

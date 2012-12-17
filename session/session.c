@@ -70,10 +70,7 @@ int initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
 				( sessionInfoPtr->transportSession != CRYPT_ERROR ) ? \
 					NET_OPTION_TRANSPORTSESSION : \
 				( sessionInfoPtr->networkSocket != CRYPT_ERROR ) ? \
-					NET_OPTION_NETWORKSOCKET : \
-				( sessionInfoPtr->flags & SESSION_USEHTTPTUNNEL ) ? \
-					NET_OPTION_HOSTNAME_TUNNEL : \
-					NET_OPTION_HOSTNAME );
+					NET_OPTION_NETWORKSOCKET : NET_OPTION_HOSTNAME );
 
 	/* If the user has supplied the network transport information, there's
 	   nothing further to do */
@@ -738,28 +735,9 @@ static int defaultClientStartupFunction( INOUT SESSION_INFO *sessionInfoPtr )
 							  &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
-#ifdef USE_CMP_TRANSPORT
-		if( sessionInfoPtr->flags & SESSION_USEALTTRANSPORT )
-			{
-			const ALTPROTOCOL_INFO *altProtocolInfoPtr = \
-									sessionInfoPtr->protocolInfo->altProtocolInfo;
-
-			/* If we'd be using the HTTP port for a session-specific 
-			   protocol, change it to the default port for the session-
-			   specific protocol instead */
-			if( connectInfo.port == 80 )
-				connectInfo.port = altProtocolInfoPtr->port;
-			status = sNetConnect( &sessionInfoPtr->stream,
-								  altProtocolInfoPtr->type,
-								  &connectInfo, &sessionInfoPtr->errorInfo );
-			}
-		else
-#endif /* USE_CMP_TRANSPORT */
-			{
-			status = sNetConnect( &sessionInfoPtr->stream,
-								  STREAM_PROTOCOL_TCPIP,
-								  &connectInfo, &sessionInfoPtr->errorInfo );
-			}
+		status = sNetConnect( &sessionInfoPtr->stream,
+							  STREAM_PROTOCOL_TCPIP,
+							  &connectInfo, &sessionInfoPtr->errorInfo );
 		}
 	return( status );
 	}
@@ -781,28 +759,9 @@ static int defaultServerStartupFunction( INOUT SESSION_INFO *sessionInfoPtr )
 							 &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
-#ifdef USE_CMP_TRANSPORT
-		if( sessionInfoPtr->flags & SESSION_USEALTTRANSPORT )
-			{
-			const ALTPROTOCOL_INFO *altProtocolInfoPtr = \
-									sessionInfoPtr->protocolInfo->altProtocolInfo;
-
-			/* If we'd be using the HTTP port for a session-specific 
-			   protocol, change it to the default port for the session-
-			   specific protocol instead */
-			if( connectInfo.port == 80 )
-				connectInfo.port = altProtocolInfoPtr->port;
-			status = sNetListen( &sessionInfoPtr->stream,
-								 altProtocolInfoPtr->type,
-								 &connectInfo, &sessionInfoPtr->errorInfo );
-			}
-		else
-#endif /* USE_CMP_TRANSPORT */
-			{
-			status = sNetListen( &sessionInfoPtr->stream,
-								 STREAM_PROTOCOL_TCPIP,
-								 &connectInfo, &sessionInfoPtr->errorInfo );
-			}
+		status = sNetListen( &sessionInfoPtr->stream,
+							 STREAM_PROTOCOL_TCPIP,
+							 &connectInfo, &sessionInfoPtr->errorInfo );
 		}
 	if( cryptStatusError( status ) )
 		return( status );

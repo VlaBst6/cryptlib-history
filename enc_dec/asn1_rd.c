@@ -282,6 +282,8 @@ static int readConstrainedData( INOUT STREAM *stream,
 	REQUIRES_S( length > 0 && length < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
+	if( buffer != NULL )
+		memset( buffer, 0, min( 16, bufferMaxLength ) );
 	*bufferLength = dataLength;
 
 	/* If we don't care about the return value, skip it and exit */
@@ -474,7 +476,7 @@ int readRawObject( INOUT STREAM *stream,
 
 /* Read a large integer value */
 
-RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readIntegerTag( INOUT STREAM *stream, 
 					OUT_BUFFER_OPT( integerMaxLength, \
 									*integerLength ) BYTE *integer, 
@@ -1759,7 +1761,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readRawObjectAlloc( INOUT STREAM *stream, 
 						OUT_BUFFER_ALLOC_OPT( *length ) void **objectPtrPtr, 
 						OUT_LENGTH_Z int *objectLengthPtr,
-						IN_LENGTH_SHORT_MIN( 32 ) const int minLength, 
+						IN_LENGTH_SHORT_MIN( OBJECT_HEADER_DATA_SIZE ) \
+							const int minLength, 
 						IN_LENGTH_SHORT const int maxLength )
 	{
 	STREAM headerStream;

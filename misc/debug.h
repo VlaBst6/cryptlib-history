@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Debug Header File 						*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -74,15 +74,23 @@
 #endif /* __COUNTER__ */
 #if defined( _MSC_VER ) 
   #if VC_GE_2010( _MSC_VER )	
-	/* Built into VC++ 2010 and up */
-  #elif VC_GE_2008( _MSC_VER )	/* Partial support in VC++ 2008 */
-	#define static_assert( expr, string )	_STATIC_ASSERT( expr )
+	/* Built into VC++ 2010 and up.  This is supposedly partially supported 
+	   in VS 2008 as '_STATIC_ASSERT( expr )' but the support isn't complete 
+	   enough to rely on it so we only enable it for VS 2010 and up, for 
+	   which it's definitely present */
   #else
 	#define static_assert( expr, string ) \
 			{ enum { ASSERT_CONCAT( static_assert_, __COUNTER__ ) = 1 / ( !!( expr ) ) }; }
   #endif /* VC++ versions */
   #define static_assert_opt( expr, string ) \
 		  assert( expr )
+#elif defined( __GNUC__XXXX ) && \
+	  ( ( __GNUC__ == 4 && __GNUC_MINOR__ >= 5 ) || ( __GNUC__ >= 5 ) ) 
+  /* Supposedly built into gcc 4.5 and above (as usual for new gcc features
+	 this isn't really documented, but web comments indicate that it should 
+	 be present in 4.5 and above), however trying this with 4.5 produces
+	 assorted errors indicating that it isn't actually supported */
+  #define static_assert						_Static_assert
 #else
   #define static_assert( expr, string ) \
 		  { enum { ASSERT_CONCAT( static_assert_, __COUNTER__ ) = 1 / ( !!( expr ) ) }; }
@@ -94,9 +102,25 @@
 
 #define DEBUG_WARN				0
 
+/* Under VC++ 6 assert() can randomly stop working so that only the abort() 
+   portion still functions, making it impossible to find out what went wrong. 
+   To deal with this we redefine the assert() macro to call our own 
+   assertion handler */
+
+#if defined( __WIN32__ ) && VC_LE_VC6( _MSC_VER )
+
+void vc6assert( const char *exprString, const char *fileName, 
+				const int lineNo );
+
+#undef assert
+#define assert( expr ) \
+		( void )( ( expr ) || ( vc6assert( #expr, __FILE__, __LINE__ ), 0 ) )
+
+#endif /* VC++ 6.0 */
+
 /****************************************************************************
 *																			*
-*						Debugging Diganostic Functions						*
+*						Debugging Diagnostic Functions						*
 *																			*
 ****************************************************************************/
 
@@ -210,7 +234,7 @@
 
 #if defined( NDEBUG ) && !defined( DEBUG_DIAGNOSTIC_ENABLE )
   #define DEBUG_DUMP_FILE( name, data, length )
-  #define DEBUG_DUMP_CERT( name, data, length )
+  #define DEBUG_DUMP_CERT( name, cert )
   #define DEBUG_DUMP_HEX( dumpPrefix, dumpBuf, dumpLen )
   #define DEBUG_DUMP_DATA( dumpBuf, dumpLen )
   #define DEBUG_DUMP_STREAM( stream, position, length )
@@ -255,20 +279,29 @@
   #define DEBUG_DUMP_LIST( label, listHead, listTail, listType ) \
 		{ \
 		listType *listPtr; \
+		int count = 0; \
 		\
-		DEBUG_PRINT(( "%s: Walking list beginning at %lX.\n", \
-					  label, ( listHead ) )); \
+		DEBUG_PRINT(( "%s: Walking list from %lX to %lX.\n", \
+					  label, ( listHead ), ( listTail ) )); \
 		for( listPtr = ( listHead ); \
 			 listPtr != NULL; listPtr = listPtr->next ) \
 			{ \
 			DEBUG_PRINT(( "  Ptr = %lX, prev = %lX, next = %lX.\n", \
 						  listPtr, listPtr->prev, listPtr->next )); \
+			count++; \
 			} \
-		if( ( listHead ) != NULL ) \
-			DEBUG_PRINT(( "  List tail = %lX.\n", ( listTail ) )); \
-		DEBUG_PRINT(( "Finished walking list beginning at %lX.\n", ( listHead ) )); \
+		DEBUG_PRINT(( "  List has %d entr%s.\n", count, \
+					  ( count != 1 ) ? "ies" : "y" )); \
 		}
 #endif /* NDEBUG */
+
+/* Support functions that may be needed by the general debug functions */
+
+#if !defined( NDEBUG ) && defined( DEBUG_DIAGNOSTIC_ENABLE )
+
+const char *getErrorInfoString( ERROR_INFO *errorInfo );
+
+#endif /* !NDEBUG */
 
 /****************************************************************************
 *																			*

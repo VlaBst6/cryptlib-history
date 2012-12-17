@@ -80,15 +80,12 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	  /* Bug workaround for implementations that erroneously use
 	     xxxWithRSA when they should be using straight RSA */
   #ifdef USE_SHA2_EXT
-	#if defined( CONFIG_SUITEB )
 	{ CRYPT_ALGO_RSA, CRYPT_ALGO_SHA2, 48, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x09\x2A\x86\x48\x86\xF7\x0D\x01\x01\x0C" ) },
 	  /* sha384withRSAEncryption (1 2 840 113549 1 1 12) */
-	#else
 	{ CRYPT_ALGO_RSA, CRYPT_ALGO_SHA2, 64, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x09\x2A\x86\x48\x86\xF7\x0D\x01\x01\x0D" ) },
 	  /* sha512withRSAEncryption (1 2 840 113549 1 1 13) */
-	#endif /* Suite B vs. generic use */
   #endif /* USE_SHA2_EXT */
 #endif /* USE_SHA2 */
 
@@ -160,15 +157,12 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x02" ) },
 	  /* ecdsaWithSHA256 (1 2 840 10045 4 3 2) */
   #ifdef USE_SHA2_EXT
-	#if defined( CONFIG_SUITEB )
 	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 48, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x03" ) },
 	  /* ecdsaWithSHA384 (1 2 840 10045 4 3 3) */
-	#else
 	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 64, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x04" ) },
 	  /* ecdsaWithSHA512 (1 2 840 10045 4 3 4) */
-	#endif /* Suite B vs. generic use */
   #endif /* USE_SHA2_EXT */
 #endif /* USE_SHA2 */
 #endif /* USE_ECDSA */
@@ -204,15 +198,12 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	  MKOID( "\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01" ) },
 	  /* sha2-256 (2 16 840 1 101 3 4 2 1) */
   #ifdef USE_SHA2_EXT
-	#if defined( CONFIG_SUITEB )
 	{ CRYPT_ALGO_SHA2, 48, 0, ALGOID_CLASS_HASH,
 	  MKOID( "\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x02" ) },
 	  /* sha2-384 (2 16 840 1 101 3 4 2 2) */
-	#else
 	{ CRYPT_ALGO_SHA2, 64, 0, ALGOID_CLASS_HASH,
 	  MKOID( "\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x03" ) },
 	  /* sha2-512 (2 16 840 1 101 3 4 2 3) */
-	#endif /* Suite B vs. generic use */
   #endif /* USE_SHA2_EXT */
 #endif /* USE_SHA2 */
 

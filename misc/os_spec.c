@@ -404,6 +404,35 @@ int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 *																			*
 ****************************************************************************/
 
+#elif defined( __Nucleus__ )
+
+/* Wrappers for the Nucleus OS-level memory allocation functions */
+
+extern NU_MEMORY_POOL Application_Memory;
+
+void *clAlloc( long size )
+	{
+	STATUS Rc;
+	void *ptr;
+
+	Rc = NU_Allocate_Memory( &Application_Memory, &ptr, size, 
+							 NU_NO_SUSPEND );
+	if( Rc != NU_SUCCESS || ptr == NULL )
+		return( NULL );
+	return( ptr );
+	}
+
+void clFree( void *block )
+	{
+	NU_Deallocate_Memory( block );
+	}
+
+/****************************************************************************
+*																			*
+*									PalmOS									*
+*																			*
+****************************************************************************/
+
 #elif defined( __PALMOS__ )
 
 #include <CmnErrors.h>
@@ -712,15 +741,37 @@ int bcVsnprintf( char *buffer, const int bufSize, const char *format, va_list ar
    the SafeDllSearchMode registry key, which changes the search order so
    the current directory is searched towards the end rather than towards
    the start, however it's (apparently) only set on new installs, on a
-   pre-SP2 install that's been upgraded it's not set.  In addition 
-   SetDllDirectory() can be used to add a new directory to the start of
-   the search order, or to revert to the default search order if it's
-   been changed previously.
+   pre-SP2 install that's been upgraded it's not set.  Windows Vista and
+   newer enabled this safe behaviour by default, but even there 
+   SetDefaultDllDirectories() can be used to explicitly re-enable unsafe
+   behaviour, and AddDllDirectory() can be used to add a path to the set of 
+   DLL search paths and SetDllDirectory() can be used to add a new directory 
+   to the start of the search order.
 
    None of these options are terribly useful if we want a DLL to either
    be loaded from the system directory or not at all.  To handle this we
    build an absolute load path and prepend it to the name of the DLL
    being loaded */
+
+#if 0	/* Older code using SHGetFolderPath() */
+
+/* The documented behaviour for the handling of the system directory under 
+   Win64 seems to be more or less random:
+
+	http://msdn.microsoft.com/en-us/library/bb762584%28VS.85%29.aspx: 
+		CSIDL_SYSTEM = %windir%/System32, CSIDL_SYSTEMX86 = %windir%/System32.
+	http://social.technet.microsoft.com/Forums/en/appvgeneralsequencing/thread/c58f7d64-6a23-46f0-998f-0a964c1eff2a:
+		CSIDL_SYSTEM = %windir%/Syswow64.
+	http://msdn.microsoft.com/en-us/library/windows/desktop/ms538044%28v=vs.85%29.aspx:
+		CSIDL_SYSTEM = %windir%/System32, CSIDL_SYSTEMX86 = %windir%/Syswow64.
+	http://social.msdn.microsoft.com/Forums/en-US/vcgeneral/thread/f9a54564-1006-42f9-b4d1-b225f370c60c:
+		GetSystemDirectory() = %windir%/Syswow64.
+	http://msdn.microsoft.com/en-us/library/windows/desktop/dd378457%28v=vs.85%29.aspx:
+		CSIDL_SYSTEM = %windir%/System32, 
+		CSIDL_SYSTEMX86 = %windir%/System32 for Win32, %windir%/Syswow64 for Win64.
+
+   The current use of CSIDL_SYSTEM to get whatever-the-system-directory-is-
+   meant-to-be seems to work, so we'll leave it as is */
 
 #ifndef CSIDL_SYSTEM
   #define CSIDL_SYSTEM		0x25	/* 'Windows/System32' */
@@ -729,9 +780,11 @@ int bcVsnprintf( char *buffer, const int bufSize, const char *format, va_list ar
   #define SHGFP_TYPE_CURRENT	0
 #endif /* !SHGFP_TYPE_CURRENT */
 
-HMODULE WINAPI loadExistingLibrary( IN_STRING LPCTSTR lpFileName )
+static HMODULE WINAPI loadExistingLibrary( IN_STRING LPCTSTR lpFileName )
 	{
 	HANDLE hFile;
+
+	assert( isReadPtr( lpFileName, 2 ) );
 
 	/* Determine whether the DLL is present and accessible */
 	hFile = CreateFile( lpFileName, GENERIC_READ, 0, NULL, OPEN_EXISTING,
@@ -743,19 +796,27 @@ HMODULE WINAPI loadExistingLibrary( IN_STRING LPCTSTR lpFileName )
 	return( LoadLibrary( lpFileName ) );
 	}
 
-HMODULE WINAPI loadFromSystemDirectory( IN_STRING LPCTSTR lpFileName )
+static HMODULE WINAPI loadFromSystemDirectory( IN_BUFFER( fileNameLength ) \
+													const char *fileName,
+											   IN_LENGTH_SHORT_MIN( 1 ) \
+													const int fileNameLength )
 	{
 	char path[ MAX_PATH + 8 ];
-	const int fileNameLength = strlen( lpFileName ) + 1;
 	int pathLength;
+
+	ENSURES_EXT( fileNameLength >= 1 && fileNameLength + 8 < MAX_PATH, \
+				 NULL );
+
+	assert( isReadPtr( fileName, fileNameLength ) );
 
 	/* Get the path to a DLL in the system directory */
 	pathLength = \
 		GetSystemDirectory( path, MAX_PATH - ( fileNameLength + 8 ) );
-	if( pathLength < 1 || pathLength > MAX_PATH - ( fileNameLength + 8 ) )
+	if( pathLength < 3 || pathLength + fileNameLength > MAX_PATH - 8 )
 		return( NULL );
 	path[ pathLength++ ] = '\\';
-	memcpy( path + pathLength, lpFileName, fileNameLength );
+	memcpy( path + pathLength, fileName, fileNameLength );
+	path[ pathLength + fileNameLength ] = '\0';
 
 	return( loadExistingLibrary( path ) );
 	}
@@ -781,21 +842,27 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	SHGETFOLDERPATH pSHGetFolderPath;
 	HINSTANCE hShell32;
 	char path[ MAX_PATH + 8 ];
-	const int fileNameLength = strlen( lpFileName ) + 1;
+	const int fileNameLength = strlen( lpFileName );
 	int pathLength, i;
 	BOOLEAN gotPath = FALSE;
+
+	REQUIRES_EXT( fileNameLength >= 1 && fileNameLength < MAX_PATH, \
+				  NULL );
+
+	assert( isReadPtr( lpFileName, 2 ) );
 
 	/* If it's Win98 or NT4, just call LoadLibrary directly.  In theory
 	   we could try a few further workarounds (see io/file.c) but in 
 	   practice bending over backwards to fix search path issues under
 	   Win98, which doesn't have ACLs to protect the files in the system
-	   directory anyway, isn't going to achieve much */
+	   directory anyway, isn't going to achieve much, and in any case both
+	   of these OSes should be long dead by now */
 	if( getSysVar( SYSVAR_OSMAJOR ) <= 4 )
 		return( LoadLibrary( lpFileName ) );
 
 	/* If it's already an absolute path, don't try and override it */
 	if( lpFileName[ 0 ] == '/' || \
-		( fileNameLength > 3 && isAlpha( lpFileName[ 0 ] ) && \
+		( fileNameLength >= 3 && isAlpha( lpFileName[ 0 ] ) && \
 		  lpFileName[ 1 ] == ':' && lpFileName[ 2 ] == '/' ) )
 		return( loadExistingLibrary( lpFileName ) );
 
@@ -803,13 +870,13 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	for( i = 0; dllNameInfoTbl[ i ].dllName != NULL && \
 				i < FAILSAFE_ARRAYSIZE( dllNameInfoTbl, DLL_NAME_INFO ); i++ )
 		{
-		if( dllNameInfoTbl[ i ].dllNameLen == fileNameLength - 1 && \
+		if( dllNameInfoTbl[ i ].dllNameLen == fileNameLength && \
 			!strCompare( dllNameInfoTbl[ i ].dllName, lpFileName, 
-						 fileNameLength - 1 ) )
+						 fileNameLength ) )
 			{
 			/* It's a standard system DLL, load it from the system 
 			   directory */
-			return( loadFromSystemDirectory( lpFileName ) );
+			return( loadFromSystemDirectory( lpFileName, fileNameLength ) );
 			}
 		}
 	ENSURES_N( i < FAILSAFE_ARRAYSIZE( dllNameInfoTbl, DLL_NAME_INFO ) );
@@ -827,7 +894,7 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	   directly we can't influence the paths over which further DLLs get 
 	   loaded.  So unfortunately the best that we can do is make the 
 	   attacker work a little harder rather than providing a full fix */
-	hShell32 = loadFromSystemDirectory( "Shell32.dll" );
+	hShell32 = loadFromSystemDirectory( "Shell32.dll", 11 );
 	if( hShell32 != NULL )
 		{
 		pSHGetFolderPath = ( SHGETFOLDERPATH ) \
@@ -846,7 +913,7 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 		return( NULL );
 		}
 	pathLength = strlen( path );
-	if( pathLength < 3 || pathLength + 1 + fileNameLength > MAX_PATH )
+	if( pathLength < 3 || pathLength + fileNameLength > MAX_PATH - 8 )
 		{
 		/* Under WinNT and Win2K the LocalSystem account doesn't have its 
 		   own profile so SHGetFolderPath() will report success but return a 
@@ -863,9 +930,52 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 		}
 	path[ pathLength++ ] = '\\';
 	memcpy( path + pathLength, lpFileName, fileNameLength );
+	path[ pathLength + fileNameLength ] = '\0';
 
 	return( loadExistingLibrary( path ) );
 	}
+#else	/* Newer code that does the same thing */
+
+HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
+	{
+	char path[ MAX_PATH + 8 ];
+	const int fileNameLength = strlen( lpFileName );
+	int pathLength;
+
+	REQUIRES_EXT( fileNameLength >= 1 && fileNameLength < MAX_PATH, \
+				  NULL );
+
+	assert( isReadPtr( lpFileName, 2 ) );
+
+	/* If it's Win98 or NT4, just call LoadLibrary directly.  In theory
+	   we could try a few further workarounds (see io/file.c) but in 
+	   practice bending over backwards to fix search path issues under
+	   Win98, which doesn't have ACLs to protect the files in the system
+	   directory anyway, isn't going to achieve much, and in any case both
+	   of these OSes should be long dead by now */
+	if( getSysVar( SYSVAR_OSMAJOR ) <= 4 )
+		return( LoadLibrary( lpFileName ) );
+
+	/* If it's already an absolute path, don't try and override it */
+	if( lpFileName[ 0 ] == '/' || \
+		lpFileName[ 0 ] == '\\' || \
+		( fileNameLength >= 3 && isAlpha( lpFileName[ 0 ] ) && \
+		  lpFileName[ 1 ] == ':' && \
+		  ( lpFileName[ 2 ] == '/' || lpFileName[ 2 ] == '\\' ) ) )
+		return( LoadLibrary( lpFileName ) );
+
+	/* Load the DLL from the system directory */
+	pathLength = \
+		GetSystemDirectory( path, MAX_PATH - ( fileNameLength + 8 ) );
+	if( pathLength < 3 || pathLength + fileNameLength > MAX_PATH - 8 )
+		return( NULL );
+	path[ pathLength++ ] = '\\';
+	memcpy( path + pathLength, lpFileName, fileNameLength );
+	path[ pathLength + fileNameLength ] = '\0';
+
+	return( LoadLibrary( path ) );
+	}
+#endif /* Old/New SafeLoadLibrary() */
 
 /* Windows NT/2000/XP/Vista support ACL-based access control mechanisms for 
    system objects so when we create objects such as files and threads we 
@@ -914,6 +1024,8 @@ void *initACLInfo( const int access )
 	SECURITY_INFO *securityInfo;
 	HANDLE hToken = INVALID_HANDLE_VALUE;	/* See comment below */
 	BOOLEAN tokenOK = FALSE;
+
+	REQUIRES_N( access > 0 );
 
 	/* Win95/98/ME don't have any security, return null security info */
 	if( getSysVar( SYSVAR_ISWIN95 ) )
@@ -1035,8 +1147,6 @@ void *getACLInfo( INOUT TYPECAST( SECURITY_INFO * ) void *securityInfoPtr )
 
 BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
 	{
-	static DWORD dwPlatform = ( DWORD ) CRYPT_ERROR;
-
 	UNUSED_ARG( hinstDLL );
 	UNUSED_ARG( lpvReserved );
 
@@ -1067,8 +1177,11 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
 /* Idiot-proofing.  Yes, there really are people who'll try and register a
    straight DLL */
 
-#define MB_OK				0x00000000L
-#define MB_ICONQUESTION		0x00000020L
+#ifndef MB_OK
+  #define MB_OK					0x00000000L
+  #define MB_ICONQUESTION		0x00000020L
+  #define MB_ICONEXCLAMATION	0x00000030L
+#endif /* MB_OK */
 
 int WINAPI MessageBoxA( HWND hWnd, LPCSTR lpText, LPCSTR lpCaption,
 						UINT uType );
@@ -1076,6 +1189,9 @@ int WINAPI MessageBoxA( HWND hWnd, LPCSTR lpText, LPCSTR lpCaption,
 #ifndef _WIN64
   #pragma comment( linker, "/export:DllRegisterServer=_DllRegisterServer@0,PRIVATE" )
 #endif /* Win64 */
+#if defined( __MINGW32__ ) && !defined( STDAPI )
+  #define STDAPI	HRESULT __stdcall
+#endif /* MinGW without STDAPI defined */
 
 STDAPI DllRegisterServer( void )
 	{
@@ -1086,6 +1202,72 @@ STDAPI DllRegisterServer( void )
 	return( E_NOINTERFACE );
 	}
 #endif /* !( NT_DRIVER || STATIC_LIB ) */
+
+#if VC_LE_VC6( _MSC_VER )
+
+/* Under VC++ 6 assert() can randomly stop working so that only the abort() 
+   portion still functions, making it impossible to find out what went wrong.
+   To deal with this, os_spec.h redefines the assert() macro to call the 
+   following function, which emulates what a correct-functioning assert()
+   would do */
+
+#ifndef MB_OKCANCEL
+  #define MB_OKCANCEL		0x00000001L
+#endif /* MB_OKCANCEL */
+#ifndef MB_YESNOCANCEL
+  #define MB_YESNOCANCEL	0x00000003L
+#endif /* MB_YESNOCANCEL */
+
+void vc6assert( const char *exprString, const char *fileName, 
+				const int lineNo )
+	{
+	const char *cleanFileName;
+	char string[ 1024 ], title[ 1024 ];
+	int result;
+
+	/* Clean up the pathname */
+	cleanFileName = strstr( fileName, "cryptlib" );
+	if( cleanFileName != NULL )
+		cleanFileName += 9;	/* Skip "cryptlib/" */
+	else
+		{
+		int i, slashCount = 0;
+
+		/* We may be running off some nonstandard path, get as close as we
+		   can to the minimal path */
+		for( i = strlen( fileName ); i > 0; i-- )
+			{
+			if( fileName[ i ] == '\\' )
+				{
+				slashCount++;
+				if( slashCount >= 2 )
+					break;
+				}
+			}
+		cleanFileName = fileName + i;
+		}
+
+	/* Log the output to the debug console */
+	sprintf( string, "%s:%d:'%s'.\n", fileName, lineNo, exprString );
+	OutputDebugString( string );
+
+	/* Emulate the standard assert() functionality.  Note that the spurious 
+	   spaces in the last line of the message are to ensure that the title
+	   text doesn't get truncated, since the message box width is determined 
+	   by the text in the dialog rather than the title length */
+	sprintf( string, "File %s, line %d:\n\n  '%s'.\n\n"
+			"Yes to debug, no to continue, cancel to exit.                  ", 
+			cleanFileName, lineNo, exprString );
+	sprintf( title, "Assertion failed, file %s, line %d", cleanFileName, 
+			 lineNo );
+	result = MessageBoxA( NULL, string, title, 
+						  MB_ICONEXCLAMATION | MB_YESNOCANCEL );
+	if( result == IDCANCEL )
+		abort();
+	if( result == IDYES )
+		DebugBreak();
+	}
+#endif /* VC++ 6.0 */
 
 /* Borland's archaic compilers don't recognise DllMain() but still use the
    OS/2-era DllEntryPoint(), so we have to alias it to DllMain() in order
@@ -1520,7 +1702,8 @@ int strlcat_s( char *dest, const int destLen, const char *src )
 *																			*
 ****************************************************************************/
 
-#if defined( __WIN32__ )  && !defined( _M_X64 ) && !defined( NO_ASM )
+#if defined( __WIN32__ )  && \
+	!( defined( _M_X64 ) || defined( __MINGW32__ ) || defined( NO_ASM ) )
 
 CHECK_RETVAL \
 static int getHWInfo( void )
@@ -1616,7 +1799,7 @@ static int getHWInfo( void )
 	if( !memcmp( vendorID, "AuthenticAMD", 12 ) )
 		{
 		/* Check for AMD Geode LX, family 0x5 = Geode, model 0xA = LX */
-		if( ( processorID & 0x05A0 ) == 0x05A0 )
+		if( ( processorID & 0x0FF0 ) == 0x05A0 )
 			sysCaps |= HWCAP_FLAG_TRNG;
 		}
 	if( !memcmp( vendorID, "GenuineIntel", 12 ) )
@@ -1710,7 +1893,7 @@ static int getHWInfo( void )
 	if( !memcmp( vendorID, "AuthenticAMD", 12 ) )
 		{
 		/* Check for AMD Geode LX, family 0x5 = Geode, model 0xA = LX */
-		if( ( processorID & 0x05A0 ) == 0x05A0 )
+		if( ( processorID & 0x0FF0 ) == 0x05A0 )
 			sysCaps |= HWCAP_FLAG_TRNG;
 		}
 	if( !memcmp( vendorID, "GenuineIntel", 12 ) )
@@ -1850,7 +2033,7 @@ static int getHWInfo( void )
 	if( !memcmp( vendorID, "AuthenticAMD", 12 ) )
 		{
 		/* Check for AMD Geode LX, family 0x5 = Geode, model 0xA = LX */
-		if( ( processorID & 0x05A0 ) == 0x05A0 )
+		if( ( processorID & 0x0FF0 ) == 0x05A0 )
 			sysCaps |= HWCAP_FLAG_TRNG;
 		}
 	if( !memcmp( vendorID, "GenuineIntel", 12 ) )
@@ -1919,7 +2102,7 @@ int initSysVars( void )
 	static_assert( SYSVAR_LAST < MAX_SYSVARS, "System variable value" );
 
 	/* Reset the system variable information */
-	memset( sysVars, 0, MAX_SYSVARS );
+	memset( sysVars, 0, sizeof( int ) * MAX_SYSVARS );
 
 	/* Figure out which version of Windows we're running under */
 	if( !GetVersionEx( &osvi ) )
@@ -1963,7 +2146,7 @@ int initSysVars( void )
 	static_assert( SYSVAR_LAST < MAX_SYSVARS, "System variable value" );
 
 	/* Reset the system variable information */
-	memset( sysVars, 0, MAX_SYSVARS );
+	memset( sysVars, 0, sizeof( int ) * MAX_SYSVARS );
 
 	/* Get the system page size */
 #if defined( _CRAY ) || defined( __hpux ) || defined( _M_XENIX ) || \
@@ -2004,7 +2187,7 @@ int initSysVars( void )
 int initSysVars( void )
 	{
 	/* Reset the system variable information */
-	memset( sysVars, 0, MAX_SYSVARS );
+	memset( sysVars, 0, sizeof( int ) * MAX_SYSVARS );
 
 	/* Get system hardware capabilities */
 	sysVars[ SYSVAR_HWCAP ] = getHWInfo();

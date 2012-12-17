@@ -104,7 +104,7 @@
 *																			*
 ****************************************************************************/
 
-#elif defined( __THREADX__ )
+#elif defined( __ThreadX__ )
 
 /* ThreadX doesn't have native socket support, there is a ThreadX component
    called NetX but everyone seems to use assorted non-ThreadX network 
@@ -363,17 +363,17 @@
 #if defined( _MSC_VER ) && ( _MSC_VER > 1300 ) && !defined( WIN_DDK )
   #include <windns.h>
 #elif defined( _MSC_VER ) && ( _MSC_VER > 800 )
-  /* windns.h is quite new and many people don't have it yet, not helped by
-     the fact that it's also changed over time.  For example,
-     DnsRecordListFree() has also been DnsFreeRecordList() and DnsFree() at
-     various times, with the parameters changing to match.  Because of this,
-     we have to define our own (very cut-down) subset of what's in there
-     here.  We define PIP4_ARRAY as a void * since it's only used to specify
-     optional DNS servers to query, we never need this so we just set the
-     parameter to NULL.  As with the DnsXXX functions, PIP4_ARRAY has
-     changed over time.  It was known as PIP_ARRAY in the original VC++ .NET
-     release, but was renamed PIP4_ARRAY for .NET 2003, although some MSDN
-     entries still refer to PIP_ARRAY even in the 2003 version */
+  /* windns.h is for newer compilers and many people don't have it yet, not 
+	 helped by the fact that it's also changed over time.  For example,
+	 DnsRecordListFree() has also been DnsFreeRecordList() and DnsFree() at
+	 various times, with the parameters changing to match.  Because of this,
+	 we have to define our own (very cut-down) subset of what's in there
+	 here.  We define PIP4_ARRAY as a void * since it's only used to specify
+	 optional DNS servers to query, we never need this so we just set the
+	 parameter to NULL.  As with the DnsXXX functions, PIP4_ARRAY has
+	 changed over time.  It was known as PIP_ARRAY in the original VC++ .NET
+	 release but was renamed PIP4_ARRAY for .NET 2003, although some MSDN
+	 entries still refer to PIP_ARRAY even in the 2003 version */
   typedef LONG DNS_STATUS;
   typedef void *PIP4_ARRAY;
   typedef DWORD IP4_ADDRESS;
@@ -833,13 +833,15 @@
 	#define SOCKET_API
   #endif /* __WINDOWS__ */
 #else
-  /* IPV6_V6ONLY isn't universally defined under Windows even if IPv6
-     support is available.  This occurs for some x86-64 builds (although 
-	 strangely it is present for straight x86 builds), and also for older 
-	 WinCE builds, in which case we have to explicitly define it 
-	 ourselves */
-  #if defined( __WINDOWS__ ) && !defined( IPV6_V6ONLY ) && \
-	  ( defined( _M_X64 ) || defined( __WINCE__ ) )
+  /* IPV6_V6ONLY isn't universally defined under Windows even if IPv6 
+	 support is available.  The situations under which this occurs are 
+	 rather unclear, it's happened for some x86-64 builds (although not for 
+	 straight x86 builds on the same machine), for older WinCE builds, and
+	 in one case for an x86 build using VS 2005, possibly caused by 
+	 differences between VS and WinSDK headers.  To resolve this mess, if 
+	 IPv6 is defined under Windows but IPV6_V6ONLY isn't, we explicitly 
+	 define it ourselves */
+  #if defined( __WINDOWS__ ) && !defined( IPV6_V6ONLY )
 	#define IPV6_V6ONLY		27		/* Force dual stack to use only IPv6 */
   #endif /* Some Windows build environments */
 #endif /* IPv6 */

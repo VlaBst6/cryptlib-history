@@ -300,6 +300,15 @@ extern voidp  calloc OF((uInt items, uInt size));
 extern void   free   OF((voidpf ptr));
 #endif
 
+#ifdef __Nucleus__
+  /* Nucleus uses a wrapper for the OS-internal allocation functions rather 
+	 than calling malloc()/free(), so we just map those calls to the 
+	 standard cryptlib allocator (which calls down to the Nucleus OS-
+	 internal function) */
+  #define malloc	clAlloc
+  #define free		clFree
+#endif /* Nucleus */
+
 voidpf zcalloc (voidpf opaque, unsigned items, unsigned size)	/* pcg */
 {
     if (opaque) items += size - size; /* make compiler happy */

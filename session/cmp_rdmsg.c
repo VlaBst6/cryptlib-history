@@ -520,19 +520,24 @@ static int readResponseBody( INOUT STREAM *stream,
 #endif /* 0 */
 
 		case CTAG_CK_NEWENCRYPTEDCERT:
+			{
+			ERROR_INFO errorInfo;
+
 			/* Certificate encrypted with CMS, unwrap it */
 			status = envelopeUnwrap( bodyInfoPtr, bodyLength,
 									 bodyInfoPtr, bodyLength, &bodyLength,
-									 sessionInfoPtr->privateKey );
+									 sessionInfoPtr->privateKey, &errorInfo );
 			if( cryptStatusError( status ) )
 				{
-				retExt( cryptArgError( status ) ? \
-						CRYPT_ERROR_FAILED : status,
-						( cryptArgError( status ) ? \
-						  CRYPT_ERROR_FAILED : status, SESSION_ERRINFO,
-						  "Couldn't decrypt CMS enveloped certificate" ) );
+				retExtErr( cryptArgError( status ) ? \
+						   CRYPT_ERROR_FAILED : status,
+						   ( cryptArgError( status ) ? \
+							 CRYPT_ERROR_FAILED : status, SESSION_ERRINFO, 
+							 &errorInfo, 
+							 "Couldn't decrypt CMS enveloped certificate: " ) );
 				}
 			break;
+			}
 
 		default:
 			retExt( status,

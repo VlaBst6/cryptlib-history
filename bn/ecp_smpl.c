@@ -62,7 +62,7 @@
  * and contributed to the OpenSSL project.
  */
 
-#if defined( INC_ALL )	/* pcg */
+#if defined( INC_ALL )		/* pcg */
   #include "ec_lcl.h"
 #else
   #include "bn/ec_lcl.h"
@@ -123,6 +123,7 @@ const EC_METHOD *EC_GFp_simple_method(void)
 
 	return &ret;
 	}
+
 
 /* Most method functions in this file are designed to work with
  * non-trivial representations of field elements if necessary
@@ -726,6 +727,9 @@ int ec_GFp_simple_set_compressed_coordinates(const EC_GROUP *group, EC_POINT *po
 	
 	if (!BN_mod_sqrt(y, tmp1, &group->field, ctx))
 		{
+#if 0	/* pcg */
+		unsigned long err = ERR_peek_last_error();
+		
 		if (ERR_GET_LIB(err) == ERR_LIB_BN && ERR_GET_REASON(err) == BN_R_NOT_A_SQUARE)
 			{
 			ERR_clear_error();
@@ -733,6 +737,7 @@ int ec_GFp_simple_set_compressed_coordinates(const EC_GROUP *group, EC_POINT *po
 			}
 		else
 			ECerr(EC_F_EC_GFP_SIMPLE_SET_COMPRESSED_COORDINATES, ERR_R_BN_LIB);
+#endif /* 0 */
 		goto err;
 		}
 
@@ -1415,6 +1420,9 @@ int ec_GFp_simple_cmp(const EC_GROUP *group, const EC_POINT *a, const EC_POINT *
 		{
 		return EC_POINT_is_at_infinity(group, b) ? 0 : 1;
 		}
+
+	if (EC_POINT_is_at_infinity(group, b))
+		return 1;
 	
 	if (a->Z_is_one && b->Z_is_one)
 		{
@@ -1579,7 +1587,7 @@ int ec_GFp_simple_points_make_affine(const EC_GROUP *group, size_t num, EC_POINT
 	 * We need twice that. */
 	pow2 <<= 1;
 
-	heap = clBnAlloc("ec_GFp_simple_points_make_affine", pow2 * sizeof heap[0]);
+	heap = clBnAlloc("ec_GFp_simple_points_make_affine",pow2 * sizeof heap[0]);		/* pcg */
 	if (heap == NULL) goto err;
 	
 	/* The array is used as a binary tree, exactly as in heapsort:
@@ -1724,4 +1732,4 @@ int ec_GFp_simple_field_sqr(const EC_GROUP *group, BIGNUM *r, const BIGNUM *a, B
 	return BN_mod_sqr(r, a, &group->field, ctx);
 	}
 
-#endif /* USE_ECDH || USE_ECDSA */
+#endif /* USE_ECDH || USE_ECDSA */	/* pcg */

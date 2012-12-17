@@ -54,6 +54,10 @@ if [ "$3" = "" ] ; then
 	exit 1 ;
 fi
 if [ "$4" = "" ] ; then
+	echo "$0: Missing 'strip' command name." >&2 ;
+	exit 1 ;
+fi
+if [ "$5" = "" ] ; then
 	echo "$0: Missing object filenames." >&2 ;
 	exit 1 ;
 fi
@@ -63,6 +67,8 @@ fi
 OSNAME=$1
 LIBNAME=$2
 LD=$3
+STRIP=$4
+shift
 shift
 shift
 shift
@@ -94,7 +100,7 @@ case $OSNAME in
 
 	'BeOS' )
 		$LD -nostart -o $LIBNAME `cat $LINKFILE` `./tools/getlibs.sh BeOS` ;
-		strip $LIBNAME ;;
+		$STRIP $LIBNAME ;;
 
 	'HP-UX')
 		if [ $LD = "gcc" ] ; then
@@ -102,7 +108,7 @@ case $OSNAME in
 		else
 			$LD -b -o libcl.sl `cat $LINKFILE` `./tools/getlibs.sh HP-UX` ;
 		fi
-		strip libcl.sl ;;
+		$STRIP libcl.sl ;;
 
 	'SunOS')
 		if [ $LD = "gcc" ] ; then
@@ -110,7 +116,7 @@ case $OSNAME in
 		else
 			$LD -G -ldl -o $LIBNAME `cat $LINKFILE` `./tools/getlibs.sh autodetect` ;
 		fi
-		strip $LIBNAME ;;
+		$STRIP $LIBNAME ;;
 
 	*)
 		if [ `$LD -v 2>&1 | grep -c gcc` -gt 0 -a \
@@ -122,6 +128,6 @@ case $OSNAME in
 		if [ `which objdump` -a `objdump -p $LIBNAME | grep -c TEXTREL` -gt '0' ] ; then
 			echo "Warning: Shared library still contains TEXTREL records." ;
 		fi
-		strip $LIBNAME ;;
+		$STRIP $LIBNAME ;;
 esac
 rm -f $LINKFILE

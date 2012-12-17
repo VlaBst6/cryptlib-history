@@ -581,11 +581,13 @@ static int writeCertRequestInfo( INOUT STREAM *stream,
 		}
 
 	/* Determine how big the encoded certificate request will be */
+	subjectCertInfoPtr->subjectDNsize = \
+			sizeofDN( subjectCertInfoPtr->subjectName );
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
 	if( cryptStatusError( extensionSize ) )
 		return( extensionSize );
 	length = sizeofShortInteger( 0 ) + \
-			 sizeofDN( subjectCertInfoPtr->subjectName ) + \
+			 subjectCertInfoPtr->subjectDNsize + \
 			 subjectCertInfoPtr->publicKeyInfoSize;
 	if( extensionSize > 0 )
 		{
@@ -611,11 +613,6 @@ static int writeCertRequestInfo( INOUT STREAM *stream,
 	   write an (erroneous) zero-length field */
 	if( extensionSize <= 0 )
 		return( writeConstructed( stream, 0, CTAG_CR_ATTRIBUTES ) );
-	writeConstructed( stream, ( int ) \
-					  sizeofObject( \
-						sizeofOID( OID_PKCS9_EXTREQ ) + \
-						sizeofObject( sizeofObject( extensionSize ) ) ),
-					  CTAG_CR_ATTRIBUTES );
 	return( writeAttributes( stream, subjectCertInfoPtr->attributes,
 							 CRYPT_CERTTYPE_CERTREQUEST, extensionSize ) );
 	}

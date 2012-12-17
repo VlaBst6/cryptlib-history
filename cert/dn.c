@@ -261,9 +261,11 @@ static int dnSortOrder( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
    passed in */
 
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-static BOOLEAN isDNComponentValid( const DN_COMPONENT *dnComponent )
+static BOOLEAN isDNComponentValid( IN_OPT const DN_COMPONENT *dnComponent )
 	{
 	assert( isReadPtr( dnComponent, sizeof( DN_COMPONENT ) ) );
+
+	REQUIRES_B( dnComponent != NULL );
 
 	/* Check that various fields with fixed-range values are within bounds.
 	   This isn't an infallible check, but the chances of an arbitrary 
@@ -876,8 +878,8 @@ int getDNComponentInfo( INOUT const DN_PTR *dnComponentList,
    return the n'th occurrence of a DN component, see the comment for
    findDNComponent() for details */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
-int getDNComponentValue( const DN_PTR *dnComponentList,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 6 ) ) \
+int getDNComponentValue( IN_OPT const DN_PTR *dnComponentList,
 						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type,
 						 IN_RANGE( 0, 100 ) const int count,
 						 OUT_BUFFER_OPT( valueMaxLength, \
@@ -887,12 +889,14 @@ int getDNComponentValue( const DN_PTR *dnComponentList,
 	{
 	const DN_COMPONENT *dnComponent;
 
-	assert( isReadPtr( dnComponentList, sizeof( DN_COMPONENT ) ) );
+	assert( dnComponentList == NULL || \
+			isReadPtr( dnComponentList, sizeof( DN_COMPONENT ) ) );
 	assert( ( value == NULL && valueMaxLength == 0 ) || \
 			( isWritePtr( value, valueMaxLength ) ) );
 	assert( isWritePtr( valueLength, sizeof( int ) ) );
 
-	REQUIRES( isDNComponentValid( dnComponentList ) ); 
+	REQUIRES( dnComponentList == NULL || \
+			  isDNComponentValid( dnComponentList ) ); 
 	REQUIRES( type >= CRYPT_CERTINFO_FIRST_DN && \
 			  type <= CRYPT_CERTINFO_LAST_DN );
 	REQUIRES( count >= 0 && count <= 100 );
@@ -905,6 +909,10 @@ int getDNComponentValue( const DN_PTR *dnComponentList,
 	*valueLength = 0;
 	if( value != NULL )
 		memset( value, 0, min( 16, valueMaxLength ) );
+
+	/* Trying to read data from an empty DN always fails */
+	if( dnComponentList == NULL )
+		return( CRYPT_ERROR_NOTFOUND );
 
 	dnComponent = findDNComponent( dnComponentList, type, count, NULL, 0 );
 	if( dnComponent == NULL )
@@ -924,7 +932,7 @@ CHECK_RETVAL_BOOL \
 BOOLEAN compareDN( IN_OPT const DN_PTR *dnComponentList1,
 				   IN_OPT const DN_PTR *dnComponentList2,
 				   const BOOLEAN dn1substring,
-				   OUT_OPT_PTR DN_PTR **mismatchPointPtrPtr )
+				   OUT_OPT_PTR_OPT DN_PTR **mismatchPointPtrPtr )
 	{
 	DN_COMPONENT *dn1ptr, *dn2ptr;
 	int iterationCount;

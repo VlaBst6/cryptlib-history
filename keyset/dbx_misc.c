@@ -915,10 +915,19 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 				   operation we give the caller the option of continuing 
 				   since the transaction itself will have been rolled back 
 				   so there's no permanent harm done) */
+				if( status == CRYPT_ERROR_WRITE )
+					{
+					/* We'll usually fail at this point with a 
+					   CRYPT_ERROR_WRITE due to being unable to update the
+					   cetificate store log, but this is rather confusing 
+					   for a keyset open so we convert it into a generic
+					   CRYPT_ERROR_OPEN */
+					status = CRYPT_ERROR_OPEN;
+					}
 				dbmsClose();
 				endDbxSession( keysetInfoPtr );
-				retExtArg( CRYPT_ARGERROR_NUM1, 
-						   ( CRYPT_ARGERROR_NUM1, KEYSET_ERRINFO, 
+				retExtArg( status, 
+						   ( status, KEYSET_ERRINFO, 
 							 "Couldn't update certificate store log" ) );
 				}
 			}

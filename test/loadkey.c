@@ -971,10 +971,10 @@ BOOLEAN loadRSAContextsLarge( const CRYPT_DEVICE cryptDevice,
 	}
 
 BOOLEAN loadDSAContextsEx( const CRYPT_DEVICE cryptDevice,
-						   CRYPT_CONTEXT *signContext,
 						   CRYPT_CONTEXT *sigCheckContext,
-						   const C_STR signContextLabel,
-						   const C_STR sigCheckContextLabel )
+						   CRYPT_CONTEXT *signContext,
+						   const C_STR sigCheckContextLabel,
+						   const C_STR signContextLabel )
 	{
 	CRYPT_PKCINFO_DLP *dsaKey;
 	const BOOLEAN isDevice = ( cryptDevice != CRYPT_UNUSED ) ? TRUE : FALSE;
@@ -1097,11 +1097,11 @@ BOOLEAN loadDSAContextsEx( const CRYPT_DEVICE cryptDevice,
 	}
 
 BOOLEAN loadDSAContexts( const CRYPT_DEVICE cryptDevice,
-						 CRYPT_CONTEXT *signContext,
-						 CRYPT_CONTEXT *sigCheckContext )
+						 CRYPT_CONTEXT *sigCheckContext,
+						 CRYPT_CONTEXT *signContext )
 	{
-	return( loadDSAContextsEx( cryptDevice, signContext, sigCheckContext,
-							   DSA_PRIVKEY_LABEL, DSA_PUBKEY_LABEL ) );
+	return( loadDSAContextsEx( cryptDevice, sigCheckContext, signContext, 
+							   DSA_PUBKEY_LABEL, DSA_PRIVKEY_LABEL ) );
 	}
 
 BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
@@ -1287,8 +1287,8 @@ BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
 
 /* Load ECDSA encrytion contexts */
 
-BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *signContext,
-						   CRYPT_CONTEXT *sigCheckContext )
+BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *sigCheckContext,
+						   CRYPT_CONTEXT *signContext )
 	{
 	CRYPT_PKCINFO_ECC *eccKey;
 	const ECC_KEY *eccKeyData = &eccP256TestKey;

@@ -25,8 +25,7 @@
 *																			*
 ****************************************************************************/
 
-#ifdef ALLOW_SSLV2_HELLO	/* 28/01/08 Disabled since it's now finally 
-							   removed in MSIE and Firefox */
+#ifdef ALLOW_SSLV2_HELLO	/* See warning in ssl.h */
 
 /* Handle a legacy SSLv2 client hello:
 
@@ -700,7 +699,7 @@ int readHSPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	const int localPacketType = \
 					( packetType == SSL_MSG_FIRST_ENCRHANDSHAKE ) ? \
 					SSL_MSG_HANDSHAKE : packetType;
-	int bytesToRead, length, status;
+	int firstByte, bytesToRead, length, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( ( handshakeInfo == NULL ) || \
@@ -744,33 +743,68 @@ int readHSPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		return( status );
 		}
+	firstByte = byteToInt( headerBuffer[ 0 ] );
 
 	/* Check for an SSL alert message */
-	if( headerBuffer[ 0 ] == SSL_MSG_ALERT )
+	if( firstByte == SSL_MSG_ALERT )
 		{
 		return( processAlert( sessionInfoPtr, headerBuffer, 
 							  sessionInfoPtr->receiveBufStartOfs ) );
 		}
 
-	/* Decode and process the SSL packet header */
+	/* Decode and process the SSL packet header.  If this is the first 
+	   packet sent by the other side we check for various special-case 
+	   conditions and handle them specially.  Since the first byte is 
+	   supposed to be an SSL_MSG_HANDSHAKE (value 22 or 0x16) which in 
+	   ASCII would be a SYN we can quickly weed out use of non-encrypted
+	   protocols like SMTP, POP3, IMAP, and FTP that are often used with 
+	   SSL, and the obsolete SSLv2 protocol */
 	if( packetType == SSL_MSG_FIRST_HANDSHAKE && \
-		headerBuffer[ 0 ] == SSL_MSG_V2HANDSHAKE )
+		firstByte != SSL_MSG_HANDSHAKE )
 		{
-#ifdef ALLOW_SSLV2_HELLO	/* 28/01/08 Disabled since it's now finally been 
-							   removed from MSIE and Firefox */
-		/* It's an SSLv2 handshake, handle it specially */
-		status = length = handleSSLv2Header( sessionInfoPtr, handshakeInfo, 
-											 headerBuffer );
-		if( cryptStatusError( status ) )
-			return( status );
-		*packetLength = length;
-		return( OK_SPECIAL );
+		/* Try and detect whether the other side is talking something that 
+		   isn't SSL, typically SMTP, POP3, IMAP, or FTP, which are used
+		   with SSL but require explicit negotiation to switch to xxx-with-
+		   SSL.  In theory we could check for more explicit indications of
+		   one of these protocols ("220" for SMTP and FTP, "+OK" for POP3
+		   and "OK" for IMAP) but there's a danger of mis-identifying the
+		   other protocol and returning a message that's worse than a
+		   generic bad-data, so for now we just report the text that was 
+		   sent and let the user figure it out */
+		if( strIsPrintable( headerBuffer, SSL_HEADER_SIZE ) )
+			{
+			char textBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
+
+			memcpy( textBuffer, headerBuffer, SSL_HEADER_SIZE );
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+					  "%s sent ASCII text string beginning '%s...', is "
+					  "this the correct address/port?",
+					  isServer( sessionInfoPtr ) ? "Server" : "Client",
+					  sanitiseString( textBuffer, CRYPT_MAX_TEXTSIZE, 
+									  SSL_HEADER_SIZE ) ) );
+			}
+
+		/* Detect whether the other side is using the obsolete SSLv2 
+		   protocol */
+		if( firstByte == SSL_MSG_V2HANDSHAKE )
+			{
+#ifdef ALLOW_SSLV2_HELLO	/* See warning in ssl.h */
+			/* It's an SSLv2 handshake, handle it specially */
+			status = length = handleSSLv2Header( sessionInfoPtr, handshakeInfo, 
+												 headerBuffer );
+			if( cryptStatusError( status ) )
+				return( status );
+			*packetLength = length;
+
+			return( CRYPT_OK );
 #else
-		retExt( CRYPT_ERROR_NOSECURE,
-				( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
-				  "Client sent obsolete handshake for the insecure SSLv2 "
-				  "protocol" ) );
+			retExt( CRYPT_ERROR_NOSECURE,
+					( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
+					  "Client sent obsolete handshake for the insecure SSLv2 "
+					  "protocol" ) );
 #endif /* ALLOW_SSLV2_HELLO */
+			}
 		}
 	sMemConnect( &stream, headerBuffer, sessionInfoPtr->receiveBufStartOfs );
 	status = checkPacketHeader( sessionInfoPtr, &stream, &bytesToRead, 
@@ -870,7 +904,7 @@ typedef struct {
 	const int cryptlibError;	/* Equivalent cryptlib error status */
 	} ALERT_INFO;
 
-const static ALERT_INFO alertInfo[] = {
+static const ALERT_INFO alertInfo[] = {
 	{ SSL_ALERT_CLOSE_NOTIFY, "Close notify", 12, CRYPT_ERROR_COMPLETE },
 	{ SSL_ALERT_UNEXPECTED_MESSAGE, "Unexpected message", 18, CRYPT_ERROR_FAILED },
 	{ SSL_ALERT_BAD_RECORD_MAC, "Bad record MAC", 14, CRYPT_ERROR_SIGNATURE },
@@ -1023,8 +1057,12 @@ int processAlert( INOUT SESSION_INFO *sessionInfoPtr,
 	   alert, carried over from many early Unix protocols that used a 
 	   connection close to signify end-of-data, which has caused problems 
 	   ever since for newer protocols that want to keep the connection open.  
-	   Other implementations still send their alert but then immediately 
-	   close the connection.  Because of this haphazard approach to closing 
+	   This behaviour is nearly universal for some protocols tunneled over 
+	   SSL, for example vsftpd by default disables close-alert handling
+	   because the author was unable to find FTP client anywhere that uses
+	   it (see the manpage entry for "strict_ssl_write_shutdown").  Other 
+	   implementations still send their alert but then immediately close the 
+	   connection.  Because of this haphazard approach to closing 
 	   connections many implementations allow a session to be resumed even 
 	   if no close alert is sent.  In order to be compatible with this 
 	   behaviour, we do the same (thus perpetuating the problem).  If 

@@ -507,8 +507,13 @@ int writeAttributeField( INOUT_OPT STREAM *stream,
 		case FIELDTYPE_TEXTSTRING:
 			if( tag == DEFAULT_TAG )
 				{
-				tag = ( complianceLevel >= CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL ) ? \
-					  BER_STRING_UTF8 : BER_STRING_ISO646;
+				int status;
+
+				status = getAsn1StringType( dataPtr, 
+											attributeListPtr->valueLength, 
+											&tag );
+				if( cryptStatusError( status ) )
+					return( status );
 				}
 			return( writeCharacterString( stream, dataPtr, 
 										  attributeListPtr->valueLength, 
@@ -668,8 +673,7 @@ static int writeAttribute( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeBlobAttribute( INOUT STREAM *stream, 
 							   INOUT ATTRIBUTE_LIST **attributeListPtrPtr,
-							   const BOOLEAN wrapperTagSet, 
-							   IN_RANGE( 0, 4 ) const int complianceLevel )
+							   const BOOLEAN wrapperTagSet )
 	{
 	ATTRIBUTE_LIST *attributeListPtr = *attributeListPtrPtr;
 	const BOOLEAN isCritical = \
@@ -752,8 +756,7 @@ int writeCmsAttributes( INOUT STREAM *stream,
 		if( checkAttributeProperty( currentAttributePtr,
 									ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) )
 			{
-			status = writeBlobAttribute( stream, &currentAttributePtr, TRUE, 
-										 complianceLevel );
+			status = writeBlobAttribute( stream, &currentAttributePtr, TRUE );
 			}
 		else
 			{
@@ -768,6 +771,136 @@ int writeCmsAttributes( INOUT STREAM *stream,
 	return( CRYPT_OK );
 	}
 #endif /* USE_CMSATTR */
+
+#ifdef USE_CERTREQ
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writeCertReqAttributes( INOUT STREAM *stream, 
+							const ATTRIBUTE_LIST *attributeListPtr,
+							IN_RANGE( 0, 4 ) const int complianceLevel )
+	{
+	int iterationCount, status = CRYPT_OK;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+
+	REQUIRES( complianceLevel >= CRYPT_COMPLIANCELEVEL_OBLIVIOUS && \
+			  complianceLevel < CRYPT_COMPLIANCELEVEL_LAST );
+
+	/* Write any standalone attributes that aren't encapsulated in an
+	   extensionRequest.  We stop when we reach the blob-type attributes
+	   because, since they're blobs, we don't know whether they're 
+	   standalone or extensionRequest-encapsulated ones */
+	for( iterationCount = 0;
+		 cryptStatusOK( status ) && attributeListPtr != NULL && \
+			!checkAttributeProperty( attributeListPtr,
+									 ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
+		{
+		const ATTRIBUTE_INFO *attributeInfoPtr = \
+									attributeListPtr->attributeInfoPtr;
+
+		/* If this is an attribute that's not encapsulated inside an 
+		   extensionRequest, write it now.  We have to check for 
+		   attributeInfoPtr not being NULL because in the case of an 
+		   attribute that contains all-default values (for example the
+		   default basicConstraints with cA = DEFAULT FALSE and 
+		   pathLenConstraint absent) there won't be any encoding information 
+		   present since the entire attribute is empty */
+		if( attributeInfoPtr != NULL && \
+			( attributeInfoPtr->encodingFlags & FL_SPECIALENCODING ) )
+			{
+			/* Write the attribute with a SET wrapper tag (for CMS 
+			   attributes) rather than an OCTET STRING wrapper tag (for
+			   certificate attributes) since this is a FL_SPECIALENCODING 
+			   attribute */
+			status = writeAttribute( stream, 
+									 ( ATTRIBUTE_LIST ** ) &attributeListPtr, 
+									 TRUE, complianceLevel );
+			if( cryptStatusError( status ) )
+				return( status );
+			continue;
+			}
+
+		/* Move on to the next attribute */
+		attributeListPtr = certMoveAttributeCursor( attributeListPtr, 
+										CRYPT_ATTRIBUTE_CURRENT_GROUP, 
+										CRYPT_CURSOR_NEXT );
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+
+	return( status );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writeCertReqWrapper( INOUT STREAM *stream, 
+						 const ATTRIBUTE_LIST *attributeListPtr,
+						 IN_LENGTH const int attributeSize,
+						 IN_RANGE( 0, 4 ) const int complianceLevel )
+	{
+	STREAM nullStream;
+	int encapsAttributeSize, nonEncapsAttributeSize = DUMMY_INIT;
+	int totalAttributeSize = 0, status;
+
+	/* Certificate request attributes can be written in two groups, standard
+	   attributes that apply to the request itself and attributes that 
+	   should be placed in the certificate that's created from the request,
+	   encapsulated inside an extensionRequest attribute.  First we 
+	   determine which portion of the attributes will be encoded as is and
+	   which will be encapsulated inside an extensionRequest */
+	sMemNullOpen( &nullStream );
+	status = writeCertReqAttributes( &nullStream, attributeListPtr, 
+									 complianceLevel );
+	if( cryptStatusOK( status ) )
+		nonEncapsAttributeSize = stell( &nullStream );
+	sMemClose( &nullStream );
+	if( cryptStatusError( status ) )
+		return( status );
+	encapsAttributeSize = attributeSize - nonEncapsAttributeSize;
+
+	/* Determine the overall size of the attributes */
+	if( encapsAttributeSize > 0 )
+		{
+		totalAttributeSize += ( int ) \
+					sizeofObject( \
+						sizeofOID( OID_PKCS9_EXTREQ ) + \
+						sizeofObject( sizeofObject( encapsAttributeSize ) ) );
+		}
+	if( nonEncapsAttributeSize > 0 )
+		totalAttributeSize += nonEncapsAttributeSize;
+
+	/* Write the overall wrapper for the attributes */
+	writeConstructed( stream, totalAttributeSize, CTAG_CR_ATTRIBUTES );
+
+	/* The fact that the attributes are written in two groups means that the 
+	   overall attribute size doesn't apply to either of the two groups.  
+	   This means that we have to adjust the overall size based on how much 
+	   we've written of the unencapsulated attributes */
+	if( nonEncapsAttributeSize > 0 ) 
+		{
+		status = writeCertReqAttributes( stream, attributeListPtr, 
+										 complianceLevel );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( encapsAttributeSize <= 0 )
+			{
+			/* There's nothing left to write as an encapsulated attribute, 
+			   we're done */
+			return( CRYPT_OK );
+			}
+		}
+
+	/* Write the wrapper for the remaining attributes, encapsulated inside 
+	   an extensionRequest */
+	writeSequence( stream, sizeofOID( OID_PKCS9_EXTREQ ) + \
+				   ( int ) sizeofObject( \
+								sizeofObject( encapsAttributeSize ) ) );
+	swrite( stream, OID_PKCS9_EXTREQ, sizeofOID( OID_PKCS9_EXTREQ ) );
+	writeSet( stream, ( int ) sizeofObject( encapsAttributeSize ) );
+	return( writeSequence( stream, encapsAttributeSize ) );
+	}
+#endif /* USE_CERTREQ */
 
 /****************************************************************************
 *																			*
@@ -829,10 +962,21 @@ int writeAttributes( INOUT STREAM *stream,
 #endif /* USE_CMSATTR */
 
 	/* Write the appropriate extensions tag for the certificate object and 
-	   determine how far we can read.  CRLs and OCSP requests/responses have 
-	   two extension types that have different tagging, per-entry extensions 
-	   and entire-CRL/request extensions.  To differentiate between the two 
-	   we write per-entry extensions with a type of CRYPT_CERTTYPE_NONE */
+	   determine how far we can read.  
+	   
+	   CRLs and OCSP requests/responses have two extension types that have 
+	   different tagging, per-entry extensions and entire-CRL/request 
+	   extensions.  To differentiate between the two we write per-entry 
+	   extensions with a type of CRYPT_CERTTYPE_NONE.
+
+	   Certificate requests also have two classes of extensions, the first
+	   class is extensions that are meant to go into the certificare that's
+	   created from the request (for example keyUsage, basicConstrains,
+	   altNames) which are encapsulated inside an extensionRequest 
+	   extension, and the second class is extensions that are written as
+	   is.  To deal with this we write the as-is extensions first (there
+	   usually aren't any of these), and then we write the extensions that
+	   go inside the extensionRequest (which is usually all of them) */
 	switch( type )
 		{
 		case CRYPT_CERTTYPE_CERTIFICATE:
@@ -844,11 +988,8 @@ int writeAttributes( INOUT STREAM *stream,
 			break;
 
 		case CRYPT_CERTTYPE_CERTREQUEST:
-			writeSequence( stream, sizeofOID( OID_PKCS9_EXTREQ ) + \
-						   ( int ) sizeofObject( sizeofObject( attributeSize ) ) );
-			swrite( stream, OID_PKCS9_EXTREQ, sizeofOID( OID_PKCS9_EXTREQ ) );
-			writeSet( stream, ( int ) sizeofObject( attributeSize ) );
-			status = writeSequence( stream, attributeSize );
+			status = writeCertReqWrapper( stream, attributeListPtr, 
+										  attributeSize, complianceLevel );
 			break;
 
 		case CRYPT_CERTTYPE_REQUEST_CERT:
@@ -889,6 +1030,20 @@ int writeAttributes( INOUT STREAM *stream,
 			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
+		const ATTRIBUTE_INFO *attributeInfoPtr = \
+									attributeListPtr->attributeInfoPtr;
+
+		/* If this attribute requires special-case encoding then we don't 
+		   write it at this point */
+		if( attributeInfoPtr != NULL && \
+			( attributeInfoPtr->encodingFlags & FL_SPECIALENCODING ) )
+			{
+			attributeListPtr = certMoveAttributeCursor( attributeListPtr, 
+											CRYPT_ATTRIBUTE_CURRENT_GROUP, 
+											CRYPT_CURSOR_NEXT );
+			continue;
+			}
+
 		status = writeAttribute( stream, &attributeListPtr, FALSE, 
 								 complianceLevel );
 		}
@@ -902,8 +1057,7 @@ int writeAttributes( INOUT STREAM *stream,
 			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
-		status = writeBlobAttribute( stream, &attributeListPtr, FALSE, 
-									 complianceLevel );
+		status = writeBlobAttribute( stream, &attributeListPtr, FALSE );
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	return( status );

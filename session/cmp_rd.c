@@ -137,21 +137,13 @@ static int readGeneralInfo( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readUserID( INOUT STREAM *stream, 
-					   INOUT CMP_PROTOCOL_INFO *protocolInfo,
-					   const BOOLEAN isServerInitialMessage )
+					   INOUT CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	BYTE userID[ CRYPT_MAX_HASHSIZE + 8 ];
 	int userIDsize, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-
-#if 0	/* 28/9/08 Why is this here?  Should always check the ID */
-	/* If we're in the middle of an ongoing transaction, skip the user ID, 
-	   which we already know */
-	if( !isServerInitialMessage )
-		return( readUniversal( stream ) );
-#endif /* 0 */
 
 	/* Read the PKI user ID that we'll need to handle the integrity 
 	   protection on the message */
@@ -402,35 +394,53 @@ int updateCertID( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int updateMacInfo( INOUT SESSION_INFO *sessionInfoPtr,
 						  INOUT CMP_PROTOCOL_INFO *protocolInfo,
-						  INOUT STREAM *stream )
+						  INOUT STREAM *stream,
+						  const BOOLEAN isRevocation )
 	{
 	const ATTRIBUTE_LIST *passwordPtr = \
 					findSessionInfo( sessionInfoPtr->attributeList,
 									 CRYPT_SESSINFO_PASSWORD );
 	BYTE macKey[ 64 + 8 ];
-	const BYTE *macKeyPtr = macKey;
+	BOOLEAN decodedMacKey = FALSE;
+	const void *macKeyPtr;
 	const int streamPos = stell( stream );
 	int macKeyLength, status;
 
 	REQUIRES( passwordPtr != NULL );
 
 	sseek( stream, protocolInfo->macInfoPos );
-	if( passwordPtr->flags & ATTR_FLAG_ENCODEDVALUE )
+	if( isRevocation && protocolInfo->altMacKeySize > 0 )
 		{
-		/* It's an encoded value, get the decoded form */
-		status = decodePKIUserValue( macKey, 64, &macKeyLength, 
-									 passwordPtr->value, 
-									 passwordPtr->valueLength );
-		ENSURES( cryptStatusOK( status ) );
+		/* If it's a revocation and we're using a distinct revocation
+		   password (which we've already decoded into a MAC key), use
+		   that */
+		macKeyPtr = protocolInfo->altMacKey;
+		macKeyLength = protocolInfo->altMacKeySize;
 		}
 	else
 		{
-		macKeyPtr = passwordPtr->value;
-		macKeyLength = passwordPtr->valueLength;
+		/* It's a standard issue (or we're using the same password/key
+		   for the issue and revocation), use that */
+		if( passwordPtr->flags & ATTR_FLAG_ENCODEDVALUE )
+			{
+			/* It's an encoded value, get the decoded form */
+			macKeyPtr = macKey;
+			status = decodePKIUserValue( macKey, 64, &macKeyLength, 
+										 passwordPtr->value, 
+										 passwordPtr->valueLength );
+			ENSURES( cryptStatusOK( status ) );
+			decodedMacKey = TRUE;
+			}
+		else
+			{
+			macKeyPtr = passwordPtr->value;
+			macKeyLength = passwordPtr->valueLength;
+			}
 		}
 	status = readMacInfo( stream, protocolInfo, macKeyPtr,
 						  macKeyLength, SESSION_ERRINFO );
-	zeroise( macKey, CRYPT_MAX_TEXTSIZE );
+	if( decodedMacKey )
+		zeroise( macKey, 64 );
 	if( cryptStatusError( status ) )
 		return( status );
 	sseek( stream, streamPos );
@@ -556,7 +566,7 @@ static int readPkiHeader( INOUT STREAM *stream,
 		}
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_PH_SENDERKID ) )
 		{								/* Sender protection keyID */
-		status = readUserID( stream, protocolInfo, isServerInitialMessage );
+		status = readUserID( stream, protocolInfo );
 		if( cryptStatusError( status ) )
 			{
 			retExt( status,
@@ -894,7 +904,8 @@ int readPkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
 	   now */
 	if( protocolInfo->useMACreceive )
 		{
-		status = updateMacInfo( sessionInfoPtr, protocolInfo, &stream );
+		status = updateMacInfo( sessionInfoPtr, protocolInfo, &stream,
+								( messageType == CTAG_PB_RR ) ? TRUE : FALSE );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
@@ -951,6 +962,7 @@ int readPkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
 				( CRYPT_ERROR_SIGNATURE, errorInfo, 
 				  "Received signed ir, should be MAC'd" ) );
 		}
+#if 0	/* 10/10/11 No longer necessary since we now allow MAC'd rr's */
 	if( tag == CTAG_PB_RR && protocolInfo->useMACreceive )
 		{
 		/* An rr can't be MAC'd because the trail from the original PKI
@@ -973,6 +985,7 @@ int readPkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
 				( CRYPT_ERROR_SIGNATURE, errorInfo, 
 				  "Received MAC'd rr, should be signed" ) );
 		}
+#endif /* 0 */
 	ANALYSER_HINT( integrityInfoPtr != NULL );
 
 	/* Verify the message integrity.  We convert any error that we encounter 

@@ -143,7 +143,7 @@ static int oidToText( IN_BUFFER( binaryOidLen ) const BYTE *binaryOID,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int scanValue( IN_BUFFER( strMaxLength ) const char *string, 
-					  IN_LENGTH_ATTRIBUTE const int strMaxLength,
+					  IN_LENGTH_TEXT const int strMaxLength,
 					  OUT_INT_Z long *value )
 	{
 	int intValue, index, status;
@@ -179,8 +179,7 @@ static int scanValue( IN_BUFFER( strMaxLength ) const char *string,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int textToOID( IN_BUFFER( textOidLength ) const char *textOID, 
-			   IN_RANGE( MIN_ASCII_OIDSIZE, CRYPT_MAX_TEXTSIZE ) \
-					const int textOidLength, 
+			   IN_LENGTH_TEXT const int textOidLength, 
 			   OUT_BUFFER( binaryOidMaxLen, *binaryOidLen ) BYTE *binaryOID, 
 			   IN_LENGTH_SHORT const int binaryOidMaxLen, 
 			   OUT_LENGTH_SHORT_Z int *binaryOidLen )
@@ -484,7 +483,7 @@ static int getESSCertID( INOUT CERT_INFO *certInfoPtr,
 						  sizeofObject( issuerSerialDataSize ) );
 	if( certInfo == NULL )
 		return( CRYPT_OK );
-	if( *certInfoLength > certInfoMaxLength )
+	if( *certInfoLength <= 0 || *certInfoLength > certInfoMaxLength )
 		return( CRYPT_ERROR_OVERFLOW );
 	sMemOpen( &stream, certInfo, *certInfoLength );
 	writeSequence( &stream, sizeofObject( certHashSize ) + \
@@ -594,7 +593,7 @@ static int getCrlEntry( INOUT CERT_INFO *certInfoPtr,
 	*certInfoLength = crlEntrySize;
 	if( certInfo == NULL )
 		return( CRYPT_OK );
-	if( crlEntrySize > certInfoMaxLength )
+	if( crlEntrySize <= 0 || crlEntrySize > certInfoMaxLength )
 		return( CRYPT_ERROR_OVERFLOW );
 	sMemOpen( &stream, certInfo, crlEntrySize );
 	status = writeCertFunction( &stream, certInfoPtr, NULL,  CRYPT_UNUSED );
@@ -688,7 +687,7 @@ static int getIAndS( const CERT_INFO *certInfoPtr,
 												   serialNumberLength ) );
 	if( certInfo == NULL )
 		return( CRYPT_OK );
-	if( *certInfoLength > certInfoMaxLength )
+	if( *certInfoLength <= 0 || *certInfoLength > certInfoMaxLength )
 		return( CRYPT_ERROR_OVERFLOW );
 	sMemOpen( &stream, certInfo, *certInfoLength );
 	writeSequence( &stream, certInfoPtr->issuerDNsize + \

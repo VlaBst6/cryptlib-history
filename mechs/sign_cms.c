@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								CMS Signature Routines						*
-*						Copyright Peter Gutmann 1993-2007					*
+*						Copyright Peter Gutmann 1993-2011					*
 *																			*
 ****************************************************************************/
 
@@ -84,10 +84,12 @@ typedef struct {
 		unsignedAttrs	  [ 1 ]	IMPLICIT SET OF Attribute OPTIONAL
 		} */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 6 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 7 ) ) \
 static int writeCmsSignerInfo( INOUT STREAM *stream,
 							   IN_HANDLE const CRYPT_CERTIFICATE certificate,
 							   IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+							   IN_RANGE( 0, CRYPT_MAX_HASHSIZE ) \
+									const int hashAlgoParam,
 							   IN_BUFFER_OPT( attributeSize ) \
 								const void *attributes, 
 							   IN_LENGTH_Z const int attributeSize,
@@ -97,7 +99,7 @@ static int writeCmsSignerInfo( INOUT STREAM *stream,
 	{
 	MESSAGE_DATA msgData;
 	DYNBUF iAndSDB;
-	const int sizeofHashAlgoID = sizeofAlgoID( hashAlgo );
+	const int sizeofHashAlgoID = sizeofAlgoIDex( hashAlgo, hashAlgoParam, 0 );
 	int timeStampSize = DUMMY_INIT, unsignedAttributeSize = 0, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -107,6 +109,7 @@ static int writeCmsSignerInfo( INOUT STREAM *stream,
 
 	REQUIRES( isHandleRangeValid( certificate ) );
 	REQUIRES( isHashAlgo( hashAlgo ) );
+	REQUIRES( hashAlgoParam >= 0 && hashAlgoParam <= CRYPT_MAX_HASHSIZE );
 	REQUIRES( ( attributes == NULL && attributeSize == 0 ) || \
 			  ( attributes != NULL && \
 				attributeSize > 0 && attributeSize < MAX_INTLENGTH ) );
@@ -147,7 +150,7 @@ static int writeCmsSignerInfo( INOUT STREAM *stream,
 	/* Write the issuerAndSerialNumber, digest algorithm identifier,
 	   attributes (if there are any) and signature */
 	swrite( stream, dynData( iAndSDB ), dynLength( iAndSDB ) );
-	writeAlgoID( stream, hashAlgo );
+	writeAlgoIDex( stream, hashAlgo, hashAlgoParam, 0 );
 	if( attributeSize > 0 )
 		swrite( stream, attributes, attributeSize );
 	status = swrite( stream, signature, signatureSize );
@@ -180,6 +183,8 @@ static int createCmsCountersignature( IN_BUFFER( dataSignatureSize ) \
 										const void *dataSignature,
 									  IN_LENGTH_SHORT const int dataSignatureSize,
 									  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+									  IN_RANGE( 0, CRYPT_MAX_HASHSIZE ) \
+											const int hashAlgoParam,
 									  IN_HANDLE const CRYPT_SESSION iTspSession )
 	{
 	CRYPT_CONTEXT iHashContext;
@@ -192,6 +197,7 @@ static int createCmsCountersignature( IN_BUFFER( dataSignatureSize ) \
 	REQUIRES( dataSignatureSize > MIN_CRYPT_OBJECTSIZE && \
 			  dataSignatureSize < MAX_INTLENGTH_SHORT );
 	REQUIRES( isHashAlgo( hashAlgo ) );
+	REQUIRES( hashAlgoParam >= 0 && hashAlgoParam <= CRYPT_MAX_HASHSIZE );
 	REQUIRES( isHandleRangeValid( iTspSession ) );
 
 	/* Hash the signature data to create the hash value to countersign.
@@ -204,6 +210,19 @@ static int createCmsCountersignature( IN_BUFFER( dataSignatureSize ) \
 							  OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( isHashExtAlgo( hashAlgo ) )
+		{
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE, 
+								  ( MESSAGE_CAST ) &hashAlgoParam, 
+								  CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( createInfo.cryptHandle, 
+							  IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
+		}
 	iHashContext = createInfo.cryptHandle;
 #if 1	/* Standard CMS countersignature */
 	sMemConnect( &stream, dataSignature, dataSignatureSize );
@@ -468,6 +487,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 								OUT_HANDLE_OPT CRYPT_CONTEXT *iCmsHashContext,
 								IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+								IN_RANGE( 0, CRYPT_MAX_HASHSIZE ) \
+									const int hashAlgoParam,
 								const BOOLEAN lengthCheckOnly )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -494,6 +515,7 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 	REQUIRES( cmsAttributeInfo->encodedAttributes == NULL && \
 			  cmsAttributeInfo->encodedAttributeSize == 0 );
 	REQUIRES( isHashAlgo( hashAlgo ) );
+	REQUIRES( hashAlgoParam >= 0 && hashAlgoParam <= CRYPT_MAX_HASHSIZE );
 
 	/* Clear return value */
 	*iCmsHashContext = CRYPT_ERROR;
@@ -520,13 +542,20 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 	   it's not worth aborting the signature generation if the attempt to 
 	   add them fails so we don't bother checking a return value */
 	if( cmsAttributeInfo->formatType == CRYPT_FORMAT_SMIME )
-		addSmimeCapabilities( cmsAttributeInfo->iCmsAttributes );
+		( void ) addSmimeCapabilities( cmsAttributeInfo->iCmsAttributes );
 
 	/* Generate the attributes and hash them into the CMS hash context */
 	setMessageCreateObjectInfo( &createInfo, hashAlgo );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 							  OBJECT_TYPE_CONTEXT );
+	if( cryptStatusOK( status ) && isHashExtAlgo( hashAlgo ) )
+		{
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE, 
+								  ( MESSAGE_CAST ) &hashAlgoParam, 
+								  CRYPT_CTXINFO_BLOCKSIZE );
+		}
 	if( cryptStatusOK( status ) )
 		{
 		createdHashContext = TRUE;
@@ -589,7 +618,8 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 128 + 8 ];
 	BYTE *bufPtr = ( signature == NULL ) ? NULL : buffer;
 	const int bufSize = ( signature == NULL ) ? 0 : CRYPT_MAX_PKCSIZE + 128;
-	int hashAlgo, dataSignatureSize, length = DUMMY_INIT, status;
+	int hashAlgo, hashAlgoParam = 0;
+	int dataSignatureSize, length = DUMMY_INIT, status;
 
 	assert( ( signature == NULL && sigMaxLength == 0 ) || \
 			isReadPtr( signature, sigMaxLength ) );
@@ -622,6 +652,9 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	/* Get the message hash algo and signing certificate */
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 							  &hashAlgo, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) && isHashExtAlgo( hashAlgo ) )
+		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
+								  &hashAlgoParam, CRYPT_CTXINFO_BLOCKSIZE );
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM2 : status );
 	status = krnlSendMessage( signContext, IMESSAGE_GETDEPENDENT,
@@ -634,8 +667,8 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	if( useDefaultAuthAttr || iAuthAttr != CRYPT_UNUSED )
 		{
 		status = createCmsAttributes( &cmsAttributeInfo, &iCmsHashContext, 
-									  hashAlgo, ( signature == NULL ) ? \
-									  TRUE : FALSE );
+									  hashAlgo, hashAlgoParam,
+									  ( signature == NULL ) ? TRUE : FALSE );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -654,14 +687,15 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	if( iTspSession != CRYPT_UNUSED && signature != NULL )
 		{
 		status = createCmsCountersignature( buffer, dataSignatureSize,
-											hashAlgo, iTspSession );
+											hashAlgo, hashAlgoParam,
+											iTspSession );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 
 	/* Write the signerInfo record */
 	sMemOpenOpt( &stream, signature, ( signature == NULL ) ? 0 : sigMaxLength );
-	status = writeCmsSignerInfo( &stream, iSigningCert, hashAlgo,
+	status = writeCmsSignerInfo( &stream, iSigningCert, hashAlgo, hashAlgoParam,
 								 cmsAttributeInfo.encodedAttributes, 
 								 cmsAttributeInfo.encodedAttributeSize,
 								 buffer, dataSignatureSize,
@@ -673,36 +707,24 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 		return( status );
 	if( iTspSession != CRYPT_UNUSED && signature == NULL )
 		{
-		/* If we're countersigning the signature with a timestamp and doing
-		   a length check only, inflate the total size to the nearest
-		   multiple of the envelope parameter MIN_BUFFER_SIZE, which is the
-		   size of the envelope's auxData buffer used to contain the
-		   signature.  In other words we're always going to trigger an
-		   increase in the auxBuffer size because its initial size is
-		   MIN_BUFFER_SIZE, so when we grow it we grow it to a nice round
-		   value rather than just ( length + MIN_BUFFER_SIZE ).  The actual
-		   size increase is just a guess since we can't really be sure how
-		   much bigger it'll get without contacting the TSA, however this
-		   should be big enough to hold a simple SignedData value without
-		   attached certificates.  If a TSA gets the implementation wrong 
-		   and returns a timestamp with an attached certificate chain and 
-		   the chain is too large the worst that'll happen is that we'll 
-		   get a CRYPT_ERROR_OVERFLOW when we try and read the TSA data 
-		   from the session object.  Note that this behaviour is envelope-
-		   specific and assumes that we're being called from the enveloping 
-		   code, this is curently the only location from which we can be 
-		   called because a timestamp only makes sense as a countersignature 
-		   on CMS data.  It's somewhat ugly because it asumes internal 
-		   knowledge of the envelope abstraction but there isn't really any 
-		   clean way to handle this because we can't tell in advance how 
-		   much data the TSA will send us */
-		if( MIN_BUFFER_SIZE - length <= 1024 )
-			length = roundUp( length, MIN_BUFFER_SIZE ) + MIN_BUFFER_SIZE;
-		else
-			{
-			/* It should fit in the buffer, don't bother expanding it */
-			length = 1024;
-			}
+		/* If we're countersigning the signature with a timestamp and doing 
+		   a length check only then we run into problems because we can't 
+		   report how big the final size will be without contacting the TSA 
+		   for a timestamp.  In theory we could report some hopefully-OK
+		   large-enough size, but at the moment we take advantage of the 
+		   fact that we're only going to be called from the enveloping code 
+		   because a timestamp only makes sense as a countersignature on CMS 
+		   data.  It's somewhat ugly because it asumes internal knowledge of 
+		   the envelope abstraction but there isn't really any clean way to 
+		   handle this because we can't tell in advance how much data the 
+		   TSA will send us.
+
+		   In theory the code doesn't even need to return an estimate 
+		   because, without knowing the exact length of the 
+		   countersignature, the enveloping code has to fall back to using
+		   indefinite-length encoding (see envelope/cms_envpre.c), so the
+		   length value that we return here is ignored */
+		length += MIN_BUFFER_SIZE;
 		}
 	*signatureLength = length;
 
@@ -727,7 +749,7 @@ int checkSignatureCMS( IN_BUFFER( signatureLength ) const void *signature,
 	STREAM stream;
 	static const BYTE setTag[] = { BER_SET };
 	BYTE hashValue[ CRYPT_MAX_HASHSIZE + 8 ];
-	int hashAlgo, status;	/* int vs.enum */
+	int hashAlgo, hashAlgoParam = 0, status;	/* int vs.enum */
 
 	assert( isReadPtr( signature, signatureLength ) );
 	assert( ( iExtraData == NULL ) || \
@@ -744,6 +766,9 @@ int checkSignatureCMS( IN_BUFFER( signatureLength ) const void *signature,
 	/* Get the message hash algo */
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 							  &hashAlgo, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) && isHashExtAlgo( hashAlgo ) )
+		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
+								  &hashAlgoParam, CRYPT_CTXINFO_BLOCKSIZE );
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM2 : status );
 
@@ -773,7 +798,8 @@ int checkSignatureCMS( IN_BUFFER( signatureLength ) const void *signature,
 		return( ( status == CRYPT_ERROR ) ? \
 				CRYPT_ERROR_WRONGKEY : status );
 		}
-	if( queryInfo.hashAlgo != hashAlgo )
+	if( queryInfo.hashAlgo != hashAlgo || \
+		queryInfo.hashAlgoParam != hashAlgoParam )
 		return( CRYPT_ARGERROR_NUM2 );
 
 	/* If there are no signed attributes present, just check the signature 
@@ -795,13 +821,27 @@ int checkSignatureCMS( IN_BUFFER( signatureLength ) const void *signature,
 							  OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( isHashExtAlgo( queryInfo.hashAlgo ) )
+		{
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE, 
+								  &queryInfo.hashAlgoParam, 
+								  CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
+		}
 	iCmsHashContext = createInfo.cryptHandle;
 	status = krnlSendMessage( iCmsHashContext, IMESSAGE_CTX_HASH,
 							  ( BYTE * ) setTag, sizeof( BYTE ) );
 	if( cryptStatusOK( status ) )
+		{
 		status = krnlSendMessage( iCmsHashContext, IMESSAGE_CTX_HASH,
 						( BYTE * ) signature + queryInfo.attributeStart + 1,
 						queryInfo.attributeLength - 1 );
+		}
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iCmsHashContext, IMESSAGE_CTX_HASH, "", 0 );
 	if( cryptStatusError( status ) )

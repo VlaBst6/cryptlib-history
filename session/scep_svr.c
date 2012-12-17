@@ -67,12 +67,17 @@ static void sendErrorResponse( INOUT SESSION_INFO *sessionInfoPtr,
 								   &iCmsAttributes, FALSE, scepStatus );
 	if( cryptStatusOK( status ) )
 		{
-		status = envelopeSign( sessionInfoPtr->receiveBuffer, 0,
-							   sessionInfoPtr->receiveBuffer, 
+		ERROR_INFO errorInfo;
+
+		/* Since this message is being sent in response to an existing 
+		   error, we don't care about the possible error information 
+		   returned from the function that sends the error response,
+		   so the errorInfo result is ignored */
+		status = envelopeSign( NULL, 0, sessionInfoPtr->receiveBuffer, 
 							   sessionInfoPtr->receiveBufSize, 
 							   &sessionInfoPtr->receiveBufEnd, 
 							   CRYPT_CONTENT_NONE, sessionInfoPtr->privateKey, 
-							   iCmsAttributes );
+							   iCmsAttributes, &errorInfo );
 		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 		}
 	if( cryptStatusError( status ) )
@@ -309,7 +314,7 @@ static int processAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 			sessionInfoPtr->receiveBufEnd = stell( &stream );
 		sMemDisconnect( &stream );
 		ENSURES( cryptStatusOK( status ) );
-		return( writePkiDatagram( sessionInfoPtr, SCEP_CONTENT_TYPE,
+		return( writePkiDatagram( sessionInfoPtr, SCEP_CONTENT_TYPE, 
 								  SCEP_CONTENT_TYPE_LEN ) );
 		}
 
@@ -338,7 +343,7 @@ static int processAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 								  SCEP_CONTENT_TYPE_GETCACERT,
 								  SCEP_CONTENT_TYPE_GETCACERT_LEN ) );
 		}
-	return( writePkiDatagram( sessionInfoPtr, 
+	return( writePkiDatagram( sessionInfoPtr,  
 							  SCEP_CONTENT_TYPE_GETCACERTCHAIN,
 							  SCEP_CONTENT_TYPE_GETCACERTCHAIN_LEN ) );
 	}
@@ -359,6 +364,7 @@ static int checkScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
 	int dataLength, sigResult, value, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -376,12 +382,13 @@ static int checkScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 							   sessionInfoPtr->receiveBuffer, 
 							   sessionInfoPtr->receiveBufSize, &dataLength, 
 							   CRYPT_UNUSED, &sigResult, 
-							   &protocolInfo->iScepCert, &iCmsAttributes );
+							   &protocolInfo->iScepCert, &iCmsAttributes,
+							   &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status, 
-				( status, SESSION_ERRINFO, 
-				  "Invalid CMS signed data in client request" ) );
+		retExtErr( status, 
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Invalid CMS signed data in client request: " ) );
 		}
 	DEBUG_DUMP_FILE( "scep_sreq1", sessionInfoPtr->receiveBuffer, 
 					 dataLength );
@@ -484,12 +491,13 @@ static int checkScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	status = envelopeUnwrap( sessionInfoPtr->receiveBuffer, dataLength,
 							 sessionInfoPtr->receiveBuffer, 
 							 sessionInfoPtr->receiveBufSize, &dataLength, 
-							 sessionInfoPtr->privateKey );
+							 sessionInfoPtr->privateKey, &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status, 
-				( status, SESSION_ERRINFO, 
-				  "Couldn't decrypt CMS enveloped data in client request" ) );
+		retExtErr( status, 
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Couldn't decrypt CMS enveloped data in client "
+					 "request: " ) );
 		}
 
 	/* Finally, import the request as a PKCS #10 request */
@@ -566,6 +574,7 @@ static int createScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	{
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
 	int dataLength, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -592,12 +601,12 @@ static int createScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 						   sessionInfoPtr->receiveBuffer, 
 						   sessionInfoPtr->receiveBufSize, &dataLength, 
 						   CRYPT_FORMAT_CMS, CRYPT_CONTENT_NONE, 
-						   protocolInfo->iScepCert );
+						   protocolInfo->iScepCert, &errorInfo );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't encrypt response data with client key" ) );
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo,
+					 "Couldn't encrypt response data with client key: " ) );
 		}
 	DEBUG_DUMP_FILE( "scep_sresp1", sessionInfoPtr->receiveBuffer, 
 					 dataLength );
@@ -618,13 +627,13 @@ static int createScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 						   sessionInfoPtr->receiveBufSize, 
 						   &sessionInfoPtr->receiveBufEnd, 
 						   CRYPT_CONTENT_NONE, sessionInfoPtr->privateKey, 
-						   iCmsAttributes );
+						   iCmsAttributes, &errorInfo );
 	krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't sign response data with CA key" ) );
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo, 
+					 "Couldn't sign response data with CA key: " ) );
 		}
 	DEBUG_DUMP_FILE( "scep_sresp2", sessionInfoPtr->receiveBuffer, 
 					 sessionInfoPtr->receiveBufEnd );
@@ -646,7 +655,8 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	SCEP_PROTOCOL_INFO protocolInfo;
 	HTTP_DATA_INFO httpDataInfo;
 	HTTP_URI_INFO httpReqInfo;
-	BOOLEAN requestDataOK;
+	STREAM stream;
+	BOOLEAN requestDataOK, processedAdditionalRequest = TRUE;
 	int requestCount, length = DUMMY_INIT, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -670,6 +680,19 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 						sizeof( HTTP_DATA_INFO ) );
 		if( cryptStatusError( status ) )
 			{
+			/* If we've processed one of the bolted-on additions to SCEP 
+			   then a read error at this point isn't necessarily a protocol
+			   error */
+			if( processedAdditionalRequest && status == CRYPT_ERROR_READ )
+				{
+				/* It's possible to send one or more of the bolted-in
+				   protocol messages without ever running the actual SCEP
+				   protocol, so if we get a read error after performing a
+				   bolted-on exchange then we report a success status
+				   since that may be all that the client was intending to 
+				   do */
+				return( CRYPT_OK );
+				}
 			sNetGetErrorInfo( &sessionInfoPtr->stream, 
 							  &sessionInfoPtr->errorInfo );
 			return( status );
@@ -691,6 +714,7 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 											   &httpReqInfo );
 		if( cryptStatusError( status ) )
 			return( status );
+		processedAdditionalRequest = TRUE;
 		}
 	if( requestCount >= 5 )
 		{
@@ -704,9 +728,11 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 		}
 
 	/* Unfortunately we can't use readPkiDatagram() because of the weird 
-	   dual-purpose HTTP transport used in SCEP so we have to duplicate 
-	   portions of readPkiDatagram() here.  See the readPkiDatagram() 
-	   function for code comments explaining the following operations */
+	   dual-purpose HTTP transport used in SCEP where the main protocol uses 
+	   POST + read response while the bolted-on portions use various GET
+	   variations, so we have to duplicate portions of readPkiDatagram() 
+	   here.  See the readPkiDatagram() function for code comments 
+	   explaining the following operations */
 	if( length < 4 || length >= MAX_INTLENGTH )
 		{
 		sendCertErrorResponse( sessionInfoPtr, CRYPT_ERROR_BADDATA );
@@ -723,6 +749,29 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 				( status, SESSION_ERRINFO, "Invalid PKI message encoding" ) );
 		}
 	sessionInfoPtr->receiveBufEnd = length;
+
+	/* Basic lint filter to check for approximately-OK requests before we
+	   try applying enveloping operations to the data:
+
+		SEQUENCE {
+			OID signedData		-- contentType
+			[0] {				-- content
+				SEQUENCE {
+					INTEGER 1	-- version
+					... */
+	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
+				 sessionInfoPtr->receiveBufEnd );
+	readSequence( &stream, NULL );
+	readUniversal( &stream );
+	readConstructed( &stream, NULL, 0 );
+	readSequence( &stream, NULL );
+	status = readInteger( &stream, NULL, 2, NULL );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		{
+		retExt( status, 
+				( status, SESSION_ERRINFO, "Invalid SCEP request header" ) );
+		}
 
 	/* Process the initial message from the client */
 	initSCEPprotocolInfo( &protocolInfo );
@@ -752,7 +801,7 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	/* Return the certificate to the client */
 	status = createScepResponse( sessionInfoPtr, &protocolInfo );
 	if( cryptStatusOK( status ) )
-		status = writePkiDatagram( sessionInfoPtr, SCEP_CONTENT_TYPE,
+		status = writePkiDatagram( sessionInfoPtr, SCEP_CONTENT_TYPE, 
 								   SCEP_CONTENT_TYPE_LEN );
 	destroySCEPprotocolInfo( &protocolInfo );
 	return( status );

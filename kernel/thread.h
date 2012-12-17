@@ -177,7 +177,17 @@
    scalar handle.
 
    To enable the use of thread wrappers, see the xxx_THREAD_WRAPPERS define
-   for each embedded OS type */
+   for each embedded OS type.
+
+   For the embedded OSes that require user-allocated stack space, we use
+   the following as the stack size.  The 8192 byte storage area provides 
+   enough space for the task control block and about half a dozen levels of 
+   function nesting (if no large on-stack arrays are used), this should be 
+   enough for background init but probably won't be sufficient for the 
+   infinitely-recursive OpenSSL bignum code, so the value may need to be 
+   adjusted if background keygen is being used */
+
+#define EMBEDDED_STACK_SIZE		8192
 
 /* Define the following to debug mutex lock/unlock operations (only enabled
    under Windows at the moment) */
@@ -209,7 +219,7 @@
    OSes */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		CJ_ID name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised
 #define MUTEX_CREATE( name, status ) \
 		status = CRYPT_OK; \
@@ -244,25 +254,19 @@
 
    We create the thread with the same priority as the calling thread, AMX
    threads are created in the suspended state so after we create the thread
-   we have to trigger it to start it running.
-
-   The 4096 byte storage area provides enough space for the task control
-   block and about half a dozen levels of function nesting (if no large on-
-   stack arrays are used), this should be enough for background init but
-   probably won't be sufficient for the infinitely-recursive OpenSSL bignum
-   code, so the value may need to be adjusted if background keygen is being
-   used */
+   we have to trigger it to start it running */
 
 #define THREADFUNC_DEFINE( name, arg )	void name( cyg_addrword_t arg )
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
-			BYTE *threadData = malloc( 4096 ); \
+			BYTE *threadStack = clAlloc( EMBEDDED_STACK_SIZE ); \
 			\
 			cjsmcreate( &syncHandle, NULL, CJ_SMBINARY ); \
-			if( cjtkcreate( &threadHandle, NULL, function, threadData, \
-							4096, 0, threadPriority(), 0 ) != CJ_EROK ) \
+			if( cjtkcreate( &threadHandle, NULL, function, threadStack, \
+							EMBEDDED_STACK_SIZE, 0, threadPriority(), \
+							0 ) != CJ_EROK ) \
 				{ \
-				free( threadData ); \
+				free( threadStack ); \
 				status = CRYPT_ERROR; \
 				} \
 			else \
@@ -336,7 +340,10 @@ int threadPriority( void );
 			if( ( krnlData->name##Mutex = create_sem( 1, NULL ) ) < B_NO_ERROR ) \
 				status = CRYPT_ERROR; \
 			else \
+				{ \
+				krnlData->name##MutexLockcount = 0; \
 				krnlData->name##MutexInitialised = TRUE; \
+				} \
 			}
 #define MUTEX_DESTROY( name ) \
 		if( krnlData->name##MutexInitialised ) \
@@ -421,7 +428,7 @@ int threadPriority( void );
    owning actor terminates */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		KnMutex name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised; \
 		KnThreadLid name##MutexOwner; \
 		int name##MutexLockcount
@@ -430,7 +437,10 @@ int threadPriority( void );
 		if( !krnlData->name##MutexInitialised ) \
 			{ \
 			if( mutexInit( &krnlData->name##Mutex ) == K_OK ) \
+				{ \
+				krnlData->name##MutexLockcount = 0; \
 				krnlData->name##MutexInitialised = TRUE; \
+				} \
 			else \
 				status = CRYPT_ERROR; \
 			}
@@ -467,19 +477,13 @@ int threadPriority( void );
    we have to include it as a "software register" value that the thread then
    obtains via threadLoadR().
 
-   The 4096 byte storage area provides enough space for about half a dozen
-   levels of function nesting (if no large on-stack arrays are used), this
-   should be enough for background init but probably won't be sufficient for
-   the infinitely-recursive OpenSSL bignum code, so the value may need to be
-   adjusted if background keygen is being used.
-
    ChorusOS provides no way to destroy a semaphore once it's initialised,
    presumably it gets cleaned up when the owning actor terminates */
 
 #define THREADFUNC_DEFINE( name, arg )	void name( void )
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
-			BYTE *threadStack = malloc( 4096 ); \
+			BYTE *threadStack = clAlloc( EMBEDDED_STACK_SIZE ); \
 			KnDefaultStartInfo startInfo = { \
 				K_START_INFO | K_START_INFO_SOFTREG, K_DEFAULT_STACK_SIZE, \
 				function, threadStack, K_USERTHREAD, arg }; \
@@ -549,11 +553,9 @@ int threadPriority( void );
 #define THREAD_HANDLE			cyg_handle_t
 #define MUTEX_HANDLE			cyg_sem_t
 
-/* Since eCOS has non-scalar handles we need to define a custom version of
-   the value DUMMY_INIT_MUTEX (see the end of this file) */
+/* Indicate that eCOS has non-scalar handles */
 
-#define NONSCALAR_THREADS
-#define DUMMY_INIT_MUTEX		{ 0 }
+#define NONSCALAR_HANDLES
 
 /* Mutex management functions */
 
@@ -567,6 +569,7 @@ int threadPriority( void );
 		if( !krnlData->name##MutexInitialised ) \
 			{ \
 			cyg_mutex_init( &krnlData->name##Mutex ); \
+			krnlData->name##MutexLockcount = 0; \
 			krnlData->name##MutexInitialised = TRUE; \
 			}
 #define MUTEX_DESTROY( name ) \
@@ -625,8 +628,8 @@ int threadPriority( void );
 #define THREADFUNC_DEFINE( name, arg )	void name( cyg_addrword_t arg )
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
-			BYTE *threadData = malloc( sizeof( cyg_thread ) + \
-									   CYGNUM_HAL_STACK_SIZE_TYPICAL ); \
+			BYTE *threadData = clAlloc( sizeof( cyg_thread ) + \
+									    CYGNUM_HAL_STACK_SIZE_TYPICAL ); \
 			\
 			cyg_semaphore_init( &syncHandle, 0 ); \
 			cyg_thread_create( cyg_thread_get_priority( cyg_thread_self() ), \
@@ -695,17 +698,15 @@ int threadPriority( void );
 #define THREAD_HANDLE			OS_TASK *
 #define MUTEX_HANDLE			OS_RSEMA
 
-/* Since EmbOS has non-scalar handles we need to define a custom version of
-   the value DUMMY_INIT_MUTEX (see the end of this file) */
+/* Indicate that EmbOS has non-scalar handles */
 
-#define NONSCALAR_THREADS
-#define DUMMY_INIT_MUTEX		{ 0 }
+#define NONSCALAR_HANDLES
 
 /* Mutex management functions.  EmbOS mutexes are reentrant so we don't have 
    to hand-assemble reentrant mutexes as for many other OSes */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		OS_RSEMA name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised
 #define MUTEX_CREATE( name, status ) \
 		status = CRYPT_OK;	/* Apparently never fails */ \
@@ -735,11 +736,8 @@ int threadPriority( void );
 
    We create the thread with the same priority as the calling thread.  There 
    doesn't seem to be any way to tell whether a thread has been successfully 
-   created/started or not (!!).  The stack size of 4096 provides enough space 
-   for about half a dozen levels of function nesting (if no large on-stack 
-   arrays are used), this should be enough for background init but probably 
-   won't be sufficient for the infinitely-recursive OpenSSL bignum code, so 
-   the value may need to be adjusted if background keygen is being used.
+   created/started or not (!!), nor is there any way of indicating how large
+   the stack is.
    
    The implementation of THREAD_SAME() is somewhat ugly in that since thread
    data storage is handled by the caller rather than being allocated by the
@@ -755,15 +753,15 @@ int threadPriority( void );
 #define THREADFUNC_DEFINE( name, arg )	void name( void *arg )
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
-			BYTE *threadData = malloc( 4096 ); \
+			BYTE *threadStack = clAlloc( EMBEDDED_STACK_SIZE ); \
 			\
-			if( threadData == NULL ) \
+			if( threadStack == NULL ) \
 				status = CRYPT_ERROR_MEMORY; \
 			else \
 				{ \
 				OS_CREATERSEMA( &syncHandle ); \
 				OS_CREATETASK_EX( threadHandle, NULL, function, \
-								  OS_GetPriority( NULL ), threadData, arg ); \
+								  OS_GetPriority( NULL ), threadStack, arg ); \
 				status = CRYPT_OK; \
 				} \
 			}
@@ -825,7 +823,7 @@ int threadPriority( void );
 #define MUTEX_WAIT_TIME		( 5000 / portTICK_RATE_MS )
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		xSemaphoreHandle name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised
 #define MUTEX_CREATE( name, status ) \
 		status = CRYPT_OK; \
@@ -860,8 +858,6 @@ int threadPriority( void );
    stack size is given as a "depth" rather than an actual stack size, where 
    the total size is defined by "depth" x "width" (= machine word size) */
 
-#define STACK_DEPTH		8192
-
 #define THREADFUNC_DEFINE( name, arg )	void name( void *arg )
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
@@ -869,7 +865,7 @@ int threadPriority( void );
 			\
 			syncHandle = xSemaphoreCreateMutex(); \
 			xSemaphoreTake( syncHandle, MUTEX_WAIT_TIME ); \
-			result = xTaskCreate( function, "clibTask", STACK_DEPTH, \
+			result = xTaskCreate( function, "clibTask", EMBEDDED_STACK_SIZE, \
 								  arg, tskIDLE_PRIORITY, &threadHandle ); \
 			if( result != pdPASS ) \
 				status = CRYPT_ERROR; \
@@ -905,7 +901,7 @@ int threadPriority( void );
 /* Mutex management functions */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		long name##Semaphore; \
+		MUTEX_HANDLE name##Semaphore; \
 		BOOLEAN name##SemaphoreInitialised
 #define MUTEX_CREATE( name, status ) \
 		status = CRYPT_OK; \
@@ -959,7 +955,7 @@ int threadPriority( void );
    as well use mutexes */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		ID name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised; \
 		ID name##MutexOwner; \
 		int name##MutexLockcount
@@ -973,7 +969,10 @@ int threadPriority( void );
 						acre_mtx( ( T_CMTX  * ) &pk_cmtx ) ) < E_OK ) \
 				status = CRYPT_ERROR; \
 			else \
+				{ \
+				krnlData->name##MutexLockcount = 0; \
 				krnlData->name##MutexInitialised = TRUE; \
+				} \
 			}
 #define MUTEX_DESTROY( name ) \
 		if( krnlData->name##MutexInitialised ) \
@@ -1009,7 +1008,7 @@ int threadPriority( void );
 	arg					-- Task extended info.
 	function			-- Task function.
 	TPRI_SELF			-- Same priority as invoking task.
-	16384				-- Stack size.
+	EMBEDDED_STACK_SIZE	-- Stack size.
 	NULL				-- Auto-allocate stack.  This is given as 0 rather
 						   than NULL since some uITRON headers define their
 						   own NULL as 0, leading to compiler warnings.
@@ -1039,7 +1038,7 @@ int threadPriority( void );
 			{ \
 			static const T_CSEM pk_csem = { TA_TFIFO, 1, 64 }; \
 			T_CTSK pk_ctsk = { TA_HLNG | TA_ACT, ( arg ), ( function ), \
-							   TPRI_SELF, 16384, 0 }; \
+							   TPRI_SELF, EMBEDDED_STACK_SIZE, 0 }; \
 			\
 			syncHandle = acre_sem( ( T_CSEM  * ) &pk_csem ); \
 			threadHandle = acre_tsk( &pk_ctsk ); \
@@ -1130,7 +1129,7 @@ ID threadSelf( void );
    To deal with this strangeness you need to define an entry in your app's
    TASK_TEMPLATE_STRUCT list something like the following:
 
-	{ 0x100, threadedBind, 16384, 15, NULL, 0, 0, 0 }
+	{ 0x100, threadedBind, EMBEDDED_STACK_SIZE, 15, NULL, 0, 0, 0 }
 
    which creates a non-auto-start task with FIFO scheduling and a default 
    timeslice.  Unfortunately because of this bizarre way of specifying things
@@ -1163,6 +1162,133 @@ ID threadSelf( void );
 									status = CRYPT_ERROR; \
 								_lwsem_destroy( &sync )
 #define THREAD_CLOSE( sync )
+
+/****************************************************************************
+*																			*
+*									Nucleus									*
+*																			*
+****************************************************************************/
+
+#elif defined( __Nucleus__ )
+
+#include <nucleus.h>
+
+/* Object handles */
+
+#define THREAD_HANDLE			NU_TASK *
+#define MUTEX_HANDLE			NU_SEMAPHORE *
+
+/* Indicate that Nucleus has non-scalar handles */
+
+#define NONSCALAR_HANDLES
+
+/* Mutex management functions.  Nucleus doesn't have a mutex_trylock()-
+   equivalent so we have to perform the check by comparing the mutex
+   owner to the current task, which in turns means we have to explicitly
+   manage the mutex owner value at a level beyond what's necessary with
+   other OSes */
+
+#define MUTEX_DECLARE_STORAGE( name ) \
+		NU_SEMAPHORE name##Mutex; \
+		BOOLEAN name##MutexInitialised; \
+		NU_TASK *name##MutexOwner; \
+		int name##MutexLockcount
+#define MUTEX_CREATE( name, status ) \
+		status = CRYPT_OK; \
+		if( !krnlData->name##MutexInitialised ) \
+			{ \
+			if( NU_Create_Semaphore( &krnlData->name##Mutex, "CLIBSEMA", 1, \
+									 NU_PRIORITY ) == NU_SUCCESS ) \
+				{ \
+				krnlData->name##MutexOwner = NULL; \
+				krnlData->name##MutexLockcount = 0; \
+				krnlData->name##MutexInitialised = TRUE; \
+				} \
+			else \
+				status = CRYPT_ERROR; \
+			}
+#define MUTEX_DESTROY( name ) \
+		if( krnlData->name##MutexInitialised ) \
+			{ \
+			NU_Delete_Semaphore( &krnlData->name##Mutex ); \
+			krnlData->name##MutexInitialised = FALSE; \
+			}
+#define MUTEX_LOCK( name ) \
+		if( krnlData->name##MutexOwner == NU_Current_Task_Pointer() ) \
+			krnlData->name##MutexLockcount++; \
+		else \
+			{ \
+			NU_Obtain_Semaphore( &krnlData->name##Mutex, NU_SUSPEND ); \
+			krnlData->name##MutexOwner = NU_Current_Task_Pointer(); \
+			}
+#define MUTEX_UNLOCK( name ) \
+		if( krnlData->name##MutexLockcount > 0 ) \
+			krnlData->name##MutexLockcount--; \
+		else \
+			{ \
+			krnlData->name##MutexOwner = NULL; \
+			NU_Release_Semaphore( &krnlData->name##Mutex ); \
+			}
+
+/* Thread management functions.  The attributes for task creation are:
+
+	"CLIBTASK"			-- Task label.
+	function			-- Task function.
+	argc, argv			-- Task arguments
+	stackSpace			-- Stack storage.
+	EMBEDDED_STACK_SIZE	-- Stack size.
+	200					-- Task priority 0...255.
+	15					-- Maximum task timeslice in ticks.
+	NU_PREEMPT			-- Task is preemptible.
+	NU_START			-- Auto-start the task.
+
+   Thread sleep times are measured in implementation-specific ticks rather
+   than ms, but the default is 100Hz so we divide by 10 to convert ms to
+   ticks */
+
+#define THREADFUNC_DEFINE( name, arg )	void name( UNSIGNED argc, VOID *arg )
+#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+			{ \
+			BYTE *stackSpace = clAlloc( EMBEDDED_STACK_SIZE ); \
+			STATUS nu_status; \
+			\
+			nu_status = NU_Create_Task( &threadHandle, "CLIBTASK", function, \
+										1, arg, stackSpace, EMBEDDED_STACK_SIZE, \
+										200, 15, NU_PREEMPT, NU_START ); \
+			if( status != NU_SUCCESS ) \
+				status = CRYPT_ERROR; \
+			else \
+				status = CRYPT_OK; \
+			}
+#define THREAD_EXIT( sync )		NU_Release_Semaphore( &sync ); \
+								NU_Terminate_Task( NU_Current_Task_Pointer() )
+#define THREAD_INITIALISER		{ 0 }
+#define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
+#define THREAD_SELF()			NU_Current_Task_Pointer()
+#define THREAD_SLEEP( ms )		NU_Sleep( ms / 10 )
+#define THREAD_YIELD()			NU_Relinquish()
+#define THREAD_WAIT( sync, status ) \
+								if( NU_Obtain_Semaphore( sync, \
+														 NU_SUSPEND ) != NU_SUCCESS ) \
+									status = CRYPT_ERROR; \
+								NU_Delete_Semaphore( sync )
+#define THREAD_CLOSE( sync )	NU_Delete_Task( sync )
+
+/* Because of the problems with resource management of Nucleus threads, we 
+   no-op them out unless we're using wrappers by ensuring that any attempt 
+   to spawn a threads inside cryptlib fails, falling back to the non-
+   threaded alternative.  Note that cryptlib itself is still thread-safe, it 
+   just can't do its init or keygen in an internal background thread */
+
+#ifndef NUCLEUS_THREAD_WRAPPERS
+  #undef THREAD_CREATE
+  #undef THREAD_EXIT
+  #undef THREAD_CLOSE
+  #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+								status = CRYPT_ERROR
+  #define THREAD_EXIT( sync )
+  #define THREAD_CLOSE( sync )
+#endif /* !NUCLEUS_THREAD_WRAPPERS */
 
 /****************************************************************************
 *																			*
@@ -1355,7 +1481,7 @@ ULONG DosGetThreadID( void );
    semaphore type that we're creating */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		rtems_id name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised
 #define MUTEX_CREATE( name, status ) \
 		status = CRYPT_OK; \
@@ -1482,11 +1608,9 @@ rtems_id threadSelf( void );
 #define THREAD_HANDLE			TX_THREAD *
 #define MUTEX_HANDLE			TX_MUTEX
 
-/* Since ThreadX has non-scalar handles we need to define a custom version 
-   of the value DUMMY_INIT_MUTEX (see the end of this file) */
+/* Indicate that ThreadX has non-scalar handles */
 
-#define NONSCALAR_THREADS
-#define DUMMY_INIT_MUTEX		{ 0 }
+#define NONSCALAR_HANDLES
 
 /* Mutex management functions.  ThreadX mutexes are reentrant so we don't 
    have to hand-assemble reentrant mutexes as for many other OSes.  All 
@@ -1497,7 +1621,7 @@ rtems_id threadSelf( void );
    priority inheritance */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		TX_MUTEX name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised
 #define MUTEX_CREATE( name, status ) \
 		status = CRYPT_OK; \
@@ -1542,14 +1666,14 @@ rtems_id threadSelf( void );
 #define THREADFUNC_DEFINE( name, arg )	VOID name( void * /*ULONG*/ arg )
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
-			BYTE *threadData = malloc( 16384 ); \
+			BYTE *threadStack = clAlloc( EMBEDDED_STACK_SIZE ); \
 			\
 			tx_mutex_create( &syncHandle, "name", TX_NO_INHERIT ); \
 			if( tx_thread_create( &threadHandle, "name", function, \
-								  ( ULONG ) arg, threadData, 16384, \
+								  ( ULONG ) arg, threadStack, EMBEDDED_STACK_SIZE, \
 								  15, 50, 15, TX_AUTO_START ) != TX_SUCCESS ) \
 				{ \
-				free( threadData ); \
+				free( threadStack ); \
 				status = CRYPT_ERROR; \
 				} \
 			else \
@@ -1606,7 +1730,7 @@ rtems_id threadSelf( void );
    as well use mutexes */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		ID name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised; \
 		ID name##MutexOwner; \
 		int name##MutexLockcount
@@ -1620,7 +1744,10 @@ rtems_id threadSelf( void );
 						tk_cre_mtx( &pk_cmtx ) ) < E_OK ) \
 				status = CRYPT_ERROR; \
 			else \
+				{ \
+				krnlData->name##MutexLockcount = 0; \
 				krnlData->name##MutexInitialised = TRUE; \
+				} \
 			}
 #define MUTEX_DESTROY( name ) \
 		if( krnlData->name##MutexInitialised ) \
@@ -1654,7 +1781,7 @@ rtems_id threadSelf( void );
 	TA_HLNG				-- C interface.
 	function			-- Task function.
 	TPRI_SELF			-- Same priority as invoking task.
-	16384				-- User stack size.
+	EMBEDDED_STACK_SIZE	-- User stack size.
 	Other				-- Various parameters left at their default 
 						   settings.
 
@@ -1684,7 +1811,7 @@ rtems_id threadSelf( void );
 			{ \
 			static const T_CSEM pk_csem = { NULL, TA_TFIFO, 1, 64 }; \
 			T_CTSK pk_ctsk = { ( arg ), TA_HLNG, ( function ), \
-							   TPRI_INI, 16384, 0, 0, 0, 0, 0 }; \
+							   TPRI_INI, EMBEDDED_STACK_SIZE, 0, 0, 0, 0, 0 }; \
 			\
 			syncHandle = tk_cre_sem( &pk_csem ); \
 			threadHandle = tk_cre_tsk( &pk_ctsk ); \
@@ -1778,7 +1905,7 @@ rtems_id threadSelf( void );
    use the standard trylock()-style mechanism to work around this */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		OS_EVENT *name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised; \
 		INT8U name##MutexOwner; \
 		int name##MutexLockcount
@@ -1790,7 +1917,10 @@ rtems_id threadSelf( void );
 			\
 			krnlData->name##Mutex = OSMutexCreate( UCOS_PIP, &err ); \
 			if( err == OS_ERR_NONE ) \
+				{ \
+				krnlData->name##MutexLockcount = 0; \
 				krnlData->name##MutexInitialised = TRUE; \
+				} \
 			else \
 				status = CRYPT_ERROR; \
 			}
@@ -1837,13 +1967,14 @@ rtems_id threadSelf( void );
 #define THREADFUNC_DEFINE( name, arg )	void name( void *arg )
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
-			OS_STK *threadData = malloc( 4096 ); \
+			OS_STK *threadStack = clAlloc( EMBEDDED_STACK_SIZE ); \
 			\
 			syncHandle = OSSemCreate( 0 ); \
-			if( OSTaskCreate( function, arg, ( BYTE * ) threadData + 4095, \
+			if( OSTaskCreate( function, arg, \
+							  ( BYTE * ) threadStack + ( EMBEDDED_STACK_SIZE - 1 ), \
 							  UCOS_TASKID ) != OS_ERR_NONE ) \
 				{ \
-				free( threadData ); \
+				free( threadStack ); \
 				status = CRYPT_ERROR; \
 				} \
 			else \
@@ -1982,7 +2113,10 @@ INT8U threadSelf( void );
 			{ \
 			if( pthread_mutex_init( &krnlData->name##Mutex, \
 									NULL ) == 0 ) \
+				{ \
+				krnlData->name##MutexLockcount = 0; \
 				krnlData->name##MutexInitialised = TRUE; \
+				} \
 			else \
 				status = CRYPT_ERROR; \
 			}
@@ -2185,7 +2319,7 @@ INT8U threadSelf( void );
    have to handle initialisation of these specially */
 
 #if defined( __MVS__ ) || defined( _MPRAS )
-  #define NONSCALAR_THREADS
+  #define NONSCALAR_HANDLES
   #undef THREAD_INITIALISER
   #define THREAD_INITIALISER	{ 0 }
 #endif /* Non-scalar pthread_t's */
@@ -2267,7 +2401,7 @@ INT8U threadSelf( void );
    words a mutex */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		VDK_SemaphoreID name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised
 #define MUTEX_CREATE( name, status ) \
 		status = CRYPT_OK; \
@@ -2387,7 +2521,7 @@ INT8U threadSelf( void );
    the hoops that are necessary with most other OSes */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
-		SEM_ID name##Mutex; \
+		MUTEX_HANDLE name##Mutex; \
 		BOOLEAN name##MutexInitialised
 #define MUTEX_CREATE( name, status ) \
 		status = CRYPT_OK; \
@@ -2436,9 +2570,9 @@ INT8U threadSelf( void );
 #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 			{ \
 			syncHandle = semBCreate( SEM_Q_FIFO, SEM_EMPTY ); \
-			threadHandle = taskSpawn( NULL, T_PRIORITY, TASK_ATTRIBUTES, 16384, \
-									  function, ( int ) arg, 0, 0, 0, 0, \
-									  0, 0, 0, 0, 0 ); \
+			threadHandle = taskSpawn( NULL, T_PRIORITY, TASK_ATTRIBUTES, \
+									  EMBEDDED_STACK_SIZE, function, \
+									  ( int ) arg, 0, 0, 0, 0, 0, 0, 0, 0, 0 ); \
 			if( threadHandle == ERROR ) \
 				{ \
 				semDelete( syncHandle ); \
@@ -2785,8 +2919,10 @@ void threadYield( void );
    since this may be an OS-specific and/or non-scalar value we only define
    it if it hasn't already been defined above */
 
-#ifndef DUMMY_INIT_MUTEX
-  #define DUMMY_INIT_MUTEX	( MUTEX_HANDLE ) DUMMY_INIT
-#endif /* !DUMMY_INIT_MUTEX */
+#ifdef NONSCALAR_HANDLES
+  #define DUMMY_INIT_MUTEX		{ 0 }
+#else
+  #define DUMMY_INIT_MUTEX		( MUTEX_HANDLE ) DUMMY_INIT
+#endif /* Scalar vs. non-scalar thread handles */
 
 #endif /* _THREAD_DEFINED */

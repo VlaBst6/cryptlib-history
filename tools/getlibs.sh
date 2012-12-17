@@ -64,7 +64,13 @@ fi
 #			for when this might be required (or even any easy way to detect
 #			Debian), so we unconditionally include it under Linux if libdl
 #			exists.  Note that on some Linux systems it's hidden in
-#			/usr/lib64 so we check for both locations.
+#			/usr/lib32 or /usr/lib64 so we check for multiple locations,
+#			and then Ubuntu makes it even worse by hiding it in even more
+#			places like /usr/lib/i386-linux-gnu/libdl.so.
+#			If this continues then it may be easier to just assume that
+#			Linux, or at least Ubuntu, always has libdl present.  As a
+#			somewhat safer alternative we first try ldconfig, and only then
+#			fall back to hardcoded locations.
 #	-lgcc = Extra gcc support lib needed for BSDI, which ships with gcc but
 #			not the proper libs for it.
 #	-lkstat = kstat functions for Solaris randomness gathering.
@@ -73,6 +79,8 @@ fi
 #   -lposix4 = Solaris 2.5 and 2.6 library for sched_yield.
 #	-lresolv = Resolver functions.
 # 	-lrt = Solaris 2.7 and above realtime library for sched_yield().
+#	-lssp = gcc additional library needed in some cases when
+#			-f-stack-protector is used.
 #	-lthread/lpthread/lpthreads = pthreads support.  Note that this generally
 #			has to be linked as late as possible (and in particular after the
 #			implied -lc) because libpthread overrides non-thread-safe and stub
@@ -119,7 +127,13 @@ case $OSNAME in
 		echo "-lw" ;;
 
 	'Linux')
-		if [ -f /usr/lib/libdl.so -o -f /usr/lib64/libdl.so ] ; then
+		if [ -x /sbin/ldconfig -a \
+			 `/sbin/ldconfig -p | grep -c 'libdl\.so'` -gt 0 ] ; then
+			echo "-lresolv -lpthread -ldl" ;
+		elif [ -f /usr/lib/libdl.so -o \
+			   -f /usr/lib32/libdl.so -o \
+			   -f /usr/lib64/libdl.so -o \
+			   -f /usr/lib/i386-linux-gnu/libdl.so ] ; then
 			echo "-lresolv -lpthread -ldl" ;
 		else
 			echo "-lresolv -lpthread" ;

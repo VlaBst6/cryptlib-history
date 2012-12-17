@@ -53,7 +53,7 @@ static const FAR_BSS OID_INFO certOIDinfo[] = {
    example to augment existing private-key data with an associated 
    certificate or vice-versa */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static void copyObjectInfo( INOUT PKCS12_INFO *destPkcs12Info, 
 							const PKCS12_INFO *srcPkcs12Info,
 							const BOOLEAN isCertificate )
@@ -206,7 +206,8 @@ static int findObjectEntryLocation( OUT_PTR PKCS12_INFO **pkcs12infoPtrPtr,
 	/* There's an ID present, try and find a matching existing entry for 
 	   it */
 	pkcs12infoPtr = pkcs12FindEntry( pkcs12info, maxNoPkcs12objects, 
-									 CRYPT_IKEYID_KEYID, id, idLength );
+									 CRYPT_IKEYID_KEYID, id, idLength,
+									 FALSE );
 	if( pkcs12infoPtr != NULL )
 		{
 		*pkcs12infoPtrPtr = ( PKCS12_INFO * ) pkcs12infoPtr;
@@ -237,7 +238,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5, 7 ) ) \
 static int importCertificate( const PKCS12_OBJECT_INFO *certObjectInfo,
 							  IN_HANDLE const CRYPT_USER cryptOwner,
 							  IN_BUFFER( passwordLen ) const void *password,
-							  IN_LENGTH_NAME const int passwordLen,
+							  IN_LENGTH_TEXT const int passwordLen,
 							  INOUT_BUFFER_FIXED( certObjectDataLen ) \
 									void *certObjectData,
 							  IN_LENGTH_SHORT const int certObjectDataLen,
@@ -339,7 +340,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5, 10 ) ) \
 static int importPrivateKey( const PKCS12_OBJECT_INFO *keyObjectInfo,
 							 IN_HANDLE const CRYPT_USER cryptOwner,
 							 IN_BUFFER( passwordLen ) const void *password,
-							 IN_LENGTH_NAME const int passwordLen,
+							 IN_LENGTH_TEXT const int passwordLen,
 							 IN_BUFFER( keyObjectDataLen ) const void *keyObjectData,
 							 IN_LENGTH_SHORT const int keyObjectDataLen,
 							 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
@@ -441,7 +442,7 @@ static int importPrivateKey( const PKCS12_OBJECT_INFO *keyObjectInfo,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 6 ) ) \
 static int readObjects( INOUT STREAM *stream, 
-						OUT_ARRAY( maxNoPkcs12objects ) PKCS12_INFO *pkcs12info, 
+						INOUT_ARRAY( maxNoPkcs12objects ) PKCS12_INFO *pkcs12info, 
 						IN_LENGTH_SHORT const int maxNoPkcs12objects, 
 						IN_LENGTH_MIN( 32 ) const long endPos,
 						const BOOLEAN isEncryptedCert,
@@ -881,8 +882,8 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   can use to look up a key apart from an optional label, so if we get 
 	   a key ID type that we can't do anything with or we're matching on
 	   the special-case key ID "[none]" we perform a fetch of the first 
-	   matching key on the basis that most PKCS #12 keysets only contain a 
-	   single key of interest */
+	   matching private key on the basis that most PKCS #12 keysets only 
+	   contain a single key of interest */
 	if( keyIDtype == CRYPT_IKEYID_KEYID || \
 		keyIDtype == CRYPT_IKEYID_PGPKEYID || \
 		keyIDtype == CRYPT_IKEYID_ISSUERID || \
@@ -890,14 +891,16 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 		{
 		pkcs12infoPtr = pkcs12FindEntry( keysetInfoPtr->keyData,
 										 keysetInfoPtr->keyDataNoObjects,
-										 CRYPT_KEYID_NAME, NULL, 0 );
+										 CRYPT_KEYID_NAME, NULL, 0, 
+										 TRUE );
 		}
 	else
 		{
 		/* Find a private-key entry */
 		pkcs12infoPtr = pkcs12FindEntry( keysetInfoPtr->keyData,
 										 keysetInfoPtr->keyDataNoObjects,
-										 keyIDtype, keyID, keyIDlength );
+										 keyIDtype, keyID, keyIDlength, 
+										 FALSE );
 		}
 	if( pkcs12infoPtr == NULL )
 		{

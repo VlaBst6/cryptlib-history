@@ -45,6 +45,7 @@ typedef struct {
 	const void *issuerKeyIdentifier;
 	int issuerKeyIDsize;
 #endif /* USE_CERTLEVEL_PKIX_PARTIAL */
+	const ATTRIBUTE_PTR *attributes;
 	} CHAIN_INFO;
 
 typedef struct {
@@ -297,6 +298,7 @@ static int buildChainInfo( OUT_ARRAY( certChainSize ) CHAIN_INFO *chainInfo,
 		chainInfo[ i ].issuerDNsize = certChainPtr->issuerDNsize;
 		chainInfo[ i ].serialNumber = certChainPtr->cCertCert->serialNumber;
 		chainInfo[ i ].serialNumberSize = certChainPtr->cCertCert->serialNumberLength;
+		chainInfo[ i ].attributes = certChainPtr->attributes;
 		status = getChainingAttribute( certChainPtr, 
 									   CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER,
 									   &chainInfo[ i ].subjectKeyIdentifier,
@@ -327,70 +329,156 @@ static int buildChainInfo( OUT_ARRAY( certChainSize ) CHAIN_INFO *chainInfo,
 /* Find the leaf node in a (possibly unordered) certificate chain by walking 
    down the chain as far as possible.  The strategy we use is to pick an 
    initial certificate (which is often the leaf certificate anyway) and keep 
-   looking for certificates it (or its successors) have issued until we 
+   looking for certificates that it (or its successors) have issued until we 
    reach the end of the chain.  Returns the position of the leaf node in the 
-   chain */
+   chain.
+
+   In addition to finding just the (nominal) leaf certificate, the caller 
+   can also specify a preferred certificate through its usage type, useful 
+   when the "chain" is actually an arbitrary certificate collection 
+   containing multiple leaf certificates.  This isn't quite as simple as it 
+   seems because for usage = X alongside the standard case of a single leaf 
+   certificate with usage = X we can also have a leaf certificate with usage 
+   Y, two leaf certificates with usage X, or a CA certificate (but no leaf 
+   certificate) with usage X.  To deal with this we use the caller-specified 
+   usage as a preferred-certificate hint rather than an absolute selection 
+   criterion, with the different cases illustrated as follows:
+
+		  X		- Return this one.
+	...../
+		 \
+		  Y
+
+		  X
+	...../
+		 \
+		  X		- Return this one (because of the way the algorithm is 
+				  implemented, not by any specific policy decision).
+
+		  Y
+	...../
+		 \
+		  Y		- Return this one, same as above.
+
+				 Y
+	... CA+X .../
+				\
+				 Y	- Return this one.
+
+   In other words we always try and return a leaf certificate if one exists, 
+   and make the selection based on usage if possible.
+
+   Finally, the usage is treated as an absolute match (all usages must 
+   match) rather than a selective match (one usage of potentially several 
+   must match).  In other words if the caller specifies usage X+Y then the 
+   certificate must have both of those usages available */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int findLeafNode( IN_ARRAY( certChainSize ) const CHAIN_INFO *chainInfo,
-						 IN_RANGE( 1, MAX_CHAINLENGTH ) const int certChainSize )
+						 IN_RANGE( 1, MAX_CHAINLENGTH ) const int certChainSize,
+						 IN_FLAGS( KEYMGMT ) const int options )
 	{
-	CHAINING_INFO chainingInfo;
-	BOOLEAN certUsed[ MAX_CHAINLENGTH + 8 ], moreMatches;
-	int lastCertPos, iterationCount;
+	const int requestedUsage = \
+		( options == ( KEYMGMT_FLAG_USAGE_CRYPT | KEYMGMT_FLAG_USAGE_SIGN ) ) ? \
+			CRYPT_KEYUSAGE_KEYENCIPHERMENT | CRYPT_KEYUSAGE_DIGITALSIGNATURE : \
+		( options == KEYMGMT_FLAG_USAGE_CRYPT ) ? \
+			CRYPT_KEYUSAGE_KEYENCIPHERMENT : \
+		( options == KEYMGMT_FLAG_USAGE_SIGN ) ? \
+			CRYPT_KEYUSAGE_DIGITALSIGNATURE : 0;
+	int bestMatch = CRYPT_ERROR, optionalMatch, currentCertPos;
 
 	assert( isReadPtr( chainInfo, sizeof( CHAIN_INFO ) * certChainSize ) );
 
 	REQUIRES( certChainSize > 0 && certChainSize <= MAX_CHAINLENGTH );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX && \
+			  ( options & ~KEYMGMT_MASK_USAGEOPTIONS ) == 0 );
 
-	/* We start our search at the first certificate, which is often the leaf 
-	   certificate anyway */
-	memset( certUsed, 0, MAX_CHAINLENGTH * sizeof( BOOLEAN ) );
-	getSubjectChainingInfo( &chainingInfo, &chainInfo[ 0 ] );
-	certUsed[ 0 ] = TRUE;
-	lastCertPos = 0;
+	/* If we don't find a better match, default to using the first 
+	   certificate.  This is required in order to handle self-signed 
+	   certificates, which are their own issuer and so never get passed to
+	   the match-checking code.  Note that this can't handle sufficiently
+	   perverse "chains" like one that contains two self-signed roots
+	   with one having a signature usage and the other having an encryption
+	   usage and the caller is asking for KEYMGMT_FLAG_USAGE_CRYPT, but
+	   anything that weird shouldn't be expected to work properly in the
+	   first place */
+	optionalMatch = 0;
 
 	/* Walk down the chain from the currently selected certificate checking 
-	   for certificates issued by it until we can't go any further.  Note 
-	   that this algorithm handles chains with PKIX path-kludge certificates 
-	   as well as normal ones since it marks a certificate as used once it 
-	   processes it for the first time, avoiding potential endless loops on 
+	   for certificates issued by it until we can't go any further, with
+	   optional filtering by certificate usage type.  Note that this 
+	   algorithm handles chains with PKIX path-kludge certificates as well 
+	   as normal ones since it marks a certificate as used once it processes 
+	   it for the first time, avoiding potential endless loops on 
 	   subject == issuer path-kludge certificates */
-	for( moreMatches = TRUE, iterationCount = 0;
-		 moreMatches && iterationCount < MAX_CHAINLENGTH;
-		 iterationCount++ )
+	for( currentCertPos = 0; 
+		 currentCertPos < certChainSize && currentCertPos < MAX_CHAINLENGTH; 
+		 currentCertPos++ )
 		{
-		int i;
+		CHAINING_INFO currentCertInfo;
+		ATTRIBUTE_PTR *attributePtr;
+		BOOLEAN certIsIssuer = FALSE;
+		int childCertPos, value, status;
 
-		/* We don't have a match until we discover otherwise */
-		moreMatches = FALSE;
+		getSubjectChainingInfo( &currentCertInfo, 
+								&chainInfo[ currentCertPos ] );
 
 		/* Try and find a certificate issued by the current certificate */
-		for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
+		for( childCertPos = 0; 
+			 childCertPos < certChainSize && childCertPos < MAX_CHAINLENGTH; 
+			 childCertPos++ )
 			{
 			/* If there's another certificate below the current one in the 
 			   chain, mark the current one as used and move on to the next 
 			   one */
-			if( !certUsed[ i ] && \
-				isIssuer( &chainingInfo, &chainInfo[ i ] ) )
+			if( isIssuer( &currentCertInfo, &chainInfo[ childCertPos ] ) )
 				{
-				getSubjectChainingInfo( &chainingInfo, &chainInfo[ i ] );
-				certUsed[ i ] = TRUE;
-				moreMatches = TRUE;
-				lastCertPos = i;
+				certIsIssuer = TRUE;
 				break;
 				}
 			}
-		ENSURES( i < MAX_CHAINLENGTH );
-		}
-	ENSURES( iterationCount < MAX_CHAINLENGTH );
+		ENSURES( childCertPos < MAX_CHAINLENGTH );
 
-	return( lastCertPos );
+		/* If the current certificate isn't a leaf certificate, continue to 
+		   the next one */
+		if( certIsIssuer )
+			continue;
+
+		/* If we're not selecting certificates based on a specific usage 
+		   type, we're done */
+		if( requestedUsage == KEYMGMT_FLAG_NONE )
+			{
+			bestMatch = optionalMatch = currentCertPos;
+			continue;
+			}
+
+		/* Get the certificate's key usage */
+		attributePtr = findAttributeField( chainInfo[ currentCertPos ].attributes,
+										   CRYPT_CERTINFO_KEYUSAGE, 
+										   CRYPT_ATTRIBUTE_NONE );
+		if( attributePtr == NULL )
+			{
+			/* There's no explicit key usage present, this certificate 
+			   should be OK unless we find a more specific match */
+			bestMatch = optionalMatch = currentCertPos;
+			continue;
+			}
+		status = getAttributeDataValue( attributePtr, &value );
+		if( cryptStatusError( status ) )
+			continue;
+		if( ( value & requestedUsage ) == requestedUsage )
+			bestMatch = currentCertPos;
+		else
+			optionalMatch = currentCertPos;
+		}
+	ENSURES( currentCertPos < MAX_CHAINLENGTH );
+
+	return( ( bestMatch != CRYPT_ERROR ) ? bestMatch : optionalMatch );
 	}
 
-/* Find a leaf node as identified by issuerAndSerialNumber or 
-   subjectKeyIdentifier.  Returns the position of the leaf node in the 
-   chain */
+/* Find a leaf node as identified by issuerAndSerialNumber,
+   subjectKeyIdentifier, or certificate usage.  Returns the position of the 
+   leaf node in the chain */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 static int findIdentifiedLeafNode( IN_ARRAY( certChainSize ) \
@@ -634,7 +722,8 @@ static int buildCertChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iLeafCert,
 						   IN_RANGE( 1, MAX_CHAINLENGTH ) const int certChainEnd,
 						   IN_KEYID_OPT const CRYPT_KEYID_TYPE keyIDtype,
 						   IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
-						   IN_LENGTH_KEYID_Z const int keyIDlength )
+						   IN_LENGTH_KEYID_Z const int keyIDlength,
+						   IN_FLAGS( KEYMGMT ) const int options )
 	{
 	CHAIN_INFO chainInfo[ MAX_CHAINLENGTH + 8 ];
 	CERT_INFO *certChainPtr;
@@ -658,6 +747,14 @@ static int buildCertChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iLeafCert,
 				keyID != NULL && \
 				keyIDlength >= MIN_SKID_SIZE && \
 				keyIDlength < MAX_ATTRIBUTE_SIZE ) );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX && \
+			  ( options & ~KEYMGMT_MASK_USAGEOPTIONS ) == 0 );
+	REQUIRES( ( keyIDtype == CRYPT_KEYID_NONE && \
+				options == KEYMGMT_FLAG_NONE ) || \
+			  ( keyIDtype != CRYPT_KEYID_NONE && \
+				options == KEYMGMT_FLAG_NONE ) || \
+			  ( keyIDtype == CRYPT_KEYID_NONE && \
+				options != KEYMGMT_FLAG_NONE ) );
 
 	/* Clear return value */
 	*iLeafCert = CRYPT_ERROR;
@@ -681,7 +778,7 @@ static int buildCertChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iLeafCert,
 											  keyIDtype, keyID, keyIDlength );
 		}
 	else
-		leafNodePos = findLeafNode( chainInfo, certChainEnd );
+		leafNodePos = findLeafNode( chainInfo, certChainEnd, options );
 	if( cryptStatusError( leafNodePos ) )
 		return( leafNodePos );
 	ENSURES( leafNodePos >= 0 && leafNodePos < certChainEnd );
@@ -1182,9 +1279,10 @@ int readCertChain( INOUT STREAM *stream,
 				   IN_KEYID_OPT const CRYPT_KEYID_TYPE keyIDtype,
 				   IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
 				   IN_LENGTH_KEYID_Z const int keyIDlength,
-				   const BOOLEAN dataOnlyCert )
+				   IN_FLAGS( KEYMGMT ) const int options )
 	{
 	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH + 8 ];
+	const int dataOnlyCert = options & KEYMGMT_FLAG_DATAONLY_CERT;
 	int certSequenceLength = DUMMY_INIT, endPos = 0, certChainEnd = 0;
 	int iterationCount, status;
 
@@ -1209,6 +1307,15 @@ int readCertChain( INOUT STREAM *stream,
 				keyID != NULL && \
 				keyIDlength >= MIN_SKID_SIZE && \
 				keyIDlength < MAX_ATTRIBUTE_SIZE ) );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX && \
+			  ( options & ~( KEYMGMT_MASK_USAGEOPTIONS | \
+							 KEYMGMT_MASK_CERTOPTIONS ) ) == 0 );
+	REQUIRES( ( keyIDtype == CRYPT_KEYID_NONE && \
+				options == KEYMGMT_FLAG_NONE ) || \
+			  ( keyIDtype != CRYPT_KEYID_NONE && \
+				options == KEYMGMT_FLAG_NONE ) || \
+			  ( keyIDtype == CRYPT_KEYID_NONE && \
+				options != KEYMGMT_FLAG_NONE ) );
 
 	/* Clear return value */
 	*iCryptCert = CRYPT_ERROR;
@@ -1289,7 +1396,8 @@ int readCertChain( INOUT STREAM *stream,
 
 	/* Build the complete chain from the individual certificates */
 	status = buildCertChain( iCryptCert, iCertChain, certChainEnd, 
-							 keyIDtype, keyID, keyIDlength );
+							 keyIDtype, keyID, keyIDlength, 
+							 options & KEYMGMT_MASK_USAGEOPTIONS );
 	if( cryptStatusError( status ) )
 		{
 		freeCertChain( iCertChain, certChainEnd );
@@ -1398,7 +1506,7 @@ int assembleCertChain( OUT CRYPT_CERTIFICATE *iCertificate,
 
 	/* Build the complete chain from the individual certificates */
 	status = buildCertChain( iCertificate, iCertChain, certChainEnd, 
-							 CRYPT_KEYID_NONE, NULL, 0 );
+							 CRYPT_KEYID_NONE, NULL, 0, KEYMGMT_FLAG_NONE );
 	if( cryptStatusError( status ) )
 		{
 		freeCertChain( iCertChain, certChainEnd );

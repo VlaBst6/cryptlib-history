@@ -46,12 +46,15 @@
 
 #define ONE_YEAR_TIME	( 365 * 86400L )
 #if defined( __MWERKS__ ) || defined( SYMANTEC_C ) || defined( __MRC__ )
-  #define CERTTIME_DATETEST	( ( ( 2008 - 1970 ) * ONE_YEAR_TIME ) + 2082844800L )
+  #define CERTTIME_DATETEST	( ( ( 2012 - 1970 ) * ONE_YEAR_TIME ) + 2082844800L )
   #define CERTTIME_Y2KTEST	( ( ( 2020 - 1970 ) * ONE_YEAR_TIME ) + 2082844800L )
 #else
-  #define CERTTIME_DATETEST	( ( 2008 - 1970 ) * ONE_YEAR_TIME )
+  #define CERTTIME_DATETEST	( ( 2012 - 1970 ) * ONE_YEAR_TIME )
   #define CERTTIME_Y2KTEST	( ( 2020 - 1970 ) * ONE_YEAR_TIME )
 #endif /* Macintosh-specific weird epoch */
+#if CERTTIME_DATETEST < MIN_TIME_VALUE
+  #error CERTTIME_DATETEST must be >= MIN_TIME_VALUE
+#endif /* Safety check of time test value against MIN_TIME_VALUE */
 
 /****************************************************************************
 *																			*
@@ -479,17 +482,26 @@ static const CERT_DATA FAR_BSS xyzzyCertData[] = {
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
 
-int testXyzzyCert( void )
+static int xyzzyCert( const BOOLEAN useAltAlgo )
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
 	int status;
 
-	puts( "Testing XYZZY certificate creation/export..." );
+	printf( "Testing %sXYZZY certificate creation/export...\n",
+			useAltAlgo ? "DSA " : "" );
 
 	/* Create the RSA en/decryption contexts */
-	if( !loadRSAContexts( CRYPT_UNUSED, &pubKeyContext, &privKeyContext ) )
-		return( FALSE );
+	if( useAltAlgo )
+		{
+		if( !loadDSAContexts( CRYPT_UNUSED, &pubKeyContext, &privKeyContext ) )
+			return( FALSE );
+		}
+	else
+		{
+		if( !loadRSAContexts( CRYPT_UNUSED, &pubKeyContext, &privKeyContext ) )
+			return( FALSE );
+		}
 
 	/* Create the certificate */
 	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
@@ -533,7 +545,8 @@ int testXyzzyCert( void )
 		return( attrErrorExit( cryptCert, "cryptExportCert()", status,
 							   __LINE__ ) );
 	printf( "Exported certificate is %d bytes long.\n", certificateLength );
-	debugDump( "certxy", certBuffer, certificateLength );
+	debugDump( useAltAlgo ? "certxyd" : "certxy", certBuffer, 
+			   certificateLength );
 
 	/* Destroy the certificate */
 	status = cryptDestroyCert( cryptCert );
@@ -560,8 +573,16 @@ int testXyzzyCert( void )
 	cryptDestroyCert( cryptCert );
 
 	/* Clean up */
-	puts( "XYZZY certificate creation succeeded.\n" );
+	printf( "%sXYZZY certificate creation succeeded.\n\n",
+			useAltAlgo ? "DSA " : "" );
 	return( TRUE );
+	}
+
+int testXyzzyCert( void )
+	{
+	if( !xyzzyCert( FALSE ) )
+		return( FALSE );
+	return( xyzzyCert( TRUE ) );
 	}
 
 #ifdef HAS_WIDECHAR
@@ -573,6 +594,15 @@ static const wchar_t FAR_BSS unicodeStr[] = {
 static const wchar_t FAR_BSS unicode2Str[] = {
 	0x004D, 0x0061, 0x0072, 0x0074, 0x0069, 0x006E, 0x0061, 0x0020,
 	0x0160, 0x0069, 0x006B, 0x006F, 0x0076, 0x006E, 0x00E1, 0x0000 };
+#ifdef __UNIX__		/* Only enabled for native-UTF8 environments */
+static const BYTE FAR_BSS utf8OriginalStr[] = {
+	0xC3, 0x98, 0xC3, 0x86, 0xC3, 0x85, 0xC3, 0xA6, 0xC3, 0xB8, 0xC3, 
+	0xA5, 0x00 };
+static const BYTE FAR_BSS utf8EncodedStr[] = {
+	0xC3, 0x83, 0xCB, 0x9C, 0xC3, 0x83, 0xE2, 0x80, 0xA0, 0xC3, 0x83, 
+	0xE2, 0x80, 0xA6, 0xC3, 0x83, 0xC2, 0xA6, 0xC3, 0x83, 0xC2, 0xB8, 
+	0xC3, 0x83, 0xC2, 0xA5, 0x00 };
+#endif /* __UNIX__ */
 
 static const CERT_DATA FAR_BSS textStringCertData[] = {
 	/* Identification information: A latin-1 string, an obviously Unicode 
@@ -583,6 +613,9 @@ static const CERT_DATA FAR_BSS textStringCertData[] = {
 	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_WCSTRING, 0, unicodeStr },
 	{ CRYPT_CERTINFO_LOCALITYNAME, IS_WCSTRING, 0, unicode2Str },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_WCSTRING, 0, L"Dave's Unicode-aware CA with very long string" },
+#ifdef __UNIX__
+	{ CRYPT_CERTINFO_STATEORPROVINCENAME, IS_STRING, 0, utf8EncodedStr },
+#endif /* __UNIX__ */
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "GB" ) },
 
 	/* Another XYZZY certificate */
@@ -595,7 +628,7 @@ int testTextStringCert( void )
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
-	int status;
+	int i, status;
 
 	puts( "Testing complex string type certificate creation/export..." );
 
@@ -669,6 +702,72 @@ int testTextStringCert( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
 							   __LINE__ ) );
+
+	/* Make sure that we can read back what we've written and that it was
+	   correctly converted back to the original string value */
+	for( i = 0; textStringCertData[ i ].type != CRYPT_CERTINFO_XYZZY; i++ )
+		{
+		const CRYPT_ATTRIBUTE_TYPE attribute = textStringCertData[ i ].type;
+		BYTE buffer[ 256 ];
+		int length;
+
+		status = cryptGetAttributeString( cryptCert, attribute, buffer, 
+										  &length );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Attempt to read back DN value %d failed with error "
+					"code %d, line %d.\n", attribute, status, __LINE__ );
+			return( FALSE );
+			}
+		if( textStringCertData[ i ].componentType == IS_WCSTRING )
+			{
+#ifdef HAS_WIDECHAR
+			const int wstrLen = wcslen( textStringCertData[ i ].stringValue ) * \
+								sizeof( wchar_t );
+			if( wstrLen != length || \
+				memcmp( buffer, textStringCertData[ i ].stringValue, length ) )
+				{
+				if( attribute == CRYPT_CERTINFO_ORGANIZATIONNAME )
+					{
+					/* This is an ASCII string disguised as Unicode, which 
+					   cryptlib correctly canonicalises back to ASCII */
+					continue;
+					}
+				printf( "Widechar DN value %d read from certificate with value\n", 
+						attribute );
+				printHex( buffer, length );
+				printf( "doesn't match value\n" );
+				printHex( textStringCertData[ i ].stringValue, wstrLen );
+				printf( "that was written, line %d.\n", __LINE__ );
+				return( FALSE );
+				}
+#endif /* HAS_WIDECHAR */
+			}
+		else
+			{
+			const int strLen = paramStrlen( textStringCertData[ i ].stringValue );
+			if( strLen != length || \
+				memcmp( buffer, textStringCertData[ i ].stringValue, length ) )
+				{
+				if( attribute == CRYPT_CERTINFO_STATEORPROVINCENAME )
+					{
+					/* This is a UTF8 string that cryptlib canonicalises into
+					   Unicode (since there's no way to tell what the host
+					   system uses as its native 8-bit character system) so 
+					   the encoded form as read doesn't match what's 
+					   written */
+					continue;
+					}
+				printf( "DN value %d read from certificate with value\n", 
+						attribute );
+				printHex( buffer, length );
+				printf( "doesn't match value\n" );
+				printHex( textStringCertData[ i ].stringValue, strLen );
+				printf( "that was written, line %d.\n", __LINE__ );
+				return( FALSE );
+				}
+			}
+		}
 	cryptDestroyCert( cryptCert );
 
 	/* Clean up */
@@ -1608,8 +1707,10 @@ int testAttributeCert( void )
 	return( TRUE );
 	}
 
-/* Test certification request code. Note the similarity with the certificate
-   creation code, only the call to cryptCreateCert() differs */
+/* Test certification request code.  These create a basic certificate 
+   request, a more complex certificate request with all extensions encoded 
+   as attributes of an extensionReq, and a request with a separate PKCS #9
+   attribute alongside the other attributes in the extensionReq */
 
 static const CERT_DATA FAR_BSS certRequestData[] = {
 	/* Identification information */
@@ -1620,94 +1721,6 @@ static const CERT_DATA FAR_BSS certRequestData[] = {
 
 	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
 	};
-
-int testCertRequest( void )
-	{
-	CRYPT_CERTIFICATE cryptCert;
-	CRYPT_CONTEXT pubKeyContext, privKeyContext;
-	int status;
-
-	puts( "Testing certification request creation/export..." );
-
-	/* Create the RSA en/decryption contexts */
-	if( !loadRSAContexts( CRYPT_UNUSED, &pubKeyContext, &privKeyContext ) )
-		return( FALSE );
-
-	/* Create the certificate object */
-	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
-							  CRYPT_CERTTYPE_CERTREQUEST );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptCreateCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
-
-	/* Add some certification request components */
-	status = cryptSetAttribute( cryptCert,
-					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, pubKeyContext );
-	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
-							   __LINE__ ) );
-	if( !addCertFields( cryptCert, certRequestData, __LINE__ ) )
-		return( FALSE );
-
-	/* Sign the certification request and print information on what we got */
-	status = cryptSignCert( cryptCert, privKeyContext );
-	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCert, "cryptSignCert()", status,
-							   __LINE__ ) );
-	if( !printCertInfo( cryptCert ) )
-		return( FALSE );
-
-	/* Check the signature.  Since it's self-signed, we don't need to pass in
-	   a signature check key */
-	status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
-	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
-							   __LINE__ ) );
-
-	/* Export the certificate */
-	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
-							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
-	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCert, "cryptExportCert()", status,
-							   __LINE__ ) );
-	printf( "Exported certification request is %d bytes long.\n",
-			certificateLength );
-	debugDump( "certreq", certBuffer, certificateLength );
-
-	/* Destroy the certificate */
-	status = cryptDestroyCert( cryptCert );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptDestroyCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
-
-	/* Make sure that we can read what we created */
-	status = cryptImportCert( certBuffer, certificateLength, CRYPT_UNUSED,
-							  &cryptCert );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
-	status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
-	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
-							   __LINE__ ) );
-	cryptDestroyCert( cryptCert );
-
-	/* Clean up */
-	destroyContexts( CRYPT_UNUSED, pubKeyContext, privKeyContext );
-	puts( "Certification request creation succeeded.\n" );
-	return( TRUE );
-	}
-
-/* Test complex certification request code */
 
 static const CERT_DATA FAR_BSS complexCertRequestData[] = {
 	/* Identification information */
@@ -1730,13 +1743,35 @@ static const CERT_DATA FAR_BSS complexCertRequestData[] = {
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
 
-int testComplexCertRequest( void )
+static const CERT_DATA FAR_BSS certRequestAttribData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "PT" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave Smith" ) },
+
+	/* Subject altName */
+	{ CRYPT_CERTINFO_RFC822NAME, IS_STRING, 0, TEXT( "dave@wetas-r-us.com" ) },
+	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
+
+	/* Re-select the subject name after poking around in the altName */
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
+
+	/* PKCS #9 attribute that isn't encoded as an extensionReq */
+	{ CRYPT_CERTINFO_CHALLENGEPASSWORD, IS_STRING, 0, TEXT( "password" ) },
+
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static int createCertRequest( const char *description, 
+							  const CERT_DATA *certInfo,
+							  const char *fileName )
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
 	int status;
 
-	puts( "Testing complex certification request creation/export..." );
+	printf( "Testing %s creation/export...\n", description );
 
 	/* Create the RSA en/decryption contexts */
 	if( !loadRSAContexts( CRYPT_UNUSED, &pubKeyContext, &privKeyContext ) )
@@ -1758,7 +1793,7 @@ int testComplexCertRequest( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, complexCertRequestData, __LINE__ ) )
+	if( !addCertFields( cryptCert, certInfo, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certification request and print information on what we got */
@@ -1782,9 +1817,9 @@ int testComplexCertRequest( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptExportCert()", status,
 							   __LINE__ ) );
-	printf( "Exported certification request is %d bytes long.\n",
+	printf( "Exported %s is %d bytes long.\n", description, 
 			certificateLength );
-	debugDump( "certreqc", certBuffer, certificateLength );
+	debugDump( fileName, certBuffer, certificateLength );
 
 	/* Destroy the certificate */
 	status = cryptDestroyCert( cryptCert );
@@ -1812,8 +1847,27 @@ int testComplexCertRequest( void )
 
 	/* Clean up */
 	destroyContexts( CRYPT_UNUSED, pubKeyContext, privKeyContext );
-	puts( "Complex certification request creation succeeded.\n" );
+	printf( "Creation of %s succeeded.\n\n", description );
 	return( TRUE );
+	}
+
+int testCertRequest( void )
+	{
+	return( createCertRequest( "certification request", certRequestData, 
+							   "certreq" ) );
+	}
+
+int testComplexCertRequest( void )
+	{
+	return( createCertRequest( "complex certification request", 
+							   complexCertRequestData,
+							   "certreqc" ) );
+	}
+
+int testCertRequestAttrib( void )
+	{
+	return( createCertRequest( "certification request with attribute", 
+							   certRequestAttribData, "certreqa" ) );
 	}
 
 /* Test CRMF certification request code */
@@ -2682,7 +2736,7 @@ int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest,
 			  const CRYPT_CERTIFICATE cryptCert, const int number, 
 			  const BOOLEAN multipleCerts )
 	{
-	CRYPT_CERTIFICATE cryptErrorObject = *cryptRTCSRequest;
+	CRYPT_CERTIFICATE cryptErrorObject;
 	C_CHR rtcsURL[ 512 ];
 	int count = DUMMY_INIT, status;
 
@@ -2735,6 +2789,7 @@ int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest,
 				status, __LINE__ );
 		return( FALSE );
 		}
+	cryptErrorObject = *cryptRTCSRequest;
 
 	/* Add the request components */
 	status = cryptSetAttribute( *cryptRTCSRequest,

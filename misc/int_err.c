@@ -181,6 +181,36 @@ void copyErrorInfo( OUT ERROR_INFO *destErrorInfoPtr,
 		}
 	}
 
+/* Read error information from an object into an error-info structure */
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+int readErrorInfo( OUT ERROR_INFO *errorInfo, 
+				   IN_HANDLE const CRYPT_HANDLE objectHandle )
+	{
+	MESSAGE_DATA msgData;
+	int status;
+
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	REQUIRES( objectHandle == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( objectHandle ) );
+
+	/* Clear return value */
+	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
+
+	/* Read any additional error information that may be available */
+	setMessageData( &msgData, errorInfo->errorString, MAX_ERRMSG_SIZE );
+	status = krnlSendMessage( objectHandle, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_ATTRIBUTE_ERRORMESSAGE );
+	if( cryptStatusError( status ) )
+		return( status );
+	errorInfo->errorStringLength = msgData.length;
+	ENSURES( errorInfo->errorStringLength > 0 && \
+			 errorInfo->errorStringLength < MAX_ERRMSG_SIZE );
+
+	return( CRYPT_OK );
+	}
+
 /****************************************************************************
 *																			*
 *						Return Extended Error Information					*
@@ -251,12 +281,11 @@ int retExtObjFn( IN_ERROR const int status,
 				 IN_HANDLE const CRYPT_HANDLE extErrorObject, 
 				 FORMAT_STRING const char *format, ... )
 	{
-	MESSAGE_DATA msgData;
+	ERROR_INFO extErrorInfo;
 	va_list argPtr;
-	char extraErrorString[ MAX_ERRMSG_SIZE + 8 ];
 	const int localStatus = convertErrorStatus( status );
 	BOOLEAN errorStringOK;
-	int errorStringLength, extErrorStatus, extErrorStringLength;
+	int errorStringLength, extErrorStatus;
 
 	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( format, 4 ) );
@@ -282,30 +311,26 @@ int retExtObjFn( IN_ERROR const int status,
 	ENSURES( errorStringLength > 0 && errorStringLength < MAX_ERRMSG_SIZE );
 
 	/* Check whether there's any additional error information available */
-	setMessageData( &msgData, extraErrorString, MAX_ERRMSG_SIZE );
-	extErrorStatus = krnlSendMessage( extErrorObject, IMESSAGE_GETATTRIBUTE_S,
-									  &msgData, 
-									  CRYPT_ATTRIBUTE_ERRORMESSAGE );
+	extErrorStatus = readErrorInfo( &extErrorInfo, extErrorObject );
 	if( cryptStatusError( extErrorStatus ) )
 		{
 		/* Nothing further to report, exit */
 		return( localStatus );
 		}
-	extErrorStringLength = msgData.length;
-	ENSURES( extErrorStringLength > 0 && \
-			 extErrorStringLength < MAX_ERRMSG_SIZE );
 
 	/* There's additional information present via the additional object, 
 	   fetch it and append it to the session-level error message */
-	if( errorStringLength + extErrorStringLength < MAX_ERRMSG_SIZE - 32 )
+	if( errorStringLength + \
+			extErrorInfo.errorStringLength < MAX_ERRMSG_SIZE - 32 )
 		{
-		ENSURES( rangeCheck( errorStringLength + 26, extErrorStringLength,
+		ENSURES( rangeCheck( errorStringLength + 26, 
+							 extErrorInfo.errorStringLength,
 							 MAX_ERRMSG_SIZE ) );
 		memcpy( errorInfoPtr->errorString + errorStringLength, 
 				". Additional information: ", 26 );
 		memcpy( errorInfoPtr->errorString + errorStringLength + 26,
-				extraErrorString, extErrorStringLength );
-		errorInfoPtr->errorStringLength += 26 + extErrorStringLength;
+				extErrorInfo.errorString, extErrorInfo.errorStringLength );
+		errorInfoPtr->errorStringLength += 26 + extErrorInfo.errorStringLength;
 		}
 
 	return( localStatus );
@@ -404,7 +429,7 @@ int retExtErrFn( IN_ERROR const int status,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtErrAltFn( IN_ERROR const int status, 
-					OUT ERROR_INFO *errorInfoPtr, 
+					INOUT ERROR_INFO *errorInfoPtr, 
 					FORMAT_STRING const char *format, ... )
 	{
 	va_list argPtr;

@@ -564,7 +564,8 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			if( contextInfoPtr->ctxConv->userKeyLength < MIN_KEYSIZE || \
 				contextInfoPtr->ctxConv->userKeyLength > keyDataLen )
 				{
-				DEBUG_DIAG(( "Key data is too long to export" ));
+				DEBUG_DIAG(( "Conventional-encryption key data is too long "
+							 "to export" ));
 				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_OVERFLOW;
 				}
@@ -579,7 +580,7 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			if( contextInfoPtr->ctxMAC->userKeyLength < MIN_KEYSIZE || \
 				contextInfoPtr->ctxMAC->userKeyLength > keyDataLen )
 				{
-				DEBUG_DIAG(( "Key data is too long to export" ));
+				DEBUG_DIAG(( "MAC key data is too long to export" ));
 				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_OVERFLOW;
 				}
@@ -594,7 +595,7 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			if( contextInfoPtr->ctxGeneric->genericSecretLength < MIN_KEYSIZE || \
 				contextInfoPtr->ctxGeneric->genericSecretLength > keyDataLen )
 				{
-				DEBUG_DIAG(( "Key data is too long to export" ));
+				DEBUG_DIAG(( "Generic key data is too long to export" ));
 				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_OVERFLOW;
 				}

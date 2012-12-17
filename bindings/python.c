@@ -358,45 +358,6 @@ static PyObject* python_cryptGenerateKey(PyObject* self, PyObject* args)
 	return(processStatus(status));
 }
 
-static PyObject* python_cryptGenerateKeyAsync(PyObject* self, PyObject* args)
-{
-	int status = 0;
-	int cryptContext = 0;
-	
-	if (!PyArg_ParseTuple(args, "i", &cryptContext))
-	    return(NULL);
-	
-	status = cryptGenerateKeyAsync(cryptContext);
-	
-	return(processStatus(status));
-}
-
-static PyObject* python_cryptAsyncQuery(PyObject* self, PyObject* args)
-{
-	int status = 0;
-	int cryptObject = 0;
-	
-	if (!PyArg_ParseTuple(args, "i", &cryptObject))
-	    return(NULL);
-	
-	status = cryptAsyncQuery(cryptObject);
-	
-	return(processStatus(status));
-}
-
-static PyObject* python_cryptAsyncCancel(PyObject* self, PyObject* args)
-{
-	int status = 0;
-	int cryptObject = 0;
-	
-	if (!PyArg_ParseTuple(args, "i", &cryptObject))
-	    return(NULL);
-	
-	status = cryptAsyncCancel(cryptObject);
-	
-	return(processStatus(status));
-}
-
 static PyObject* python_cryptEncrypt(PyObject* self, PyObject* args)
 {
 	int status = 0;
@@ -1429,9 +1390,6 @@ static PyMethodDef module_functions[] =
 	{ "cryptDestroyContext", python_cryptDestroyContext, METH_VARARGS }, 
 	{ "cryptDestroyObject", python_cryptDestroyObject, METH_VARARGS }, 
 	{ "cryptGenerateKey", python_cryptGenerateKey, METH_VARARGS }, 
-	{ "cryptGenerateKeyAsync", python_cryptGenerateKeyAsync, METH_VARARGS }, 
-	{ "cryptAsyncQuery", python_cryptAsyncQuery, METH_VARARGS }, 
-	{ "cryptAsyncCancel", python_cryptAsyncCancel, METH_VARARGS }, 
 	{ "cryptEncrypt", python_cryptEncrypt, METH_VARARGS }, 
 	{ "cryptDecrypt", python_cryptDecrypt, METH_VARARGS }, 
 	{ "cryptSetAttribute", python_cryptSetAttribute, METH_VARARGS }, 
@@ -1579,15 +1537,15 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 3);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_IDEA", v);
-    Py_DECREF(v); /* IDEA */
+    Py_DECREF(v); /* IDEA (only used for PGP 2.x) */
 
     v = Py_BuildValue("i", 4);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_CAST", v);
-    Py_DECREF(v); /* CAST-128 */
+    Py_DECREF(v); /* CAST-128 (only used for OpenPGP) */
 
     v = Py_BuildValue("i", 5);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_RC2", v);
-    Py_DECREF(v); /* RC2 */
+    Py_DECREF(v); /* RC2 (disabled by default) */
 
     v = Py_BuildValue("i", 6);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_RC4", v);
@@ -1604,10 +1562,6 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 9);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_BLOWFISH", v);
     Py_DECREF(v); /* Blowfish */
-
-    v = Py_BuildValue("i", 10);
-    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SKIPJACK", v);
-    Py_DECREF(v); /* Skipjack */
 
     v = Py_BuildValue("i", 100);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_DH", v);
@@ -1626,8 +1580,8 @@ class CryptHandle:\n\
     Py_DECREF(v); /* ElGamal */
 
     v = Py_BuildValue("i", 104);
-    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_KEA", v);
-    Py_DECREF(v); /* KEA */
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_RESERVED1", v);
+    Py_DECREF(v); /* Formerly KEA */
 
     v = Py_BuildValue("i", 105);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_ECDSA", v);
@@ -1638,12 +1592,12 @@ class CryptHandle:\n\
     Py_DECREF(v); /* ECDH */
 
     v = Py_BuildValue("i", 200);
-    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_MD2", v);
-    Py_DECREF(v); /* MD2 */
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_RESERVED2", v);
+    Py_DECREF(v); /* Formerly MD2 */
 
     v = Py_BuildValue("i", 201);
-    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_MD4", v);
-    Py_DECREF(v); /* MD4 */
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_RESERVED3", v);
+    Py_DECREF(v); /* Formerly MD4 */
 
     v = Py_BuildValue("i", 202);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_MD5", v);
@@ -1652,10 +1606,6 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 203);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA1", v);
     Py_DECREF(v); /* SHA/SHA1 */
-
-    v = Py_BuildValue("i", 203);
-    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA", v);
-    Py_DECREF(v); /* Older form */
 
     v = Py_BuildValue("i", 204);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_RIPEMD160", v);
@@ -1680,10 +1630,6 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 301);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_HMAC_SHA1", v);
     Py_DECREF(v); /* HMAC-SHA */
-
-    v = Py_BuildValue("i", 301);
-    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_HMAC_SHA", v);
-    Py_DECREF(v); /* Older form */
 
     v = Py_BuildValue("i", 302);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_HMAC_RIPEMD160", v);
@@ -1731,7 +1677,7 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 399);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_LAST_MAC", v);
-    Py_DECREF(v); /* End of mac algo.range */
+    Py_DECREF(v);
 
     v = Py_BuildValue("i", 0);
     PyDict_SetItemString(moduleDict, "CRYPT_MODE_NONE", v);
@@ -1803,7 +1749,7 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 1);
     PyDict_SetItemString(moduleDict, "CRYPT_DEVICE_FORTEZZA", v);
-    Py_DECREF(v); /* Fortezza card */
+    Py_DECREF(v); /* Fortezza card - Placeholder only */
 
     v = Py_BuildValue("i", 2);
     PyDict_SetItemString(moduleDict, "CRYPT_DEVICE_PKCS11", v);
@@ -2548,6 +2494,10 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 2113);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER", v);
     Py_DECREF(v); /* uniformResourceIdentifier */
+
+    v = Py_BuildValue("i", 2113);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_URL", v);
+    Py_DECREF(v);
 
     v = Py_BuildValue("i", 2114);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_IPADDRESS", v);

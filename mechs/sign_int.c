@@ -247,7 +247,7 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM1 : status );
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 							  &hashAlgo, CRYPT_CTXINFO_ALGO );
-	if( cryptStatusOK( status ) && hashAlgo == CRYPT_ALGO_SHA2 )
+	if( cryptStatusOK( status ) && isHashExtAlgo( hashAlgo ) )
 		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 								  &hashParam, CRYPT_CTXINFO_BLOCKSIZE );
 	if( cryptStatusError( status ) )
@@ -335,7 +335,7 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 	STREAM stream;
 	void *signatureData;
 	const BOOLEAN isSSLsig = ( signatureType == SIGNATURE_SSL ) ? TRUE : FALSE;
-	int signAlgo, hashAlgo, signatureDataLength, hashParam = 0, status;
+	int signAlgo, hashAlgo, signatureDataLength, hashAlgoParam = 0, status;
 
 	assert( isReadPtr( signature, signatureLength ) );
 	
@@ -365,9 +365,9 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM1 : status );
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 							  &hashAlgo, CRYPT_CTXINFO_ALGO );
-	if( cryptStatusOK( status ) && hashAlgo == CRYPT_ALGO_SHA2 )
+	if( cryptStatusOK( status ) && isHashExtAlgo( hashAlgo ) )
 		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
-								  &hashParam, CRYPT_CTXINFO_BLOCKSIZE );
+								  &hashAlgoParam, CRYPT_CTXINFO_BLOCKSIZE );
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM2 : status );
 
@@ -392,8 +392,8 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 			{
 			if( hashAlgo != queryInfo.hashAlgo )
 				status = CRYPT_ERROR_SIGNATURE;
-			if( hashAlgo == CRYPT_ALGO_SHA2 && hashParam != 32 && \
-				hashParam != queryInfo.hashParam )
+			if( isHashExtAlgo( hashAlgo ) && \
+				hashAlgoParam != queryInfo.hashAlgoParam )
 				status = CRYPT_ERROR_SIGNATURE;
 			}
 		if( cryptStatusError( status ) )

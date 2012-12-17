@@ -142,6 +142,28 @@ static int certImport( const int certNo, const BOOLEAN isECC,
 			  "of cryptlib.\n" );
 		return( TRUE );
 		}
+	if( status == CRYPT_ERROR_BADDATA && !( isECC || isBase64 ) \
+		&& certNo == 31 )
+		{
+		/* This certificate has has the algoID in the signature altered to 
+		   make it invalid, since this isn't covered by the signature it
+		   isn't detected by many implementations */
+		puts( "Certificate import failed for certificate with manipulated "
+			  "signature data." );
+		puts( "  (This is the correct result for this test).\n" );
+		return( TRUE );
+		}
+	if( status == CRYPT_ERROR_BADDATA && isBase64 && \
+		( certNo == 3 || certNo == 4 ) )
+		{
+		/* These certificates claim to be in PEM format but have a single 
+		   continuous block of base64 data, one with and one without
+		   the base64 termination characters */
+		puts( "Certificate import failed for certificate with invalid PEM "
+			  "encoding." );
+		puts( "  (This is the correct result for this test).\n" );
+		return( TRUE );
+		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptImportCert() for certificate #%d failed with error "
@@ -179,6 +201,18 @@ static int certImport( const int certNo, const BOOLEAN isECC,
 	/* Print information on what we've got */
 	if( !printCertInfo( cryptCert ) )
 		return( FALSE );
+
+	/* Perform a dummy generalised extension read to make sure that nothing
+	   goes wrong for this */
+	status = cryptGetCertExtension( cryptCert, "1.2.3.4", &value, NULL, 0, 
+									&count );
+	if( status != CRYPT_ERROR_NOTFOUND )
+		{
+		printf( "Read of dummy extension didn't fail with "
+				"CRYPT_ERROR_NOTFOUND, status %d, line %d.\n", status, 
+				__LINE__ );
+		return( FALSE );
+		}
 
 	/* Clean up */
 	cryptDestroyCert( cryptCert );
@@ -220,7 +254,7 @@ int testCertImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 30; i++ )
+	for( i = 1; i <= 32; i++ )
 		{
 		if( !certImport( i, FALSE, FALSE ) )
 			return( FALSE );
@@ -326,7 +360,7 @@ int testCertReqImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 5; i++ )
+	for( i = 1; i <= 7; i++ )
 		{
 		if( !certReqImport( i ) )
 			return( FALSE );
@@ -334,7 +368,7 @@ int testCertReqImport( void )
 	return( TRUE );
 	}
 
-#define LARGE_CRL_SIZE	32767	/* Large CRL is too big for std.buffer */
+#define LARGE_CRL_SIZE	45000	/* Large CRL is too big for std.buffer */
 
 static int crlImport( const int crlNo, BYTE *buffer )
 	{
@@ -381,10 +415,13 @@ int testCRLImport( void )
 		puts( "Out of memory." );
 		return( FALSE );
 		}
-	for( i = 1; i <= 3; i++ )
+	for( i = 1; i <= 4; i++ )
 		{
 		if( !crlImport( i, bufPtr ) )
+			{
+			free( bufPtr );
 			return( FALSE );
+			}
 		}
 
 	/* Clean up */
@@ -769,7 +806,7 @@ int testBase64CertImport( void )
 	return( TRUE );
 #endif /* EBCDIC system */
 
-	for( i = 1; i <= 2; i++ )
+	for( i = 1; i <= 4; i++ )
 		{
 		if( !certImport( i, FALSE, TRUE ) )
 			return( FALSE );
@@ -1323,13 +1360,12 @@ static int testPath( const PATH_TEST_INFO *pathInfo )
 		assert( requirePolicy != FALSE );
 		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_REQUIREPOLICY,
 						   FALSE );
-		}
-	status = cryptCheckCert( cryptCertPath, CRYPT_UNUSED );
-	if( pathInfo->policyOptional )
-		{
+		status = cryptCheckCert( cryptCertPath, CRYPT_UNUSED );
 		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_REQUIREPOLICY,
 						   requirePolicy );
 		}
+	else
+		status = cryptCheckCert( cryptCertPath, CRYPT_UNUSED );
 	if( pathInfo->isValid )
 		{
 		if( cryptStatusError( status ) )
@@ -1461,7 +1497,7 @@ int testPKCS1Padding( void )
    used interactively, and throw exceptions rather than returning status
    values */
 
-void xxxCertImport( const char *fileName )
+int xxxCertImport( const char *fileName )
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	FILE *filePtr;
@@ -1483,32 +1519,77 @@ void xxxCertImport( const char *fileName )
 	assert( count == length );
 	fclose( filePtr );
 	status = cryptImportCert( bufPtr, count, CRYPT_UNUSED, &cryptCert );
-	assert( cryptStatusOK( status ) );
+	if( cryptStatusError( status ) )
+		{
+		printf( "Certificate import failed, status = %d.\n", status );
+		assert( cryptStatusOK( status ) );
+		if( bufPtr != buffer )
+			free( bufPtr );
+		return( FALSE );
+		}
 	if( bufPtr != buffer )
 		free( bufPtr );
-	printCertInfo( cryptCert );
-	cryptCheckCert( cryptCert, CRYPT_UNUSED );	/* Opportunistic only */
+	printCertChainInfo( cryptCert );
+	status = cryptCheckCert( cryptCert, CRYPT_UNUSED );	/* Opportunistic only */
+	if( cryptStatusError( status ) )
+		{
+		printf( "(Opportunistic) certificate check failed, status = %d.\n", 
+				status );
+		printErrorAttributeInfo( cryptCert );
+		}
 	cryptDestroyCert( cryptCert );
+
+	return( cryptStatusOK( status ) ? TRUE : FALSE );
 	}
 
-void xxxCertCheck( const C_STR certFileName, const C_STR caFileNameOpt )
+int xxxCertCheck( const C_STR certFileName, const C_STR caFileNameOpt )
 	{
 	CRYPT_CERTIFICATE cryptCert, cryptCaCert;
 	int status;
 
 	status = importCertFile( &cryptCert, certFileName );
-	assert( cryptStatusOK( status ) );
+	if( cryptStatusError( status ) )
+		{
+		printf( "Certificate import failed, status = %d.\n", status );
+		assert( cryptStatusOK( status ) );
+		return( FALSE );
+		}
 	if( caFileNameOpt == NULL )
+		{
+		/* It's a self-signed certificate or certificate chain, make it
+		   implicitly trusted in order to allow the signature check to
+		   work */
 		cryptCaCert = CRYPT_UNUSED;
+		status = cryptSetAttribute( cryptCert,
+									CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+									CRYPT_CURSOR_LAST );
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptSetAttribute( cryptCert,
+										CRYPT_CERTINFO_TRUSTED_IMPLICIT, 1 );
+			}
+		assert( cryptStatusOK( status ) );
+		}
 	else
 		{
 		status = importCertFile( &cryptCaCert, caFileNameOpt );
-		assert( cryptStatusOK( status ) );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't import certificate from '%s', status = %d.\n", 
+					caFileNameOpt, status );
+			cryptDestroyCert( cryptCert );
+			return( FALSE );
+			}
 		}
 	status = cryptCheckCert( cryptCert, cryptCaCert );
 	if( cryptStatusError( status ) )
+		{
+		printf( "Certificate check failed, status = %d.\n", status );
 		printErrorAttributeInfo( cryptCert );
+		}
 	assert( cryptStatusOK( status ) );
 	cryptDestroyCert( cryptCert );
 	cryptDestroyCert( cryptCaCert );
+
+	return( cryptStatusOK( status ) ? TRUE : FALSE );
 	}

@@ -60,6 +60,10 @@ build_asm_files()
 # case where the file has no comments (bn-elf.s), it also functions as
 # bn-sol.s.
 #
+# The assembler included with MinGW appears to be just enough to work with
+# gcc, it can't assemble any of the .s files we use so there's no rule for
+# it since it can't (currently) be used.
+#
 # Only the bignum code is done in asm for non-x86 systems.  For gas on
 # OSF/1, it may be necessary to use -m<cpu_type> (where <cpu_type> is
 # anything, e.g.21064, 21164, etc) if gas dies with an illegal operand error
@@ -86,7 +90,7 @@ case `uname` in
 			build_asm_files out ;
 		fi ;;
 
-	'CYGWIN_NT-5.0'|'CYGWIN_NT-5.1'|'Linux'|'QNX'|'SCO'|'UnixWare')
+	'CYGWIN_NT-5.1'|'CYGWIN_NT-6.0'|'CYGWIN_NT-6.1'|'Linux'|'QNX'|'SCO'|'UnixWare')
 		build_asm_files elf ;;
 
 	'HP-UX')
@@ -110,4 +114,8 @@ case `uname` in
 				gcc -mcpu=ultrasparc -c bn/sparcv8plus.S -o ${OBJPATH}bn_asm.o ;
 			fi ;
 		fi ;;
+
+	*)
+		echo "$0: Missing asm build rule for OS type `uname`." >&2 ;
+		exit 1 ;
 esac

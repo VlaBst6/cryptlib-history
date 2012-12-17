@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Test Routines Header File					*
-*						Copyright Peter Gutmann 1995-2011					*
+*						Copyright Peter Gutmann 1995-2012					*
 *																			*
 ****************************************************************************/
 
@@ -36,7 +36,7 @@
    will have a crypto device set up so leaving them enabled by default would
    just produce a cascade of device-not-present warnings */
 
-/* #define TEST_DEVICE */
+/* #define TEST_DEVICE /**/
 #if defined( TEST_DEVICE )
   #ifndef TEST_LOWLEVEL
 	#define TEST_LOWLEVEL
@@ -324,11 +324,14 @@
 /* Try and detect OSes that have widechar support */
 
 #if ( defined( __WINDOWS__ ) && \
-	  !( defined( __WIN16__ ) || defined( __BORLANDC__ ) ) ) || \
-	defined( __linux__ ) || \
-	( defined( sun ) && ( OSVERSION > 4 ) ) || defined( __osf__ )
+	  !( defined( __WIN16__ ) || defined( __BORLANDC__ ) ) )
   #define HAS_WIDECHAR
-#endif /* OSes with widechar support */
+#endif /* Windows with widechar support */
+#if defined( __linux__ ) || \
+	( defined( sun ) && ( OSVERSION > 4 ) ) || defined( __osf__ )
+  #include <wchar.h>
+  #define HAS_WIDECHAR
+#endif /* Unix with widechar support */
 
 /* If we're running on an EBCDIC system, ensure that we're compiled in 
    EBCDIC mode to test the conversion of character strings */
@@ -416,7 +419,8 @@ typedef struct {
 
 typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
 			   KEYFILE_OPENPGP_HASH, KEYFILE_OPENPGP_AES, 
-			   KEYFILE_OPENPGP_RSA, KEYFILE_NAIPGP,
+			   KEYFILE_OPENPGP_CAST, KEYFILE_OPENPGP_RSA, 
+			   KEYFILE_OPENPGP_MULT, KEYFILE_NAIPGP, 
 			   KEYFILE_OPENPGP_PARTIAL } KEYFILE_TYPE;
 
 /* The generic password used for password-based encryption, and another one 
@@ -503,6 +507,13 @@ typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
 
 /* Prototypes for functions in utils.c */
 
+#if defined( UNIX_THREADS ) || defined( WINDOWS_THREADS ) || defined( OS2_THREADS )
+  void delayThread( const int seconds );
+#else
+  #define delayThread( x )
+#endif /* Systems with threading support */
+CRYPT_ALGO_TYPE selectCipher( const CRYPT_ALGO_TYPE algorithm );
+void printHex( const BYTE *value, const int length );
 const C_STR getKeyfileName( const KEYFILE_TYPE type,
 							const BOOLEAN isPrivKey );
 const C_STR getKeyfilePassword( const KEYFILE_TYPE type );
@@ -522,6 +533,8 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 				   const CERT_DATA *certData, const int lineNo );
 int checkFileAccess( void );
 int checkNetworkAccess( void );
+int compareData( const void *origData, const int origDataLength,
+				 const void *recovData, const int recovDataLength );
 int getPublicKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 				  const C_STR keyName );
 int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
@@ -537,6 +550,8 @@ int printSecurityInfo( const CRYPT_SESSION cryptSession,
 int printFingerprint( const CRYPT_SESSION cryptSession,
 					  const BOOLEAN isServer );
 BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port );
+BOOLEAN isServerDown( const CRYPT_SESSION cryptSession,
+					  const int errorStatus );
 int activatePersistentServerSession( const CRYPT_SESSION cryptSession,
 									 const BOOLEAN showOperationType );
 
@@ -576,15 +591,6 @@ BOOLEAN certErrorExit( const CRYPT_HANDLE cryptHandle,
 int setRootTrust( const CRYPT_CERTIFICATE cryptCertChain,
 				  BOOLEAN *oldTrustValue, const BOOLEAN newTrustValue );
 
-/* Prototypes for functions in testlib.c */
-
-#if defined( UNIX_THREADS ) || defined( WINDOWS_THREADS ) || defined( OS2_THREADS )
-  void delayThread( const int seconds );
-#else
-  #define delayThread( x )
-#endif /* Systems with threading support */
-CRYPT_ALGO_TYPE selectCipher( const CRYPT_ALGO_TYPE algorithm );
-
 /* Prototypes for functions in lowlvl.c */
 
 BOOLEAN loadDHKey( const CRYPT_DEVICE cryptDevice,
@@ -603,19 +609,19 @@ BOOLEAN loadRSAContextsLarge( const CRYPT_DEVICE cryptDevice,
 							  CRYPT_CONTEXT *cryptContext,
 							  CRYPT_CONTEXT *decryptContext );
 BOOLEAN loadDSAContextsEx( const CRYPT_DEVICE cryptDevice,
-						   CRYPT_CONTEXT *signContext,
 						   CRYPT_CONTEXT *sigCheckContext,
-						   const C_STR signContextLabel,
-						   const C_STR sigCheckContextLabel );
+						   CRYPT_CONTEXT *signContext,
+						   const C_STR sigCheckContextLabel,
+						   const C_STR signContextLabel );
 BOOLEAN loadDSAContexts( const CRYPT_DEVICE cryptDevice,
-						 CRYPT_CONTEXT *signContext,
-						 CRYPT_CONTEXT *sigCheckContext );
+						 CRYPT_CONTEXT *sigCheckContext,
+						 CRYPT_CONTEXT *signContext );
 BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 							 CRYPT_CONTEXT *decryptContext );
 BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
 						CRYPT_CONTEXT *cryptContext2 );
-BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *signContext,
-						   CRYPT_CONTEXT *sigCheckContext );
+BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *sigCheckContext,
+						   CRYPT_CONTEXT *signContext );
 void destroyContexts( const CRYPT_DEVICE cryptDevice,
 					  CRYPT_CONTEXT cryptContext,
 					  CRYPT_CONTEXT decryptContext );
@@ -649,6 +655,53 @@ int pkiServerInit( CRYPT_CONTEXT *cryptPrivateKey,
 				   const C_STR keyLabel, const CERT_DATA *pkiUserData,
 				   const CERT_DATA *pkiUserAltData, 
 				   const CERT_DATA *pkiUserCAData, const char *protocolName );
+
+/****************************************************************************
+*																			*
+*								Timing Support								*
+*																			*
+****************************************************************************/
+
+/* Since high-precision timing is rather OS-dependent, we only enable this
+   under Windows or Unix where we've got guaranteed high-res timer access */
+
+#if ( defined( __WINDOWS__ ) && defined( _MSC_VER ) ) || \
+	( defined( __UNIX__ ) && defined( __GNUC__ ) )
+
+#define USE_TIMING
+
+/* Normally we use 32-bit time values, however there's also (partial)
+   support for 64-bit signed values on systems that support this.  This
+   isn't normally needed though because timeDiff() deals with overflow/
+   wraparound */
+
+#define USE_32BIT_TIME
+
+#if defined( USE_32BIT_TIME )
+  typedef unsigned long HIRES_TIME;
+  #define HIRES_FORMAT_SPECIFIER	"%lX"
+#elif defined( _MSC_VER )
+  typedef __int64 HIRES_TIME;
+  #define HIRES_FORMAT_SPECIFIER	"%llX"
+#elif defined( __GNUC__ )
+  typedef long long HIRES_TIME;
+  #define HIRES_FORMAT_SPECIFIER	"%llX"
+#else
+  typedef unsigned long HIRES_TIME;
+  #define HIRES_FORMAT_SPECIFIER	"%lX"
+#endif /* 32/64-bit time values */
+
+/* Timing support functions.  Call as:
+
+	HIRES_TIME timeVal;
+
+	timeVal = timeDiff( 0 );
+	function_to_time();
+	result = ( int ) timeDiff( timeVal ); */
+
+HIRES_TIME timeDiff( HIRES_TIME startTime );
+
+#endif /* Windows with MSVC or Unix with gcc */
 
 /****************************************************************************
 *																			*
@@ -722,6 +775,7 @@ int testEnvelopeSessionCrypt( void );
 int testEnvelopeSessionCryptLargeBuffer( void );
 int testEnvelopeCrypt( void );
 int testEnvelopePasswordCrypt( void );
+int testEnvelopePasswordCryptBoundary( void );
 int testEnvelopePasswordCryptImport( void );
 int testPGPEnvelopePasswordCryptImport( void );
 int testEnvelopePKCCrypt( void );
@@ -757,6 +811,7 @@ int testCRL( void );
 int testComplexCRL( void );
 int testCertChain( void );
 int testCertRequest( void );
+int testCertRequestAttrib( void );
 int testComplexCertRequest( void );
 int testCRMFRequest( void );
 int testComplexCRMFRequest( void );

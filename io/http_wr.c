@@ -151,7 +151,7 @@ int writeRequestHeader( INOUT STREAM *stream,
 	char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ];
 	const int transportFlag = ( contentLength > 0 && !forceGet ) ? \
 							  TRANSPORT_FLAG_NONE : TRANSPORT_FLAG_FLUSH;
-	int headerLength = DUMMY_INIT, status;
+	int headerLength = DUMMY_INIT, status = DUMMY_INIT;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( ( httpReqInfo == NULL ) || \
@@ -182,13 +182,15 @@ int writeRequestHeader( INOUT STREAM *stream,
 		else
 			swrite( &headerStream, "GET ", 4 );
 		}
-	if( netStream->nFlags & ( STREAM_NFLAG_HTTPPROXY | STREAM_NFLAG_HTTPTUNNEL ) )
+	if( netStream->nFlags & ( STREAM_NFLAG_HTTPPROXY | \
+							  STREAM_NFLAG_HTTPTUNNEL ) )
 		{
 		/* If we're going through an HTTP proxy/tunnel, send an absolute URL 
 		   rather than just the relative location */
 		if( netStream->nFlags & STREAM_NFLAG_HTTPPROXY )
 			swrite( &headerStream, "http://", 7 );
-		swrite( &headerStream, netStream->host, netStream->hostLen );
+		status = swrite( &headerStream, netStream->host, 
+										netStream->hostLen );
 		if( netStream->port != 80 )
 			{
 			char portString[ 16 + 8 ];
@@ -196,15 +198,18 @@ int writeRequestHeader( INOUT STREAM *stream,
 
 			portStringLength = sprintf_s( portString, 16, ":%d", 
 										  netStream->port );
-			swrite( &headerStream, portString, portStringLength );
+			status = swrite( &headerStream, portString, portStringLength );
 			}
 		}
 	if( !( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL ) )
 		{
 		if( netStream->path != NULL && netStream->pathLen > 0 )
-			swrite( &headerStream, netStream->path, netStream->pathLen );
+			{
+			status = swrite( &headerStream, netStream->path, 
+							 netStream->pathLen );
+			}
 		else
-			sputc( &headerStream, '/' );
+			status = sputc( &headerStream, '/' );
 		}
 	if( httpReqInfo != NULL )
 		{
@@ -213,15 +218,15 @@ int writeRequestHeader( INOUT STREAM *stream,
 			sputc( &headerStream, '?' );
 			swrite( &headerStream, httpReqInfo->attribute, 
 					httpReqInfo->attributeLen );
-			sputc( &headerStream, '=' );
+			status = sputc( &headerStream, '=' );
 			encodeRFC1866( &headerStream, httpReqInfo->value, 
 						   httpReqInfo->valueLen );
 			}
 		if( httpReqInfo->extraDataLen > 0 )
 			{
 			sputc( &headerStream, '&' );
-			swrite( &headerStream, httpReqInfo->extraData, 
-					httpReqInfo->extraDataLen );
+			status = swrite( &headerStream, httpReqInfo->extraData, 
+							 httpReqInfo->extraDataLen );
 			}
 		}
 	if( !forceGet )
@@ -255,8 +260,8 @@ int writeRequestHeader( INOUT STREAM *stream,
 			swrite( &headerStream, lengthString, lengthStringLength );
 			swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
 			}
+		status = swrite( &headerStream, "\r\n", 2 );
 		}
-	status = swrite( &headerStream, "\r\n", 2 );
 	if( cryptStatusOK( status ) )
 		headerLength = stell( &headerStream );
 	sMemDisconnect( &headerStream );
@@ -368,6 +373,7 @@ static int writeFunction( INOUT STREAM *stream,
 	else
 		{
 		REQUIRES( ( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL ) || \
+				  ( netStream->nFlags & STREAM_NFLAG_HTTPPOST_AS_GET ) || \
 				  httpDataInfo->contentTypeLen > 0 );
 		REQUIRES( !( ( netStream->nFlags & STREAM_NFLAG_HTTPPROXY ) && 
 					 ( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL ) ) );
@@ -376,15 +382,24 @@ static int writeFunction( INOUT STREAM *stream,
 		/* If there's content present to send to the server and the only 
 		   allowed method is GET then we have to override the use of the 
 		   (correct) POST with the (incorrect) GET in order to deal with a
-		   broken server */
+		   broken server.  What this does is instead of writing the full
+		   request header it writes the start of the "HTTP GET..." line
+		   and then exits, leaving the rest of the GET URI to be written
+		   as the payload data */
 		if( httpDataInfo->bufSize > 0 && \
-			( netStream->nFlags & STREAM_NFLAG_HTTPREQMASK ) == STREAM_NFLAG_HTTPGET )
+			( netStream->nFlags & STREAM_NFLAG_HTTPPOST_AS_GET ) )
+			{
+			status = writeRequestHeader( stream, httpDataInfo->reqInfo, 
+										 NULL, 0, 0, TRUE );
 			forceGet = TRUE;
-
-		status = writeRequestHeader( stream, httpDataInfo->reqInfo, 
-									 httpDataInfo->contentType,
-									 httpDataInfo->contentTypeLen,
-									 httpDataInfo->bufSize, forceGet );
+			}
+		else
+			{
+			status = writeRequestHeader( stream, httpDataInfo->reqInfo, 
+										 httpDataInfo->contentType,
+										 httpDataInfo->contentTypeLen,
+										 httpDataInfo->bufSize, FALSE );
+			}
 		}
 	if( cryptStatusError( status ) )
 		return( status );

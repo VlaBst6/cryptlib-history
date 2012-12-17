@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Encryption Context Attribute Routines				*
-*						Copyright Peter Gutmann 1992-2008					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -476,7 +476,11 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
-	REQUIRES( value >= 0 && value < MAX_INTLENGTH );
+	REQUIRES( ( value >= 0 && value < MAX_INTLENGTH ) || \
+			  attribute == CRYPT_IATTRIBUTE_DEVICEOBJECT );
+			  /* Some PKCS #11 device handles are most likely disguised
+				 pointers so we have to allow for outrageous values for
+				 these */
 	REQUIRES( isAttribute( attribute ) || \
 			  isInternalAttribute( attribute ) );
 

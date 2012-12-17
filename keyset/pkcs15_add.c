@@ -262,7 +262,7 @@ int addSecretKey( IN_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info,
 		return( status );
 	if( findEntry( pkcs15info, noPkcs15objects, CRYPT_KEYID_NAME, 
 				   msgData.data, msgData.length, 
-				   KEYMGMT_FLAG_NONE ) != NULL )
+				   KEYMGMT_FLAG_NONE, FALSE ) != NULL )
 		return( CRYPT_ERROR_DUPLICATE );
 
 	/* Find out where we can add the new key data */

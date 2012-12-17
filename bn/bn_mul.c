@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,19 +49,19 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
  * [including the GNU Public Licence.]
  */
 
-/* Removed redefinition of NDEBUG - pcg */
+/* Removed NDEBUG redefinition - pcg */
 /* NB: See also SunPro compiler bug fix at line 438 - pcg */
 
 #include <stdio.h>
 #include <assert.h>
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "bn_lcl.h"
 #else
   #include "bn/bn_lcl.h"
@@ -394,6 +394,7 @@ BN_ULONG bn_add_part_words(BN_ULONG *r,
  * a[0]*b[0]+a[1]*b[1]+(a[0]-a[1])*(b[1]-b[0])
  * a[1]*b[1]
  */
+/* dnX may not be positive, but n2/2+dnX has to be */
 void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
 	int dna, int dnb, BN_ULONG *t)
 	{
@@ -403,7 +404,7 @@ void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
 	BN_ULONG ln,lo,*p;
 
 # ifdef BN_COUNT
-	fprintf(stderr," bn_mul_recursive %d * %d\n",n2,n2);
+	fprintf(stderr," bn_mul_recursive %d%+d * %d%+d\n",n2,dna,n2,dnb);
 # endif
 # ifdef BN_MUL_COMBA
 #  if 0
@@ -419,7 +420,7 @@ void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
 	if (n2 == 8 && dna == 0 && dnb == 0)
 		{
 		bn_mul_comba8(r,a,b);
-		return;
+		return; 
 		}
 # endif /* BN_MUL_COMBA */
 	/* Else do normal multiply */
@@ -479,7 +480,7 @@ void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
 			bn_mul_comba4(&(t[n2]),t,&(t[n]));
 		else
 			memset(&(t[n2]),0,8*sizeof(BN_ULONG));
-
+		
 		bn_mul_comba4(r,a,b);
 		bn_mul_comba4(&(r[n2]),&(a[n]),&(b[n]));
 		}
@@ -491,7 +492,7 @@ void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
 			bn_mul_comba8(&(t[n2]),t,&(t[n]));
 		else
 			memset(&(t[n2]),0,16*sizeof(BN_ULONG));
-
+		
 		bn_mul_comba8(r,a,b);
 		bn_mul_comba8(&(r[n2]),&(a[n]),&(b[n]));
 		}
@@ -553,16 +554,17 @@ void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
 
 /* n+tn is the word length
  * t needs to be n*4 is size, as does r */
+/* tnX may not be negative but less than n */
 void bn_mul_part_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n,
 	     int tna, int tnb, BN_ULONG *t)
 	{
 	int i,j,n2=n*2;
-	int c1,c2,neg,zero;
+	int c1,c2,neg;
 	BN_ULONG ln,lo,*p;
 
 # ifdef BN_COUNT
-	fprintf(stderr," bn_mul_part_recursive (%d+%d) * (%d+%d)\n",
-		tna, n, tnb, n);
+	fprintf(stderr," bn_mul_part_recursive (%d%+d) * (%d%+d)\n",
+		n, tna, n, tnb);
 # endif
 	if (n < 8)
 		{
@@ -573,7 +575,7 @@ void bn_mul_part_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n,
 	/* r=(a[0]-a[1])*(b[1]-b[0]) */
 	c1=bn_cmp_part_words(a,&(a[n]),tna,n-tna);
 	c2=bn_cmp_part_words(&(b[n]),b,tnb,tnb-n);
-	zero=neg=0;
+	neg=0;
 	switch (c1*3+c2)
 		{
 	case -4:
@@ -581,7 +583,6 @@ void bn_mul_part_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n,
 		bn_sub_part_words(&(t[n]),b,      &(b[n]),tnb,n-tnb); /* - */
 		break;
 	case -3:
-		zero=1;
 		/* break; */
 	case -2:
 		bn_sub_part_words(t,      &(a[n]),a,      tna,tna-n); /* - */
@@ -591,7 +592,6 @@ void bn_mul_part_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n,
 	case -1:
 	case 0:
 	case 1:
-		zero=1;
 		/* break; */
 	case 2:
 		bn_sub_part_words(t,      a,      &(a[n]),tna,n-tna); /* + */
@@ -599,7 +599,6 @@ void bn_mul_part_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n,
 		neg=1;
 		break;
 	case 3:
-		zero=1;
 		/* break; */
 	case 4:
 		bn_sub_part_words(t,      a,      &(a[n]),tna,n-tna);
@@ -812,7 +811,7 @@ void bn_mul_high(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, BN_ULONG *l, int n2,
 		bn_sub_words(&(r[n]),&(b[n]),&(b[0]),n);
 		break;
 		}
-
+		
 	oneg=neg;
 	/* t[10] = (a[0]-a[1])*(b[1]-b[0]) */
 	/* r[10] = (a[1]*b[1]) */
@@ -901,7 +900,7 @@ void bn_mul_high(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, BN_ULONG *l, int n2,
 		c2-=(int)(bn_sub_words(&(r[0]),&(r[0]),&(t[n]),n));
 	else
 		c2+=(int)(bn_add_words(&(r[0]),&(r[0]),&(t[n]),n));
-
+	
 	if (c1 != 0) /* Add starting at r[0], could be +ve or -ve */
 		{
 		i=0;
@@ -1018,7 +1017,6 @@ int BN_mul(BIGNUM *r, const BIGNUM *a, const BIGNUM *b, BN_CTX *ctx)
 		{
 		if (i >= -1 && i <= 1)
 			{
-			int sav_j =0;
 			/* Find out the power of two lower or equal
 			   to the longest of the two numbers */
 			if (i >= 0)
@@ -1029,23 +1027,23 @@ int BN_mul(BIGNUM *r, const BIGNUM *a, const BIGNUM *b, BN_CTX *ctx)
 				{
 				j = BN_num_bits_word((BN_ULONG)bl);
 				}
-			sav_j = j;
 			j = 1<<(j-1);
 			assert(j <= al || j <= bl);
 			k = j+j;
 			t = BN_CTX_get(ctx);
-			if( t == NULL ) goto err;			/* pcg */
+			if (t == NULL)
+				goto err;
 			if (al > j || bl > j)
 				{
-				bn_wexpand(t,k*4);
-				bn_wexpand(rr,k*4);
+				if (bn_wexpand(t,k*4) == NULL) goto err;
+				if (bn_wexpand(rr,k*4) == NULL) goto err;
 				bn_mul_part_recursive(rr->d,a->d,b->d,
 					j,al-j,bl-j,t->d);
 				}
 			else	/* al <= j || bl <= j */
 				{
-				bn_wexpand(t,k*2);
-				bn_wexpand(rr,k*2);
+				if (bn_wexpand(t,k*2) == NULL) goto err;
+				if (bn_wexpand(rr,k*2) == NULL) goto err;
 				bn_mul_recursive(rr->d,a->d,b->d,
 					j,al-j,bl-j,t->d);
 				}

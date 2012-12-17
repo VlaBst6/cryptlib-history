@@ -673,12 +673,14 @@ static int initSessionKeyDecryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		return( status );
 		}
 
-	/* If we're using authenticated encryption then the generic-secret
-	   context that was recovered as the 'session-key' has been turned into
-	   two new contexts, one for encryption and the other for 
+	/* If we're using authenticated encryption (via CMS's encrypt-then-MAC
+	   rather than PGP's encrypted soft-of-keyed hash) then the generic-
+	   secret context that was recovered as the 'session-key' has been 
+	   turned into two new contexts, one for encryption and the other for 
 	   authentication, and we can destroy it */
 	if( envelopeInfoPtr->usage == ACTION_CRYPT && \
-		( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) )
+		( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) && \
+		envelopeInfoPtr->type != CRYPT_FORMAT_PGP )
 		{
 		REQUIRES( iSessionKeyContext != iCryptContext );
 
@@ -948,8 +950,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int addPrivkeyPasswordInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 								   const CONTENT_LIST *contentListPtr,
 								   IN_BUFFER( passwordLength ) const void *password, 
-								   IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) \
-									const int passwordLength )
+								   IN_LENGTH_TEXT const int passwordLength )
 	{
 	MESSAGE_KEYMGMT_INFO getkeyInfo;
 	int type, status;
@@ -1202,6 +1203,7 @@ static int matchInfoObject( OUT_OPT_PTR CONTENT_LIST **contentListPtrPtr,
 
 	/* If we're adding meta-information there's nothing to check */
 	if( envInfo == CRYPT_IATTRIBUTE_ATTRONLY || \
+		envInfo == CRYPT_ENVINFO_DETACHEDSIGNATURE || \
 		envInfo == CRYPT_ENVINFO_KEYSET_SIGCHECK || \
 		envInfo == CRYPT_ENVINFO_KEYSET_ENCRYPT || \
 		envInfo == CRYPT_ENVINFO_KEYSET_DECRYPT || \
@@ -1348,6 +1350,10 @@ static int addDeenvelopeInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			REQUIRES( value == TRUE );
 
 			envelopeInfoPtr->flags |= ENVELOPE_ATTRONLY;
+			return( CRYPT_OK );
+
+		case CRYPT_ENVINFO_DETACHEDSIGNATURE:
+			envelopeInfoPtr->flags |= ENVELOPE_DETACHED_SIG;
 			return( CRYPT_OK );
 
 		case CRYPT_ENVINFO_KEYSET_SIGCHECK:

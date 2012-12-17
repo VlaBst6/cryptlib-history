@@ -35,7 +35,7 @@
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int writeRequestBody( INOUT STREAM *stream,
-							 const SESSION_INFO *sessionInfoPtr,
+							 INOUT SESSION_INFO *sessionInfoPtr,
 							 const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	const CRYPT_CERTFORMAT_TYPE certType = \
@@ -45,7 +45,7 @@ static int writeRequestBody( INOUT STREAM *stream,
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 
 	/* Find out how big the payload will be.  Since revocation requests are
@@ -140,15 +140,16 @@ static int writeResponseBodyHeader( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int writeEncryptedResponseBody( INOUT STREAM *stream,
-									   const SESSION_INFO *sessionInfoPtr,
+									   INOUT SESSION_INFO *sessionInfoPtr,
 									   const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	MESSAGE_DATA msgData;
+	ERROR_INFO errorInfo;
 	void *srcPtr, *destPtr;
 	int dataLength, destLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 
 	/* Get a pointer into the stream buffer.  To avoid having to juggle two
@@ -185,9 +186,13 @@ static int writeEncryptedResponseBody( INOUT STREAM *stream,
 	status = envelopeWrap( srcPtr, msgData.length, srcPtr, dataLength, 
 						   &dataLength, CRYPT_FORMAT_CRYPTLIB, 
 						   CRYPT_CONTENT_NONE, 
-						   sessionInfoPtr->iCertResponse );
+						   sessionInfoPtr->iCertResponse, &errorInfo );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		retExtErr( status,
+				   ( status, SESSION_ERRINFO, &errorInfo, 
+					 "Couldn't wrap response data: " ) );
+		}
 
 	/* Write the response body header */
 	status = writeResponseBodyHeader( stream, protocolInfo->operation, 
@@ -223,14 +228,14 @@ static int writeEncryptedResponseBody( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int writeResponseBody( INOUT STREAM *stream,
-							  const SESSION_INFO *sessionInfoPtr,
+							  INOUT SESSION_INFO *sessionInfoPtr,
 							  const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	MESSAGE_DATA msgData;
 	int dataLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 
 	/* Revocation request responses have no body */
@@ -276,7 +281,7 @@ static int writeResponseBody( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int writeConfBody( INOUT STREAM *stream,
-						  const SESSION_INFO *sessionInfoPtr,
+						  INOUT SESSION_INFO *sessionInfoPtr,
 						  const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	static const MAP_TABLE fingerprintMapTable[] = {
@@ -291,7 +296,7 @@ static int writeConfBody( INOUT STREAM *stream,
 	int length, fingerprintType, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 
 	/* Get the certificate hash */
@@ -322,7 +327,7 @@ static int writeConfBody( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int writePKIConfBody( INOUT STREAM *stream,
-							 STDC_UNUSED const SESSION_INFO *sessionInfoPtr,
+							 STDC_UNUSED INOUT SESSION_INFO *sessionInfoPtr,
 							 STDC_UNUSED const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -342,7 +347,7 @@ static int writePKIConfBody( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int writeGenMsgRequestBody( INOUT STREAM *stream,
-							STDC_UNUSED const SESSION_INFO *sessionInfoPtr,
+							STDC_UNUSED INOUT SESSION_INFO *sessionInfoPtr,
 							STDC_UNUSED const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -356,7 +361,7 @@ static int writeGenMsgRequestBody( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeGenMsgResponseBody( INOUT STREAM *stream,
-							const SESSION_INFO *sessionInfoPtr,
+							INOUT SESSION_INFO *sessionInfoPtr,
 							STDC_UNUSED const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	CRYPT_CERTIFICATE iCTL;
@@ -364,7 +369,7 @@ static int writeGenMsgResponseBody( INOUT STREAM *stream,
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Get the CTL from the CA object.  We recreate this each time rather 
 	   than cacheing it in the session to ensure that changes in the trusted
@@ -446,7 +451,7 @@ static int writeGenMsgResponseBody( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int writeErrorBody( INOUT STREAM *stream,
-						   STDC_UNUSED const SESSION_INFO *sessionInfoPtr,
+						   STDC_UNUSED INOUT SESSION_INFO *sessionInfoPtr,
 						   const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	const int statusInfoLength = \

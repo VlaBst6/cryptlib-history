@@ -25,33 +25,30 @@ public class crypt
 	public const int ALGO_NONE               = 0  ; // No encryption
 	public const int ALGO_DES                = 1  ; // DES
 	public const int ALGO_3DES               = 2  ; // Triple DES
-	public const int ALGO_IDEA               = 3  ; // IDEA
-	public const int ALGO_CAST               = 4  ; // CAST-128
-	public const int ALGO_RC2                = 5  ; // RC2
+	public const int ALGO_IDEA               = 3  ; // IDEA (only used for PGP 2.x)
+	public const int ALGO_CAST               = 4  ; // CAST-128 (only used for OpenPGP)
+	public const int ALGO_RC2                = 5  ; // RC2 (disabled by default)
 	public const int ALGO_RC4                = 6  ; // RC4
 	public const int ALGO_RC5                = 7  ; // RC5
 	public const int ALGO_AES                = 8  ; // AES
 	public const int ALGO_BLOWFISH           = 9  ; // Blowfish
-	public const int ALGO_SKIPJACK           = 10 ; // Skipjack
 	public const int ALGO_DH                 = 100; // Diffie-Hellman
 	public const int ALGO_RSA                = 101; // RSA
 	public const int ALGO_DSA                = 102; // DSA
 	public const int ALGO_ELGAMAL            = 103; // ElGamal
-	public const int ALGO_KEA                = 104; // KEA
+	public const int ALGO_RESERVED1          = 104; // Formerly KEA
 	public const int ALGO_ECDSA              = 105; // ECDSA
 	public const int ALGO_ECDH               = 106; // ECDH
-	public const int ALGO_MD2                = 200; // MD2
-	public const int ALGO_MD4                = 201; // MD4
+	public const int ALGO_RESERVED2          = 200; // Formerly MD2
+	public const int ALGO_RESERVED3          = 201; // Formerly MD4
 	public const int ALGO_MD5                = 202; // MD5
 	public const int ALGO_SHA1               = 203; // SHA/SHA1
-	public const int ALGO_SHA                = 203; // Older form
 	public const int ALGO_RIPEMD160          = 204; // RIPE-MD 160
 	public const int ALGO_SHA2               = 205; // SHA-256
 	public const int ALGO_SHA256             = 205; // Alternate name
 	public const int ALGO_SHAng              = 206; // Future SHA-nextgen standard
 	public const int ALGO_HMAC_MD5           = 300; // HMAC-MD5
 	public const int ALGO_HMAC_SHA1          = 301; // HMAC-SHA
-	public const int ALGO_HMAC_SHA           = 301; // Older form
 	public const int ALGO_HMAC_RIPEMD160     = 302; // HMAC-RIPEMD-160
 	public const int ALGO_HMAC_SHA2          = 303; // HMAC-SHA2
 	public const int ALGO_HMAC_SHAng         = 304; // HMAC-future-SHA-nextgen
@@ -63,7 +60,7 @@ public class crypt
 	public const int ALGO_FIRST_HASH         = 200;
 	public const int ALGO_LAST_HASH          = 299;
 	public const int ALGO_FIRST_MAC          = 300;
-	public const int ALGO_LAST_MAC           = 399; // End of mac algo.range
+	public const int ALGO_LAST_MAC           = 399;
 	
 	// CRYPT_MODE_TYPE
 	public const int MODE_NONE = 0; // No encryption mode
@@ -92,7 +89,7 @@ public class crypt
 	
 	// CRYPT_DEVICE_TYPE
 	public const int DEVICE_NONE      = 0; // No crypto device
-	public const int DEVICE_FORTEZZA  = 1; // Fortezza card
+	public const int DEVICE_FORTEZZA  = 1; // Fortezza card - Placeholder only
 	public const int DEVICE_PKCS11    = 2; // PKCS #11 crypto token
 	public const int DEVICE_CRYPTOAPI = 3; // Microsoft CryptoAPI
 	public const int DEVICE_HARDWARE  = 4; // Generic crypo HW plugin
@@ -316,6 +313,7 @@ public class crypt
 	public const int CERTINFO_EDIPARTYNAME_NAMEASSIGNER          = 2111; // ediPartyName.nameAssigner
 	public const int CERTINFO_EDIPARTYNAME_PARTYNAME             = 2112; // ediPartyName.partyName
 	public const int CERTINFO_UNIFORMRESOURCEIDENTIFIER          = 2113; // uniformResourceIdentifier
+	public const int CERTINFO_URL                                = 2113;
 	public const int CERTINFO_IPADDRESS                          = 2114; // iPAddress
 	public const int CERTINFO_REGISTEREDID                       = 2115; // registeredID
 	public const int CERTINFO_CHALLENGEPASSWORD                  = 2200; // 1 3 6 1 4 1 3029 3 1 4 cRLExtReason
@@ -1312,27 +1310,6 @@ public class crypt
 								)
 	{
 		processStatus(wrapped_GenerateKey(cryptContext));
-	}
-	
-	public static void GenerateKeyAsync(
-								int cryptContext // CRYPT_CONTEXT
-								)
-	{
-		processStatus(wrapped_GenerateKeyAsync(cryptContext));
-	}
-	
-	public static void AsyncQuery(
-								int cryptObject // CRYPT_HANDLE
-								)
-	{
-		processStatus(wrapped_AsyncQuery(cryptObject));
-	}
-	
-	public static void AsyncCancel(
-								int cryptObject // CRYPT_HANDLE
-								)
-	{
-		processStatus(wrapped_AsyncCancel(cryptObject));
 	}
 	
 	/* Encrypt/decrypt/hash a block of memory */
@@ -2595,15 +2572,6 @@ public class crypt
 
 	[DllImport("cl32.dll", EntryPoint="cryptGenerateKey")]
 	private static extern int wrapped_GenerateKey(int cryptContext);
-
-	[DllImport("cl32.dll", EntryPoint="cryptGenerateKeyAsync")]
-	private static extern int wrapped_GenerateKeyAsync(int cryptContext);
-
-	[DllImport("cl32.dll", EntryPoint="cryptAsyncQuery")]
-	private static extern int wrapped_AsyncQuery(int cryptObject);
-
-	[DllImport("cl32.dll", EntryPoint="cryptAsyncCancel")]
-	private static extern int wrapped_AsyncCancel(int cryptObject);
 
 	[DllImport("cl32.dll", EntryPoint="cryptEncrypt")]
 	private static extern int wrapped_Encrypt(int cryptContext, IntPtr buffer, int length);

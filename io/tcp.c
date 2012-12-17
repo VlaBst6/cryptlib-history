@@ -851,8 +851,6 @@ static int my_setsockopt( int socket, int level, int option,
 static int my_getsockopt( int socket, int level, int option,
 						  void *data, uint *size )
 	{
-	BYTE buffer[ 8 + 8 ];
-
 	if( option != SO_ERROR )
 		return( 0 );
 	*( ( int * ) data ) = 0;	/* Clear return status */
@@ -862,6 +860,7 @@ static int my_getsockopt( int socket, int level, int option,
 #if 1
 	return( setsockopt( socket, level, option, data, *size ) );
 #else
+	BYTE buffer[ 8 + 8 ];
 	int count;
 
 	count = recv( socket, buffer, 0, 0 );
@@ -2080,7 +2079,7 @@ static int openSocketFunction( INOUT NET_STREAM_INFO *netStream,
    above this doesn't work all of the time.  The details get very 
    implementation-specific, for example with glibc the manpage says that 
    setting SO_LINGER causes shutdown() not to return until queued messages 
-   are sent (which is wrong, and non non-glibc implementations like PHUX and 
+   are sent (which is wrong, and non-glibc implementations like PHUX and 
    Solaris specifically point out that only close() is affected), but that 
    shutdown() discards unsent data.  glibc in turn is dependent on the 
    kernel it's running on top of, under Linux shutdown() returns immediately 

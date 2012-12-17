@@ -1,4 +1,4 @@
-/* ASN.1 object dumping code, copyright Peter Gutmann
+/* ASN.1 data display code, copyright Peter Gutmann 
    <pgut001@cs.auckland.ac.nz>, based on ASN.1 dump program by David Kemp, 
    with contributions from various people including Matthew Hamrick, Bruno 
    Couillard, Hallvard Furuseth, Geoff Thorpe, David Boyce, John Hughes, 
@@ -7,7 +7,7 @@
    Manger and several other people whose names I've misplaced.
 
    Available from http://www.cs.auckland.ac.nz/~pgut001/dumpasn1.c. Last
-   updated 12 November 2010 (version 20101112, if you prefer it that way).  
+   updated 2 September 2012 (version 20120902, if you prefer it that way).  
    To build under Windows, use 'cl /MD dumpasn1.c'.  To build on OS390 or 
    z/OS, use '/bin/c89 -D OS390 -o dumpasn1 dumpasn1.c'.
 
@@ -23,12 +23,12 @@
    errors, the fact that dumpasn1 will display an ASN.1 data item doesn't mean
    that the item is valid.
 
-   This version of dumpasn1 requires a config file dumpasn1.cfg to be present
-   in the same location as the program itself or in a standard directory where
-   binaries live (it will run without it but will display a warning message,
-   you can configure the path either by hardcoding it in or using an
-   environment variable as explained further down).  The config file is
-   available from http://www.cs.auckland.ac.nz/~pgut001/dumpasn1.cfg.
+   dumpasn1 requires a config file dumpasn1.cfg to be present in the same 
+   location as the program itself or in a standard directory where binaries 
+   live (it will run without it but will display a warning message, you can 
+   configure the path either by hardcoding it in or using an environment 
+   variable as explained further down).  The config file is available from 
+   http://www.cs.auckland.ac.nz/~pgut001/dumpasn1.cfg.
 
    This code assumes that the input data is binary, having come from a MIME-
    aware mailer or been piped through a decoding utility if the original
@@ -56,7 +56,7 @@
 
 /* The update string, printed as part of the help screen */
 
-#define UPDATE_STRING	"12 November 2010"
+#define UPDATE_STRING	"2 September 2012"
 
 /* Useful defines */
 
@@ -105,6 +105,10 @@
 #if ( defined( _WINDOWS ) || defined( WIN32 ) || defined( _WIN32 ) || \
 	  defined( __WIN32__ ) )
   #include <windows.h>
+  #include <fcntl.h>				/* For _setmode() codes */
+  #ifndef _O_U16TEXT 
+	#define _O_U16TEXT		0x20000	/* _setmode() code */
+  #endif /* !_O_U16TEXT */
   #define __WIN32__
 #endif /* Win32 */
 
@@ -244,8 +248,9 @@ typedef struct {
 	int tag;					/* Tag */
 	long length;				/* Data length */
 	int indefinite;				/* Item has indefinite length */
+	int nonCanonical;			/* Non-canonical length encoding used */
+	unsigned char header[ 16 ];	/* Tag+length data */
 	int headerSize;				/* Size of tag+length */
-	unsigned char header[ 8 ];	/* Tag+length data */
 	} ASN1_ITEM;
 
 /* Configuration options */
@@ -272,10 +277,51 @@ static int outputWidth = 80;		/* 80-column display */
 static int maxNestLevel = 100;		/* Maximum nesting level for which to display output */
 static int doOutlineOnly = FALSE;	/* Only display constructed-object outline */
 
-/* The indent size and fixed indent string to the left of the data */
+/* Formatting information used for the fixed informational column to the 
+   left of the displayed data */
 
-#define INDENT_SIZE		11
-#define INDENT_STRING	"         : "
+static int infoWidth = 4;
+static const char *indentStringTbl[] = {
+	NULL, NULL, NULL, 
+	"       : ",			/* "xxx xxx: " (3) */
+	"         : ",			/* "xxxx xxxx: " (4) */
+	"           : ",		/* "xxxxx xxxxx: " (5) */
+	"             : ",		/* "xxxxxx xxxxxx: " (6) */
+	"               : ",	/* "xxxxxxx xxxxxxx: " (7) */
+	"                 : ",	/* "xxxxxxxx xxxxxxxx: " (8) */
+	"", "", "", ""
+	};
+static const char *lenTbl[] = {
+	NULL, NULL, NULL, 
+	"%3ld %3ld: ", "%4ld %4ld: ", "%5ld %5ld: ",
+	"%6ld %6ld: ", "%7ld %7ld: ", "%8ld %8ld: ",
+	"", "", "", ""
+	};
+static const char *lenIndefTbl[] = {
+	NULL, NULL, NULL, 
+	"%3ld NDF: ", "%4ld NDEF: ", "%5ld INDEF: ",
+	"%6ld INDEF : ", "%7ld INDEF  : ", "%8ld INDEF   : ",
+	"", "", "", ""
+	};
+static const char *lenHexTbl[] = {
+	NULL, NULL, NULL, 
+	"%03lX %3lX: ", "%04lX %4lX: ", "%05lX %5lX: ",
+	"%06lX %6lX: ", "%07lX %7lX: ", "%08lX %8lX: ",
+	"", "", "", ""
+	};
+static const char *lenHexIndefTbl[] = {
+	NULL, NULL, NULL, 
+	"%03lX NDF: ", "%04lX NDEF: ", "%05lX INDEF: ",
+	"%06lX INDEF : ", "%07lX INDEF  : ", "%08lX INDEF   : ",
+	"", "", "", ""
+	};
+
+#define INDENT_SIZE		( infoWidth + 1 + infoWidth + 1 + 1 )
+#define INDENT_STRING	indentStringTbl[ infoWidth ]
+#define LEN				lenTbl[ infoWidth ]
+#define LEN_INDEF		lenIndefTbl[ infoWidth ]
+#define LEN_HEX			lenHexTbl[ infoWidth ]
+#define LEN_HEX_INDEF	lenHexIndefTbl[ infoWidth ]
 
 /* Error and warning information */
 
@@ -461,14 +507,18 @@ static char *idstr( const int tagID )
 
 /* Return information on an object identifier */
 
-static OIDINFO *getOIDinfo( char *oid, const int oidLength )
+static OIDINFO *getOIDinfo( const BYTE *oid, const int oidLength )
 	{
+	const BYTE oidByte = oid[ 1 ];
 	OIDINFO *oidPtr;
 
 	for( oidPtr = oidList; oidPtr != NULL; oidPtr = oidPtr->next )
 		{
-		if( oidLength == oidPtr->oidLength - 2 && \
-			!memcmp( oidPtr->oid + 2, oid, oidLength ) )
+		if( oidLength != oidPtr->oidLength - 2 )
+			continue;	/* Quick-reject check */
+		if( oidByte != oidPtr->oid[ 2 + 1 ] )
+			continue;	/* Quick-reject check */
+		if( !memcmp( oidPtr->oid + 2, oid, oidLength ) )
 			return( oidPtr );
 		}
 
@@ -622,8 +672,9 @@ static int readLine( FILE *file, char *buffer )
 
 static int processOID( OIDINFO *oidInfo, char *string )
 	{
-	unsigned char binaryOID[ MAX_OID_SIZE ];
-	int firstValue, value, valueIndex = 0, oidIndex = 3;
+	BYTE binaryOID[ MAX_OID_SIZE ];
+	long value;
+	int firstValue, valueIndex = 0, oidIndex = 3;
 
 	memset( binaryOID, 0, MAX_OID_SIZE );
 	binaryOID[ 0 ] = OID;
@@ -635,7 +686,7 @@ static int processOID( OIDINFO *oidInfo, char *string )
 					lineNo );
 			return( FALSE );
 			}
-		if( sscanf( string, "%d", &value ) != 1 || value < 0 )
+		if( sscanf( string, "%8ld", &value ) != 1 || value < 0 )
 			{
 			printf( "Invalid value in config file line %d.\n", lineNo );
 			return( FALSE );
@@ -657,7 +708,7 @@ static int processOID( OIDINFO *oidInfo, char *string )
 							lineNo );
 					return( FALSE );
 					}
-				binaryOID[ 2 ] = ( firstValue * 40 ) + value;
+				binaryOID[ 2 ] = ( firstValue * 40 ) + ( int ) value;
 				valueIndex++;
 				}
 			else
@@ -666,22 +717,22 @@ static int processOID( OIDINFO *oidInfo, char *string )
 
 				if( value >= 0x200000L )					/* 2^21 */
 					{
-					binaryOID[ oidIndex++ ] = 0x80 | ( value >> 21 );
+					binaryOID[ oidIndex++ ] = 0x80 | ( int ) ( value >> 21 );
 					value %= 0x200000L;
 					hasHighBits = TRUE;
 					}
 				if( ( value >= 0x4000 ) || hasHighBits )	/* 2^14 */
 					{
-					binaryOID[ oidIndex++ ] = 0x80 | ( value >> 14 );
+					binaryOID[ oidIndex++ ] = 0x80 | ( int ) ( value >> 14 );
 					value %= 0x4000;
 					hasHighBits = TRUE;
 					}
 				if( ( value >= 0x80 ) || hasHighBits )		/* 2^7 */
 					{
-					binaryOID[ oidIndex++ ] = 0x80 | ( value >> 7 );
+					binaryOID[ oidIndex++ ] = 0x80 | ( int ) ( value >> 7 );
 					value %= 128;
 					}
-				binaryOID[ oidIndex++ ] = value;
+				binaryOID[ oidIndex++ ] = ( int ) value;
 				}
 			}
 		while( *string && isdigit( byteToInt( *string ) ) )
@@ -705,7 +756,7 @@ static int processHexOID( OIDINFO *oidInfo, char *string )
 
 	while( *string && index < MAX_OID_SIZE - 1 )
 		{
-		if( sscanf( string, "%x", &value ) != 1 || value > 255 )
+		if( sscanf( string, "%4x", &value ) != 1 || value > 255 )
 			{
 			printf( "Invalid hex value in config file line %d.\n", lineNo );
 			return( FALSE );
@@ -1128,7 +1179,8 @@ static void doIndent( const int level )
 
 /* Complain about an error in the ASN.1 object */
 
-static void complain( const char *message, const int level )
+static void complain( const char *message, const int messageParam, 
+					  const int level )
 	{
 	if( level < maxNestLevel )
 		{
@@ -1136,7 +1188,48 @@ static void complain( const char *message, const int level )
 			fprintf( output, INDENT_STRING );
 		doIndent( level + 1 );
 		}
-	fprintf( output, "Error: %s.\n", message );
+	fputs( "Error: ", output );
+	fprintf( output, message, messageParam );
+	fputs( ".\n", output );
+	noErrors++;
+	}
+
+static void complainLength( const ASN1_ITEM *item, const int level )
+	{
+	int i;
+
+#if 0
+	/* This is a general error so we don't indent the message to the level
+	   of the item */
+#else
+	if( level < maxNestLevel )
+		{
+		if( !doPure )
+			fprintf( output, INDENT_STRING );
+		doIndent( level + 1 );
+		}
+#endif /* 0 */
+	fputs( "Error: Length '", output );
+	for( i = item->nonCanonical; i < item->headerSize; i++ )
+		{
+		fprintf( output, "%02X", item->header[ i ] );
+		if( i < item->headerSize - 1 )
+			fputc( ' ', output );
+		}
+	fputs( "' has non-canonical encoding.\n", output );
+	noErrors++;
+	}
+
+static void complainInt( const BYTE *intValue, const int level )
+	{
+	if( level < maxNestLevel )
+		{
+		if( !doPure )
+			fprintf( output, INDENT_STRING );
+		doIndent( level + 1 );
+		}
+	fprintf( output, "Error: Integer '%02X %02X ...' has non-DER encoding.\n", 
+			 intValue[ 0 ], intValue[ 1 ] );
 	noErrors++;
 	}
 
@@ -1160,10 +1253,99 @@ static int adjustLevel( const int level, const int maxLevel )
 	return( level );
 	}
 
+#if defined( __WIN32__ ) || defined( __UNIX__ ) || defined( __OS390__ )
+
+/* Try and display to display a Unicode character.  This is pretty hit and 
+   miss, and if it fails nothing is displayed.  To try and detect this we 
+   use wcstombs() to see if anything can be displayed, if it can't we drop 
+   back to trying to display the data as non-Unicode */
+
+static int displayUnicode( const wchar_t wCh, const int level )
+	{
+	char outBuf[ 8 ];
+	int outLen;
+
+	/* Check whether we can display this character */
+	outLen = wcstombs( outBuf, &wCh, 1 );
+	if( outLen < 1 )
+		{
+		/* Tell the caller that this can't be displayed as Unicode */
+		return( FALSE );
+		}
+
+#if defined( __WIN32__ )
+	if( level < maxNestLevel )
+		{
+		int oldmode;
+						
+		/* To output Unicode to the Win32 console we need to switch the 
+		   output stream to Unicode-16 mode, but the following may also 
+		   depend on which code page is currently set for the console and 
+		   which font is being used */
+		fflush( output );
+		oldmode = _setmode( fileno( output ), _O_U16TEXT );
+		fputwc( wCh, output );
+		_setmode( fileno( output ), oldmode );
+		}
+#elif defined( __UNIX__ ) && !( defined( __MACH__ ) || defined( __OpenBSD__ ) )
+	/* Unix environments are even more broken than Win32, like Win32 the 
+	   output differentiates between char and widechar output, but there's 
+	   no easy way to deal with this.  In theory fwide() can set it, but 
+	   it's a one-way function, once we've set it a particular way we can't 
+	   go back (exactly what level of braindamage it takes to have an 
+	   implementation function like this is a mystery).  Other sources 
+	   suggest using setlocale() tricks, printf() with "%lc" or "%ls" as the 
+	   format specifier, and others, but none of these seem to work properly 
+	   either */
+	if( level < maxNestLevel )
+		{
+#if 0
+		setlocale( LC_ALL, "" );
+		fputwc( wCh, output );
+#elif 1
+		/* This (and the "%ls" variant below) seem to be the least broken 
+		   options */
+		fprintf( output, "%lc", wCh );
+#elif 0
+		wchar_t wChString[ 2 ];
+
+		wChString[ 0 ] = wCh;
+		wChString[ 1 ] = 0;
+		fprintf( output, "%ls", wChString );
+#else
+		if( fwide( output, 1 ) > 0 )
+			{
+			fputwc( wCh, output );
+			fwide( output, -1 );
+			}
+		else
+			fputc( wCh, output );
+#endif
+		}
+#else
+  #ifdef __OS390__
+	if( level < maxNestLevel )
+		{
+		char *p;
+
+		/* This could use some improvement */
+		for( p = outBuf; *p != '\0'; p++ )
+			*p = asciiToEbcdic( *p );
+		}
+  #endif /* IBM ASCII -> EBCDIC conversion */
+	printString( level, "%s", outBuf );
+#endif /* OS-specific charset handling */
+
+	return( TRUE );
+	}
+#endif /* __WIN32__ || __UNIX__ || __OS390__ */
+
 /* Display an integer value */
 
-static void printValue( FILE *inFile, const int valueLength, const int level )
+static void printValue( FILE *inFile, const int valueLength, 
+					    const int level )
 	{
+	BYTE intBuffer[ 2 ];
 	long value;
 	int warnNegative = FALSE, warnNonDER = FALSE, i;
 
@@ -1181,6 +1363,11 @@ static void printValue( FILE *inFile, const int valueLength, const int level )
 				warnNonDER = TRUE;
 			if( ( value == 0xFF ) && ( ( ch & 0x80 ) == 0x80 ) )
 				warnNonDER = TRUE;
+			if( warnNonDER )
+				{
+				intBuffer[ 0 ] = ( int ) value;
+				intBuffer[ 1 ] = ch;
+				}
 			}
 		value = ( value << 8 ) | ch;
 		}
@@ -1189,31 +1376,46 @@ static void printValue( FILE *inFile, const int valueLength, const int level )
 	/* Display the integer value and any associated warnings */
 	printString( level, " %ld\n", value );
 	if( warnNonDER )
-		complain( "Integer has non-DER encoding", level );
-	if( warnNegative < 0 )
-		complain( "Integer has a negative value", level );
+		complainInt( intBuffer, level );
+	if( warnNegative )
+		complain( "Integer has a negative value", 0, level );
 	}
 
 /* Dump data as a string of hex digits up to a maximum of 128 bytes */
 
-static void dumpHex( FILE *inFile, long length, int level, int isInteger )
+static void dumpHex( FILE *inFile, long length, int level, 
+					 const int isInteger )
 	{
 	const int lineLength = ( dumpText ) ? 8 : 16;
+	const int displayHeaderLength = ( ( doPure ) ? 0 : INDENT_SIZE ) + 2;
+	BYTE intBuffer[ 2 ];
 	char printable[ 9 ];
 	long noBytes = length;
 	int warnPadding = FALSE, warnNegative = isInteger, singleLine = FALSE;
-	int prevCh = -1, i;
+	int displayLength = displayHeaderLength, prevCh = -1, i;
 
-	/* Check if LHS status info + indent + "OCTET STRING" string + data will
-	   wrap */
-	if( ( ( doPure ) ? 0 : INDENT_SIZE ) + ( level * 2 ) + 12 + \
-		( length * 3 ) < outputWidth )
+	memset( printable, 0, 9 );
+
+	displayLength += ( length < lineLength ) ? ( length * 3 ) : \
+											   ( lineLength * 3 );
+
+	/* Check if the size of the displayed data (LHS status info + hex data) 
+	   plus the indent-level of spaces will fit into a single line behind 
+	   the initial label, e.g. "INTEGER" */
+	if( displayHeaderLength + ( level * 2 ) + ( length * 3 ) < outputWidth )
 		singleLine = TRUE;
 
-	if( noBytes > 128 && !printAllData )
-		noBytes = 128;	/* Only output a maximum of 128 bytes */
-	level = adjustLevel( level, ( doPure ) ? 15 : 8 );
-	printable[ 8 ] = printable[ 0 ] = '\0';
+	/* By default we only output a maximum of 128 bytes to avoid dumping 
+	   huge amounts of data, however if what's left is a partial lines' 
+	   worth then we output that as well to avoid displaying a line of text 
+	   indicating that less than a lines' worth of data remains to be 
+	   displayed */
+	if( noBytes >= 128 + lineLength && !printAllData )
+		noBytes = 128;
+
+	/* Make sure that the indent level doesn't push the text off the edge of 
+	   the screen */
+	level = adjustLevel( level, ( outputWidth - displayLength ) / 2 );
 	for( i = 0; i < noBytes; i++ )
 		{
 		int ch;
@@ -1256,6 +1458,11 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 				warnPadding = TRUE;
 			if( ( prevCh == 0xFF ) && ( ( ch & 0x80 ) == 0x80 ) )
 				warnPadding = TRUE;
+			if( warnPadding )
+				{
+				intBuffer[ 0 ] = prevCh;
+				intBuffer[ 1 ] = ch;
+				}
 			}
 		}
 	if( dumpText )
@@ -1271,7 +1478,7 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 		printString( level, "%s", "    " );
 		printString( level, "%s", printable );
 		}
-	if( length > 128 && !printAllData )
+	if( length >= 128 + lineLength && !printAllData )
 		{
 		length -= 128;
 		printString( level, "%c", '\n' );
@@ -1293,9 +1500,9 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 	if( isInteger )
 		{
 		if( warnPadding )
-			complain( "Integer has non-DER encoding", level );
+			complainInt( intBuffer, level );
 		if( warnNegative )
-			complain( "Integer has a negative value", level );
+			complain( "Integer has a negative value", 0, level );
 		}
 	}
 
@@ -1448,7 +1655,7 @@ static void dumpBitString( FILE *inFile, const int length, const int unused,
 	char *errorStr = NULL;
 
 	if( unused < 0 || unused > 7 )
-		complain( "Invalid number of unused bits", level );
+		complain( "Invalid number %d of unused bits", unused, level );
 	noBits = ( length * 8 ) - unused;
 
 	/* ASN.1 bitstrings start at bit 0, so we need to reverse the order of
@@ -1519,7 +1726,7 @@ static void dumpBitString( FILE *inFile, const int length, const int unused,
 		printString( level, "%s", "'B\n" );
 
 	if( errorStr != NULL )
-		complain( errorStr, level );
+		complain( errorStr, 0, level );
 	}
 
 /* Display data as a text string up to a maximum of 240 characters (8 lines
@@ -1532,7 +1739,7 @@ static void dumpBitString( FILE *inFile, const int length, const int unused,
    it up into 48-char chunks in a somewhat less nice text-dump format */
 
 static void displayString( FILE *inFile, long length, int level,
-						   STR_OPTION strOption )
+						   const STR_OPTION strOption )
 	{
 	char timeStr[ 64 ];
 	long noBytes = length;
@@ -1575,73 +1782,25 @@ static void displayString( FILE *inFile, long length, int level,
 		if( strOption == STR_BMP )
 			{
 			if( i == noBytes - 1 && ( noBytes & 1 ) )
+				{
 				/* Odd-length BMP string, complain */
 				warnBMP = TRUE;
+				}
 			else
 				{
 				const wchar_t wCh = ( ch << 8 ) | getc( inFile );
-				char outBuf[ 8 ];
-#ifdef __OS390__
-				char *p;
-#endif /* OS-specific charset handling */
-				int outLen;
-
-				/* Attempting to display Unicode characters is pretty hit and
-				   miss, and if it fails nothing is displayed.  To try and
-				   detect this we use wcstombs() to see if anything can be
-				   displayed, if it can't we drop back to trying to display
-				   the data as non-Unicode.  There's one exception to this
-				   case, which is for a wrong-endianness Unicode string, for
-				   which the first character looks like a single ASCII char */
-				outLen = wcstombs( outBuf, &wCh, 1 );
-				if( outLen < 1 )
-					{
-					/* Can't be displayed as Unicode, fall back to
-					   displaying it as normal text */
-					ungetc( wCh & 0xFF, inFile );
-					}
-				else
+				
+				if( displayUnicode( wCh, level ) )
 					{
 					lineLength++;
 					i++;	/* We've read two characters for a wchar_t */
-#if defined( __WIN32__ )
-					if( level < maxNestLevel )
-						fputwc( wCh, output );
-#elif defined( __UNIX__ ) && !( defined( __MACH__ ) || defined( __OpenBSD__ ) )
-					/* Some Unix environments differentiate between char
-					   and wide-oriented stdout (!!!), so it's necessary to
-					   manually switch the orientation of stdout to make it
-					   wide-oriented before calling a widechar output
-					   function or nothing will be output (exactly what
-					   level of braindamage it takes to have an
-					   implementation function like this is a mystery).  In
-					   order to safely display widechars, we therefore have
-					   to use the fwide() kludge function to change stdout
-					   modes around the display of the widechar */
-					if( level < maxNestLevel )
-						{
-						if( fwide( output, 1 ) > 0 )
-							{
-							fputwc( wCh, output );
-							fwide( output, -1 );
-							}
-						else
-							fputc( wCh, output );
-						}
-#else
-  #ifdef __OS390__
-					if( level < maxNestLevel )
-						{
-						/* This could use some improvement */
-						for( p = outBuf; *p != '\0'; p++ )
-							*p = asciiToEbcdic( *p );
-						}
-  #endif /* IBM ASCII -> EBCDIC conversion */
-					printString( level, "%s", outBuf );
-#endif /* OS-specific charset handling */
 					fPos += 2;
 					continue;
 					}
+
+				/* The value can't be displayed as Unicode, fall back to 
+				   displaying it as normal text */
+				ungetc( wCh & 0xFF, inFile );
 				}
 			}
 #endif /* __WIN32__ || __UNIX__ || __OS390__ */
@@ -1764,13 +1923,13 @@ static void displayString( FILE *inFile, long length, int level,
 
 	/* Display any problems we encountered */
 	if( warnPrintable )
-		complain( "PrintableString contains illegal character(s)", level );
+		complain( "PrintableString contains illegal character(s)", 0, level );
 	if( warnIA5 )
-		complain( "IA5String contains illegal character(s)", level );
+		complain( "IA5String contains illegal character(s)", 0, level );
 	if( warnTime )
-		complain( "Time is encoded incorrectly", level );
+		complain( "Time is encoded incorrectly", 0, level );
 	if( warnBMP )
-		complain( "BMPString has missing final byte/half character", level );
+		complain( "BMPString has missing final byte/half character", 0, level );
 	}
 
 /****************************************************************************
@@ -1825,6 +1984,7 @@ static int getItem( FILE *inFile, ASN1_ITEM *item )
 	item->headerSize = index;
 	if( length & LEN_XTND )
 		{
+		const int lengthStart = index;
 		int i;
 
 		length &= LEN_MASK;
@@ -1846,6 +2006,19 @@ static int getItem( FILE *inFile, ASN1_ITEM *item )
 			item->header[ i + index ] = ch;
 			}
 		fPos += length;
+
+		/* Check for the first 9 bits of the length being identical and
+		   if they are, remember where the encoded non-canonical length
+		   starts */
+		if( item->headerSize - lengthStart > 1 )
+			{
+			if( ( item->header[ lengthStart ] == 0x00 ) && \
+				( ( item->header[ lengthStart + 1 ] & 0x80 ) == 0x00 ) )
+				item->nonCanonical = lengthStart - 1;
+			if( ( item->header[ lengthStart ] == 0xFF ) && \
+				( ( item->header[ lengthStart + 1 ] & 0x80 ) == 0x80 ) )
+				item->nonCanonical = lengthStart - 1;
+			}
 		}
 	else
 		item->length = length;
@@ -2155,10 +2328,14 @@ static void printConstructed( FILE *inFile, int level, const ASN1_ITEM *item )
 	if( !item->length && !item->indefinite )
 		{
 		printString( level, "%s", " {}\n" );
+		if( item->nonCanonical )
+			complainLength( item, level );
 		return;
 		}
 
 	printString( level, "%s", " {\n" );
+	if( item->nonCanonical )
+		complainLength( item, level );
 	result = printAsn1( inFile, level + 1, item->length, item->indefinite );
 	if( result )
 		{
@@ -2214,7 +2391,9 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 		if( !item->length && !item->indefinite && !zeroLengthOK( item ) )
 			{
 			printString( level, "%c", '\n' );
-			complain( "Object has zero length", level );
+			complain( "Object has zero length", 0, level );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			return;
 			}
 
@@ -2232,6 +2411,8 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 		if( nonOutlineObject )
 			{
 			dumpHex( inFile, item->length, 1000, FALSE );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			printString( level, "%c", '\n' );
 			return;
 			}
@@ -2243,11 +2424,15 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			{
 			/* It looks like a text string, dump it as text */
 			displayString( inFile, item->length, level, stringType );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			return;
 			}
 
 		/* This could be anything, dump it as hex data */
 		dumpHex( inFile, item->length, level, FALSE );
+		if( item->nonCanonical )
+			complainLength( item, level );
 
 		return;
 		}
@@ -2289,7 +2474,9 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 	if( !item->length && !zeroLengthOK( item ) )
 		{
 		printString( level, "%c", '\n' );
-		complain( "Object has zero length", level );
+		complain( "Object has zero length", 0, level );
+		if( item->nonCanonical )
+			complainLength( item, level );
 		return;
 		}
 	switch( item->tag )
@@ -2301,7 +2488,12 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			ch = getc( inFile );
 			printString( level, " %s\n", ch ? "TRUE" : "FALSE" );
 			if( ch != 0 && ch != 0xFF )
-				complain( "BOOLEAN has non-DER encoding", level );
+				{
+				complain( "BOOLEAN '%02X' has non-DER encoding", ch, 
+						  level );
+				}
+			if( item->nonCanonical )
+				complainLength( item, level );
 			fPos++;
 			break;
 			}
@@ -2309,9 +2501,17 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 		case INTEGER:
 		case ENUMERATED:
 			if( item->length > 4 )
+				{
 				dumpHex( inFile, item->length, level, TRUE );
+				if( item->nonCanonical )
+					complainLength( item, level );
+				}
 			else
+				{
 				printValue( inFile, item->length, level );
+				if( item->nonCanonical )
+					complainLength( item, level );
+				}
 			break;
 
 		case BITSTRING:
@@ -2327,7 +2527,9 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			if( !--item->length && !ch )
 				{
 				printString( level, "%c", '\n' );
-				complain( "Object has zero length", level );
+				complain( "Object has zero length", 0, level );
+				if( item->nonCanonical )
+					complainLength( item, level );
 				return;
 				}
 			if( item->length <= sizeof( int ) )
@@ -2335,6 +2537,8 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 				/* It's short enough to be a bit flag, dump it as a sequence
 				   of bits */
 				dumpBitString( inFile, ( int ) item->length, ch, level );
+				if( item->nonCanonical )
+					complainLength( item, level );
 				break;
 				}
 			/* Drop through to dump it as an octet string */
@@ -2361,9 +2565,13 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 					( !checkCharset && ( stringType == STR_IA5 || \
 										 stringType == STR_PRINTABLE ) ) ? \
 					STR_NONE : stringType );
+				if( item->nonCanonical )
+					complainLength( item, level );
 				return;
 				}
 			dumpHex( inFile, item->length, level, FALSE );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 
 		case OID:
@@ -2410,7 +2618,9 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 					printString( level, "(%s)\n", oidInfo->comment );
 					}
 				if( !isValid )
-					complain( "OID has invalid encoding", level );
+					complain( "OID has invalid encoding", 0, level );
+				if( item->nonCanonical )
+					complainLength( item, level );
 
 				/* If there's a warning associated with this OID, remember
 				   that there was a problem */
@@ -2421,16 +2631,21 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 				}
 
 			/* Print the OID as a text string */
-			isValid = oidToString( textOID, &length, buffer, ( int ) item->length );
+			isValid = oidToString( textOID, &length, buffer, 
+								   ( int ) item->length );
 			printString( level, " '%s'\n", textOID );
 			if( !isValid )
-				complain( "OID has invalid encoding", level );
+				complain( "OID has invalid encoding", 0, level );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 			}
 
 		case EOC:
 		case NULLTAG:
 			printString( level, "%c", '\n' );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 
 		case OBJDESCRIPTOR:
@@ -2442,24 +2657,38 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 		case VIDEOTEXSTRING:
 		case UTF8STRING:
 			displayString( inFile, item->length, level, STR_NONE );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 		case PRINTABLESTRING:
 			displayString( inFile, item->length, level, STR_PRINTABLE );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 		case BMPSTRING:
 			displayString( inFile, item->length, level, STR_BMP );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 		case UTCTIME:
 			displayString( inFile, item->length, level, STR_UTCTIME );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 		case GENERALIZEDTIME:
 			displayString( inFile, item->length, level, STR_GENERALIZED );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 		case IA5STRING:
 			displayString( inFile, item->length, level, STR_IA5 );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 		case T61STRING:
 			displayString( inFile, item->length, level, STR_LATIN1 );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			break;
 
 		default:
@@ -2467,8 +2696,11 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			if( !doPure )
 				printString( level, "%s", INDENT_STRING );
 			doIndent( level + 1 );
-			printString( level, "%s", "Unrecognised primitive, hex value is:");
+			printString( level, "%s", 
+						 "Unrecognised primitive, hex value is:");
 			dumpHex( inFile, item->length, level, FALSE );
+			if( item->nonCanonical )
+				complainLength( item, level );
 			noErrors++;		/* Treat it as an error */
 		}
 	}
@@ -2496,7 +2728,28 @@ static int printAsn1( FILE *inFile, const int level, long length,
 			/* If the length isn't known and the item has a definite length,
 			   set the length to the item's length */
 			if( !item.indefinite )
+				{
 				length = item.headerSize + item.length;
+
+				/* We can also adjust the width of the informational data 
+				   column to maximise the amount of screen real estate (for
+				   lengths less than the default of four) or get rid of 
+				   oversized columns (for lengths greater than four) */
+				if( length < 1000 )
+					infoWidth = 3;
+				else
+				if( length > 9999999 )
+					infoWidth = 8;
+				else
+				if( length > 999999 )
+					infoWidth = 7;
+				else
+				if( length > 99999 )
+					infoWidth = 6;
+				else
+				if( length > 9999 )
+					infoWidth = 5;
+				}
 
 			/* If the input isn't seekable, turn off some options that
 			   require the use of fseek().  This check isn't perfect (some
@@ -2529,18 +2782,18 @@ static int printAsn1( FILE *inFile, const int level, long length,
 			{
 			seenEOC = TRUE;
 			if( !isIndefinite)
-				complain( "Spurious EOC in definite-length item", level );
+				complain( "Spurious EOC in definite-length item", 0, level );
 			}
 		if( !doPure && !nonOutlineObject )
 			{
 			if( item.indefinite )
-				printString( level, ( doHexValues ) ? "%04lX NDEF: " :
-							 "%4ld NDEF: ", lastPos );
+				printString( level, ( doHexValues ) ? \
+								LEN_HEX_INDEF : LEN_INDEF, lastPos );
 			else
 				{
 				if( !seenEOC )
-					printString( level, ( doHexValues ) ? "%04lX %4lX: " :
-								 "%4ld %4ld: ", lastPos, item.length );
+					printString( level, ( doHexValues ) ? \
+									LEN_HEX : LEN, lastPos, item.length );
 				}
 			}
 
@@ -2625,7 +2878,7 @@ static int printAsn1( FILE *inFile, const int level, long length,
 static void usageExit( void )
 	{
 	puts( "DumpASN1 - ASN.1 object dump/syntax check program." );
-	puts( "Copyright Peter Gutmann 1997 - 2010.  Last updated " UPDATE_STRING "." );
+	puts( "Copyright Peter Gutmann 1997 - 2012.  Last updated " UPDATE_STRING "." );
 	puts( "" );
 
 	puts( "Usage: dumpasn1 [-acdefghilmoprstuvwxz] <file>" );

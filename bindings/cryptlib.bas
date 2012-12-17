@@ -5,7 +5,7 @@ Option Explicit
 '*****************************************************************************
 '*                                                                           *
 '*                        cryptlib External API Interface                    *
-'*                       Copyright Peter Gutmann 1997-2010                   *
+'*                       Copyright Peter Gutmann 1997-2012                   *
 '*                                                                           *
 '*                 adapted for Visual Basic Version 6  by W. Gothier         *
 '*****************************************************************************
@@ -15,7 +15,7 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Tue Nov 30 16:05:00 2010, filesize = 97720.
+'"cryptlib.h" dated Wed Aug 29 15:34:08 2012, filesize = 97645.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
@@ -29,7 +29,7 @@ Option Explicit
 
 '-----------------------------------------------------------------------------
 
-  Public Const CRYPTLIB_VERSION As Long = 3400
+  Public Const CRYPTLIB_VERSION As Long = 3410
 
 '****************************************************************************
 '*                                                                           *
@@ -47,30 +47,28 @@ Public Enum CRYPT_ALGO_TYPE
     ' Conventional encryption 
     CRYPT_ALGO_DES                  ' DES 
     CRYPT_ALGO_3DES                 ' Triple DES 
-    CRYPT_ALGO_IDEA                 ' IDEA 
-    CRYPT_ALGO_CAST                 ' CAST-128 
-    CRYPT_ALGO_RC2                  ' RC2 
+    CRYPT_ALGO_IDEA                 ' IDEA (only used for PGP 2.x) 
+    CRYPT_ALGO_CAST                 ' CAST-128 (only used for OpenPGP) 
+    CRYPT_ALGO_RC2                  ' RC2 (disabled by default) 
     CRYPT_ALGO_RC4                  ' RC4 
     CRYPT_ALGO_RC5                  ' RC5 
     CRYPT_ALGO_AES                  ' AES 
     CRYPT_ALGO_BLOWFISH             ' Blowfish 
-    CRYPT_ALGO_SKIPJACK             ' Skipjack 
 
     ' Public-key encryption 
     CRYPT_ALGO_DH = 100             ' Diffie-Hellman 
     CRYPT_ALGO_RSA                  ' RSA 
     CRYPT_ALGO_DSA                  ' DSA 
     CRYPT_ALGO_ELGAMAL              ' ElGamal 
-    CRYPT_ALGO_KEA                  ' KEA 
+    CRYPT_ALGO_RESERVED1            ' Formerly KEA 
     CRYPT_ALGO_ECDSA                ' ECDSA 
     CRYPT_ALGO_ECDH                 ' ECDH 
 
     ' Hash algorithms 
-    CRYPT_ALGO_MD2 = 200            ' MD2 
-    CRYPT_ALGO_MD4                  ' MD4 
+    CRYPT_ALGO_RESERVED2 = 200      ' Formerly MD2 
+    CRYPT_ALGO_RESERVED3            ' Formerly MD4 
     CRYPT_ALGO_MD5                  ' MD5 
     CRYPT_ALGO_SHA1                 ' SHA/SHA1 
-        CRYPT_ALGO_SHA = CRYPT_ALGO_SHA1    ' Older form 
     CRYPT_ALGO_RIPEMD160            ' RIPE-MD 160 
     CRYPT_ALGO_SHA2                 ' SHA-256 
         CRYPT_ALGO_SHA256 = CRYPT_ALGO_SHA2 ' Alternate name 
@@ -79,7 +77,6 @@ Public Enum CRYPT_ALGO_TYPE
     ' MAC's 
     CRYPT_ALGO_HMAC_MD5 = 300       ' HMAC-MD5 
     CRYPT_ALGO_HMAC_SHA1            ' HMAC-SHA 
-        CRYPT_ALGO_HMAC_SHA = CRYPT_ALGO_HMAC_SHA1  ' Older form 
     CRYPT_ALGO_HMAC_RIPEMD160       ' HMAC-RIPEMD-160 
     CRYPT_ALGO_HMAC_SHA2            ' HMAC-SHA2 
     CRYPT_ALGO_HMAC_SHAng           ' HMAC-future-SHA-nextgen 
@@ -96,14 +93,14 @@ Public Enum CRYPT_ALGO_TYPE
 '      In order that we can scan through a range of algorithms with
 '      cryptQueryCapability(), we define the following boundary points for
 '      each algorithm class 
-    CRYPT_ALGO_FIRST_CONVENTIONAL = CRYPT_ALGO_DES
-    CRYPT_ALGO_LAST_CONVENTIONAL = CRYPT_ALGO_DH - 1
-    CRYPT_ALGO_FIRST_PKC = CRYPT_ALGO_DH
-    CRYPT_ALGO_LAST_PKC = CRYPT_ALGO_MD2 - 1
-    CRYPT_ALGO_FIRST_HASH = CRYPT_ALGO_MD2
-    CRYPT_ALGO_LAST_HASH = CRYPT_ALGO_HMAC_MD5 - 1
-    CRYPT_ALGO_FIRST_MAC = CRYPT_ALGO_HMAC_MD5
-    CRYPT_ALGO_LAST_MAC = CRYPT_ALGO_HMAC_MD5 + 99  ' End of mac algo.range 
+    CRYPT_ALGO_FIRST_CONVENTIONAL = 1
+    CRYPT_ALGO_LAST_CONVENTIONAL = 99
+    CRYPT_ALGO_FIRST_PKC = 100
+    CRYPT_ALGO_LAST_PKC = 199
+    CRYPT_ALGO_FIRST_HASH = 200
+    CRYPT_ALGO_LAST_HASH = 299
+    CRYPT_ALGO_FIRST_MAC = 300
+    CRYPT_ALGO_LAST_MAC = 399
     
 
 End Enum
@@ -145,7 +142,7 @@ End Enum
 Public Enum CRYPT_DEVICE_TYPE
                       ' Crypto device types 
     CRYPT_DEVICE_NONE               ' No crypto device 
-    CRYPT_DEVICE_FORTEZZA           ' Fortezza card 
+    CRYPT_DEVICE_FORTEZZA           ' Fortezza card - Placeholder only 
     CRYPT_DEVICE_PKCS11             ' PKCS #11 crypto token 
     CRYPT_DEVICE_CRYPTOAPI          ' Microsoft CryptoAPI 
     CRYPT_DEVICE_HARDWARE           ' Generic crypo HW plugin 
@@ -470,6 +467,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_EDIPARTYNAME_NAMEASSIGNER    ' ediPartyName.nameAssigner 
     CRYPT_CERTINFO_EDIPARTYNAME_PARTYNAME   ' ediPartyName.partyName 
     CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER    ' uniformResourceIdentifier 
+        CRYPT_CERTINFO_URL = CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER
     CRYPT_CERTINFO_IPADDRESS                ' iPAddress 
     CRYPT_CERTINFO_REGISTEREDID             ' registeredID 
 
@@ -1733,12 +1731,6 @@ Public Declare Function cryptDestroyObject Lib "CL32.DLL" ( ByVal cryptObject As
 ' Generate a key into a context 
 
 Public Declare Function cryptGenerateKey Lib "CL32.DLL" ( ByVal cryptContext As Long) As Long
-
-Public Declare Function cryptGenerateKeyAsync Lib "CL32.DLL" ( ByVal cryptContext As Long) As Long
-
-Public Declare Function cryptAsyncQuery Lib "CL32.DLL" ( ByVal cryptObject As Long) As Long
-
-Public Declare Function cryptAsyncCancel Lib "CL32.DLL" ( ByVal cryptObject As Long) As Long
 
 
 ' Encrypt/decrypt/hash a block of memory 

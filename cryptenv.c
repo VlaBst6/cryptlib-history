@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Enveloping Routines						*
-*					  Copyright Peter Gutmann 1996-2007						*
+*					  Copyright Peter Gutmann 1996-2011						*
 *																			*
 ****************************************************************************/
 
@@ -66,7 +66,8 @@ static int envelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		{
 		/* Make sure that all of the information that we need to proceed is 
 		   present */
-		status = envelopeInfoPtr->checkMissingInfo( envelopeInfoPtr );
+		status = envelopeInfoPtr->checkMissingInfo( envelopeInfoPtr,
+										( buffer == NULL ) ? TRUE : FALSE );
 		if( cryptStatusError( status ) )
 			return( status );
 
@@ -464,6 +465,38 @@ static int envelopePop( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* Clear return value */
 	*bytesCopied = 0;
 
+	/* If we haven't reached the data yet force a flush to try and get to 
+	   it.  We can end up with this condition if the caller doesn't push in
+	   any enveloping information, or pushes in enveloping information and 
+	   then immediately tries to pop data without an intervening flush (or 
+	   implicit flush on the initial push) to resolve the state of the data 
+	   in the envelope */
+	if( envelopeInfoPtr->state == STATE_PREDATA )
+		{
+		int dummy;
+
+		/* If no data has been pushed yet then we can't go any further.  
+		   This typically happens if the user calls cryptPopData() without
+		   first calling cryptPushData() */
+		if( envelopeInfoPtr->bufPos <= 0 )
+			{
+			/* There is one situation in which we can pop data without first
+			   pushing anything and that's when we're using a detached
+			   signature and the hash value has been supplied externally,
+			   in which case there's nothing to push */
+			if( !( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG ) )
+				return( CRYPT_ERROR_UNDERFLOW );
+			}
+
+		status = envelopePush( envelopeInfoPtr, NULL, 0, &dummy );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		/* If we still haven't got anywhere return an underflow error */
+		if( envelopeInfoPtr->state == STATE_PREDATA )
+			return( CRYPT_ERROR_UNDERFLOW );
+		}
+
 	/* Copy the data from the envelope to the output */
 	status = envelopeInfoPtr->copyFromEnvelopeFunction( envelopeInfoPtr, 
 														buffer, length, 
@@ -492,13 +525,20 @@ static int deenvelopePop( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	*bytesCopied = 0;
 
 	/* If we haven't reached the data yet force a flush to try and get to 
-	   it.  We can end up with this condition if the caller pushes in 
-	   deenveloping information and then immediately tries to pop data 
-	   without an intervening flush (or implicit flush on the initial push) to 
-	   resolve the state of the data in the envelope */
+	   it.  We can end up with this condition if the caller doesn't push in
+	   any de-enveloping information, or pushes in de-enveloping information 
+	   and then immediately tries to pop data without an intervening flush 
+	   (or implicit flush on the initial push) to resolve the state of the 
+	   data in the envelope */
 	if( envelopeInfoPtr->state == STATE_PREDATA )
 		{
 		int dummy;
+
+		/* If no data has been pushed yet then we can't go any further.  
+		   This typically happens if the user calls cryptPopData() without
+		   first calling cryptPushData() */
+		if( envelopeInfoPtr->bufPos <= 0 )
+			return( CRYPT_ERROR_UNDERFLOW );
 
 		status = deenvelopePush( envelopeInfoPtr, NULL, 0, &dummy );
 		if( cryptStatusError( status ) )

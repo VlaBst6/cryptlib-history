@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib HTTP Parsing Routines						*
-*					  Copyright Peter Gutmann 1998-2007						*
+*					  Copyright Peter Gutmann 1998-2011						*
 *																			*
 ****************************************************************************/
 
@@ -24,9 +24,10 @@
 typedef enum { HTTP_HEADER_NONE, HTTP_HEADER_HOST, HTTP_HEADER_CONTENT_LENGTH,
 			   HTTP_HEADER_CONTENT_TYPE, HTTP_HEADER_TRANSFER_ENCODING,
 			   HTTP_HEADER_CONTENT_ENCODING,
-			   HTTP_HEADER_CONTENT_TRANSFER_ENCODING, HTTP_HEADER_TRAILER,
-			   HTTP_HEADER_CONNECTION, HTTP_HEADER_WARNING, 
-			   HTTP_HEADER_LOCATION, HTTP_HEADER_EXPECT, HTTP_HEADER_LAST
+			   HTTP_HEADER_CONTENT_TRANSFER_ENCODING, HTTP_HEADER_SERVER,
+			   HTTP_HEADER_TRAILER, HTTP_HEADER_CONNECTION, 
+			   HTTP_HEADER_WARNING, HTTP_HEADER_LOCATION, HTTP_HEADER_EXPECT, 
+			   HTTP_HEADER_LAST
 			 } HTTP_HEADER_TYPE;
 
 /* HTTP header parsing information.  Note that the first letter of the
@@ -48,6 +49,7 @@ static const HTTP_HEADER_PARSE_INFO FAR_BSS httpHeaderParseInfo[] = {
 	{ "Transfer-Encoding:", 18, HTTP_HEADER_TRANSFER_ENCODING },
 	{ "Content-Encoding:", 17, HTTP_HEADER_CONTENT_ENCODING },
 	{ "Content-Transfer-Encoding:", 26, HTTP_HEADER_CONTENT_TRANSFER_ENCODING },
+	{ "Server:", 7, HTTP_HEADER_SERVER },
 	{ "Trailer:", 8, HTTP_HEADER_TRAILER },
 	{ "Connection:", 11, HTTP_HEADER_CONNECTION },
 	{ "NnCoection:", 11, HTTP_HEADER_CONNECTION },
@@ -65,7 +67,9 @@ static const HTTP_HEADER_PARSE_INFO FAR_BSS httpHeaderParseInfo[] = {
 		   actually being closed.  The reason for the 16-bit swap is because
 		   the Fletcher checksum used in TCP/IP doesn't detect 16-bit word
 		   swaps, so this allows the connection-control to be invalidated
-		   without requiring a recalculation of the TCP checksum */
+		   without requiring a recalculation of the TCP checksum.  
+		   
+		   Someone probably got bonus pay for coming up with this */
 	{ "Warning:", 8, HTTP_HEADER_WARNING },
 	{ "Location:", 9, HTTP_HEADER_LOCATION },
 	{ "Expect:", 7, HTTP_HEADER_EXPECT },
@@ -157,6 +161,31 @@ static const HTTP_STATUS_INFO FAR_BSS httpStatusInfo[] = {
 		{ 0, NULL, "Unrecognised HTTP status condition", 34, CRYPT_ERROR_READ }
 	};
 
+/* Table used to fingerprint the peer system, used to detect buggy peer
+   applications.  Note that this mechanism isn't totally reliable, for 
+   example the presence of IIS can be masked using either Microsoft tools
+   like the URLScan ISAPI filter or commercial tools like ServerMask, but
+   this is really just an opportunistic check that does the best that it 
+   can */
+
+typedef struct {
+	const char *idString;			/* String used to ID the system */
+	const int idStringLen;
+	const STREAM_PEER_TYPE systemType;	/* System type */
+	} SYSTEM_ID_INFO;
+
+static const SYSTEM_ID_INFO systemIdInfo[] = {
+	{ "Microsoft-IIS", 13, STREAM_PEER_MICROSOFT },
+	{ "Microsoft-HTTPAPI", 17, STREAM_PEER_MICROSOFT },
+		/* This can be returned if the HTTP.SYS driver handles the request
+		   before it gets to IIS, for example for a 400 status.  This isn't
+		   such a big deal because if we're not getting to IIS then we
+		   don't care about its bugs, but we check for it anyway for
+		   consistencies' sake */
+	{ NULL, 0, STREAM_PEER_NONE },
+		{ NULL, 0, STREAM_PEER_NONE }
+	};
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -187,26 +216,13 @@ static int readCharFunction( INOUT TYPECAST( STREAM * ) void *streamPtr )
 	return( cryptStatusError( status ) ? status : ch );
 	}
 
-/* Decode a hex nibble */
-
-CHECK_RETVAL \
-static int getNibble( IN_CHAR const char srcCh )
-	{
-	int ch;
-
-	ch = toLower( srcCh );
-	if( !isXDigit( ch ) )
-		return( CRYPT_ERROR_BADDATA );
-	return( ( ch <= '9' ) ? ch - '0' : ch - ( 'a' - 10 ) );
-	}
-
 /* Decode an escaped character */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int getEncodedChar( IN_BUFFER( bufSize ) const char *buffer, 
 						   IN_LENGTH_SHORT const int bufSize )
 	{
-	int chLo, chHi, ch;
+	int ch, status;
 
 	assert( isReadPtr( buffer, bufSize ) );
 
@@ -216,21 +232,19 @@ static int getEncodedChar( IN_BUFFER( bufSize ) const char *buffer,
 	if( bufSize < 2 )
 		return( CRYPT_ERROR_BADDATA );
 
-	/* Recreate the original from the hex value */
-	chHi = getNibble( buffer[ 0 ] );
-	chLo = getNibble( buffer[ 1 ] );
-	if( cryptStatusError( chHi ) || cryptStatusError( chLo ) )
-		return( CRYPT_ERROR_BADDATA );
-	ch = ( chHi << 4 ) | chLo;
+	/* Recreate the original character from the hex value */
+	status = strGetHex( buffer, 2, &ch, 0, 0xFF );
+	if( cryptStatusError( status ) )
+		return( status );
 
-	/* It's a special-case/control character of some kind, report it as an 
-	   error.  This gets rid of things like nulls (treated as string 
+	/* If it's a special-case/control character of some kind, report it as 
+	   an error.  This gets rid of things like nulls (treated as string 
 	   terminators by some functions) and CR/LF line terminators, which can 
 	   be embedded into strings to turn a single line of supplied text into 
 	   multi-line responses containing user-controlled type : value pairs 
 	   (in other words they allow user data to be injected into the control
 	   channel) */
-	if( ch <= 0 || ch > 0x7F || !isPrint( ch ) )
+	if( ch <= 0x1F || ch >= 0x7F || !isPrint( ch ) )
 		return( CRYPT_ERROR_BADDATA );
 
 	return( ch );
@@ -279,7 +293,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int getChunkLength( IN_BUFFER( dataLength ) const char *data, 
 						   IN_LENGTH_SHORT const int dataLength )
 	{
-	int i, chunkLength = 0, length = dataLength;
+	int i, chunkLength = 0, length = dataLength, status;
 
 	assert( isReadPtr( data, dataLength ) );
 
@@ -298,24 +312,10 @@ static int getChunkLength( IN_BUFFER( dataLength ) const char *data,
 			}
 		}
 
-	/* The other side shouldn't be sending us more than 64K of data, given
-	   that what we're expecting is a short PKI message */
-	if( length < 1 || length > 4 )
-		return( CRYPT_ERROR_BADDATA );
-
-	/* Walk down the string converting hex characters into their numeric
-	   values.  Unfortunately since it's hex we can't use strGetNumeric() 
-	   to read the value but have to hand-assemble it ourselves */
-	for( i = 0; i < length; i++ )
-		{
-		const int ch = getNibble( data[ i ] );
-
-		if( cryptStatusError( ch ) )
-			return( CRYPT_ERROR_BADDATA );
-		chunkLength = ( chunkLength << 4 ) | ch;
-		}
-	if( chunkLength < 0 || chunkLength >= MAX_INTLENGTH )
-		return( CRYPT_ERROR_BADDATA );
+	/* Read the chunk length */
+	status = strGetHex( data, length, &chunkLength, 0, 0xFFFF );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	return( chunkLength );
 	}
@@ -329,7 +329,8 @@ static int getChunkLength( IN_BUFFER( dataLength ) const char *data,
 /* Exit with extended error information after a readTextLine() call */
 
 STDC_NONNULL_ARG( ( 1, 4 ) ) \
-int retTextLineError( INOUT STREAM *stream, IN_ERROR const int status, 
+int retTextLineError( INOUT STREAM *stream, 
+					  IN_ERROR const int status, 
 					  const BOOLEAN isTextLineError, 
 					  FORMAT_STRING const char *format, 
 					  const int value )
@@ -398,7 +399,7 @@ static int retHeaderError( INOUT STREAM *stream,
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sendHTTPError( INOUT STREAM *stream, 
-				   IN_BUFFER( headerBufMaxLen ) char *headerBuffer, 
+   				   OUT_BUFFER_FIXED( headerBufMaxLen ) char *headerBuffer, 
 				   IN_LENGTH_SHORT_MIN( 256 ) const int headerBufMaxLen, 
 				   IN_INT const int httpStatus )
 	{
@@ -440,7 +441,7 @@ int sendHTTPError( INOUT STREAM *stream,
 		/* Since the assumption on the web is that anything listening for
 		   HTTP requests is a conventional web server, we provide a bit more
 		   information to (probable) browsers that connect and send a GET
-		   request.  This is also useful for some browsers which hang around
+		   request.  This is also useful for some browsers that hang around
 		   forever waiting for content if they don't see anything following
 		   the HTTP error status */
 		swrite( &headerStream, "Content-Length: 139\r\n\r\n", 23 );
@@ -465,9 +466,11 @@ int sendHTTPError( INOUT STREAM *stream,
 ****************************************************************************/
 
 /* Information needed to parse a URI sub-segment: The character that ends a
-   segment and an optional alternative segment-end character, and the
-   minimum and maximum permitted segment size.  The alternative segment-end
-   character is used for strings like:
+   segment and an optional alternative segment-end character, the minimum 
+   and maximum permitted segment size, and a value to indicate how many more
+   characters of data must be available after the current URI segment is 
+   consumed.  The alternative segment-end character is used for strings 
+   like:
 
 	type-info [; more-info]
 
@@ -486,6 +489,7 @@ int sendHTTPError( INOUT STREAM *stream,
 typedef struct {
 	const char segmentEndChar, altSegmentEndChar;
 	const int segmentMinLength, segmentMaxLength;
+	const int dataToFollow;
 	} URI_PARSE_INFO;
 
 /* Get the length of a sub-segment of a URI */
@@ -549,6 +553,11 @@ static int getUriSegmentLength( IN_BUFFER( dataMaxLength ) const char *data,
 		i >= uriParseInfo->segmentMaxLength )
 		return( CRYPT_ERROR_BADDATA );
 
+	/* Finally, if we're expecting further data to follow the current URI 
+	   segment, make sure that it's present */
+	if( dataMaxLength - i < uriParseInfo->dataToFollow )
+		return( CRYPT_ERROR_BADDATA );
+
 	*dataLength = i;
 	return( CRYPT_OK );
 	}
@@ -568,13 +577,13 @@ int parseUriInfo( INOUT_BUFFER( dataInLength, *dataOutLength ) char *data,
 				  INOUT HTTP_URI_INFO *uriInfo )
 	{
 	static const URI_PARSE_INFO locationParseInfo = \
-			{ '?', '\0', 1, CRYPT_MAX_TEXTSIZE };
+			{ '?', '\0', 1, CRYPT_MAX_TEXTSIZE, 2 };
 	static const URI_PARSE_INFO attributeParseInfo = \
-			{ '=', '\0', 3, CRYPT_MAX_TEXTSIZE };
+			{ '=', '\0', 3, CRYPT_MAX_TEXTSIZE, 2 };
 	static const URI_PARSE_INFO valueParseInfo = \
-			{ ' ', '&', 3, CRYPT_MAX_TEXTSIZE };
+			{ ' ', '&', 3, CRYPT_MAX_TEXTSIZE, 2 };
 	static const URI_PARSE_INFO extraParseInfo = \
-			{ ' ', '\0', 1, CRYPT_MAX_TEXTSIZE };
+			{ ' ', '\0', 1, CRYPT_MAX_TEXTSIZE, 2 };
 	BOOLEAN altDelimiterFound;
 	const char *bufPtr = data;
 	int length = dataInLength, segmentLength, parsedLength, i, status;
@@ -598,8 +607,10 @@ int parseUriInfo( INOUT_BUFFER( dataInLength, *dataOutLength ) char *data,
 		if( cryptStatusError( status ) )
 			{
 			if( status == OK_SPECIAL )
+				{
 				/* There's been no further change in the data, exit */
 				break;
+				}
 			return( CRYPT_ERROR_BADDATA );
 			}
 		length = status;	/* Record the new length of the decoded data */
@@ -706,12 +717,14 @@ static int readHTTPStatus( IN_BUFFER( dataLength ) const char *data,
 	{
 	const HTTP_STATUS_INFO *httpStatusPtr;
 	const BOOLEAN isResponseStatus = ( httpStatus != NULL ) ? TRUE : FALSE;
+	BYTE dataBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
 	char thirdChar;
 	int value, remainderLength, offset, i, status;
 
 	assert( isReadPtr( data, dataLength ) );
 	assert( httpStatus == NULL || \
 			isWritePtr( httpStatus, sizeof( int ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
 	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( errorInfo != NULL );
@@ -724,20 +737,26 @@ static int readHTTPStatus( IN_BUFFER( dataLength ) const char *data,
 	   characters followed by a space */
 	if( dataLength < 3 || strSkipNonWhitespace( data, dataLength ) != 3 )
 		{
+		memcpy( dataBuffer, data, min( dataLength, CRYPT_MAX_TEXTSIZE ) );
 		retExt( CRYPT_ERROR_BADDATA, 
 				( CRYPT_ERROR_BADDATA, errorInfo, 
-				  "Invalid/missing HTTP %sstatus code", 
-				  isResponseStatus ? "response " : "" ) );
+				  "Invalid/missing HTTP %sstatus code '%s'", 
+				  isResponseStatus ? "response " : "",
+				  sanitiseString( dataBuffer, dataLength, \
+								  CRYPT_MAX_TEXTSIZE ) ) );
 		}
 
 	/* Process the three-digit numeric status code */
 	status = strGetNumeric( data, 3, &value, 1, 999 );
 	if( cryptStatusError( status ) )
 		{
+		memcpy( dataBuffer, data, 3 );
 		retExt( CRYPT_ERROR_BADDATA, 
 				( CRYPT_ERROR_BADDATA, errorInfo, 
-				  "Invalid HTTP %sstatus code", 
-				  isResponseStatus ? "response " : "" ) );
+				  "Invalid HTTP %sstatus code '%s'", 
+				  isResponseStatus ? "response " : "",
+				  sanitiseString( dataBuffer, dataLength, \
+								  CRYPT_MAX_TEXTSIZE ) ) );
 		}
 	if( httpStatus != NULL )
 		*httpStatus = value;
@@ -776,7 +795,8 @@ static int readHTTPStatus( IN_BUFFER( dataLength ) const char *data,
 		{
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, errorInfo, 
-				  "Missing HTTP response status text" ) );
+				  "Missing HTTP response status text following response "
+				  "status %03d", value ) );
 		}
 
 	/* If it's a special-case condition such as a redirect, tell the caller
@@ -801,7 +821,7 @@ static int readHTTPStatus( IN_BUFFER( dataLength ) const char *data,
 
 /* Process an HTTP header line looking for anything that we can handle */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+CHECK_RETVAL_LENGTH STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 static int processHeaderLine( IN_BUFFER( dataLength ) const char *data, 
 							  IN_LENGTH_SHORT const int dataLength,
 							  OUT_ENUM_OPT( HTTP_HEADER_TYPE ) \
@@ -815,6 +835,7 @@ static int processHeaderLine( IN_BUFFER( dataLength ) const char *data,
 
 	assert( isReadPtr( data, dataLength ) );
 	assert( isWritePtr( headerType, sizeof( HTTP_HEADER_TYPE ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
 	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( errorLineNo > 0 && errorLineNo < 1000 );
@@ -849,7 +870,10 @@ static int processHeaderLine( IN_BUFFER( dataLength ) const char *data,
 	processedLength = headerParseInfoPtr->headerStringLen;
 	dataLeft = dataLength - processedLength;
 
-	/* Make sure that there's an attribute value present */
+	/* Make sure that there's an attribute value present.  At this point we 
+	   know that dataLeft >= 0 because of the check performed earlier when
+	   we went through the httpHeaderParseInfo, so the only exception 
+	   condition that can occur has dataLeft == 0 */
 	if( dataLeft > 0 )
 		{
 		const int extraLength = \
@@ -886,11 +910,12 @@ static int processHeaderLine( IN_BUFFER( dataLength ) const char *data,
 
 /* Read the first line in an HTTP response header */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
 int readFirstHeaderLine( INOUT STREAM *stream, 
 						 OUT_BUFFER_FIXED( dataMaxLength ) char *dataBuffer, 
 						 IN_LENGTH_SHORT const int dataMaxLength, 
-						 OUT_RANGE( 0, 999 ) int *httpStatus )
+						 OUT_RANGE( 0, 999 ) int *httpStatus,
+						 OUT_BOOL BOOLEAN *isSoftError )
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 	BOOLEAN textDataError;
@@ -904,31 +929,50 @@ int readFirstHeaderLine( INOUT STREAM *stream,
 
 	/* Clear return value */
 	*httpStatus = 999;
+	*isSoftError = FALSE;
 
-	/* Read the header and check for an HTTP ID */
+	/* Read the header and check for an HTTP ID "HTTP 1.x ..." */
 	status = readTextLine( readCharFunction, stream, dataBuffer, 
 						   dataMaxLength, &length, &textDataError );
 	if( cryptStatusError( status ) )
 		return( retTextLineError( stream, status, textDataError, 
-								  "Invalid HTTP header line 1: ", 0 ) );
+								  "Invalid first HTTP header line: ", 0 ) );
 	if( length < 8 )
 		{
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, NETSTREAM_ERRINFO, 
-				  "Invalid HTTP header line length %d ", length ) );
+				  "Invalid first HTTP header line length %d", length ) );
 		}
 	processedLength = checkHTTPID( dataBuffer, length, stream );
 	if( cryptStatusError( processedLength ) )
 		{
+		/* Some broken servers can send back God knows what at this point,
+		   to help diagnose the issue we try and provide a copy of what
+		   was sent if possible */
+		if( strIsPrintable( dataBuffer, length ) )
+			{
+			retExt( cryptStatusError( processedLength ) ? \
+					processedLength : CRYPT_ERROR_BADDATA, 
+					( cryptStatusError( processedLength ) ? \
+						processedLength : CRYPT_ERROR_BADDATA, 
+					  NETSTREAM_ERRINFO, 
+					"Expected HTTP header, got '%s'",
+					sanitiseString( dataBuffer, length,
+									MAX_ERRMSG_SIZE - 64 ) ) );
+			}
 		retExt( cryptStatusError( processedLength ) ? \
 				processedLength : CRYPT_ERROR_BADDATA, 
 				( cryptStatusError( processedLength ) ? \
 					processedLength : CRYPT_ERROR_BADDATA, 
-				  NETSTREAM_ERRINFO, "Invalid HTTP ID/version" ) );
+				  NETSTREAM_ERRINFO, "Invalid HTTP ID/version '%s'",
+				  sanitiseString( dataBuffer, length, 
+								  CRYPT_MAX_TEXTSIZE ) ) );
 		}
 	dataLeft = length - processedLength;
 
-	/* Skip the whitespace between the HTTP ID and status info */
+	/* Skip the whitespace between the HTTP ID and status info.  As before
+	   we know that dataLeft >= 0 so the only exception condition that can
+	   occur has dataLeft == 0 */
 	if( dataLeft > 0 )
 		{
 		const int extraLength = \
@@ -954,21 +998,34 @@ int readFirstHeaderLine( INOUT STREAM *stream,
 		{
 		retExt( CRYPT_ERROR_BADDATA, 
 				( CRYPT_ERROR_BADDATA, NETSTREAM_ERRINFO, 
-				  "Missing HTTP status code, line 1" ) );
+				  "Missing HTTP status code '%s'",
+				  sanitiseString( dataBuffer, length, 
+								  CRYPT_MAX_TEXTSIZE ) ) );
 		}
 
 	/* Read the HTTP status info */
-	return( readHTTPStatus( dataBuffer + processedLength, dataLeft,
-							httpStatus, NETSTREAM_ERRINFO ) );
+	status = readHTTPStatus( dataBuffer + processedLength, dataLeft,
+							 httpStatus, NETSTREAM_ERRINFO );
+	if( cryptStatusError( status ) )
+		{
+		/* An error encountered at this point is a soft error in the sense 
+		   that we've had a valid HTTP response from the server (even if 
+		   it's an error response) and can continue the exchange beyond this 
+		   point */
+		*isSoftError = TRUE;
+		}
+
+	return( status );
 	}
 
 /* Read the remaining HTTP header lines after the first one */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
 int readHeaderLines( INOUT STREAM *stream, 
 					 OUT_BUFFER_FIXED( lineBufMaxLen ) char *lineBuffer, 
 					 IN_LENGTH_SHORT_MIN( 256 ) const int lineBufMaxLen,
-					 INOUT HTTP_HEADER_INFO *headerInfo )
+					 INOUT HTTP_HEADER_INFO *headerInfo,
+					 OUT_BOOL BOOLEAN *isSoftError )
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 	BOOLEAN seenHost = FALSE, seenLength = FALSE;
@@ -977,8 +1034,12 @@ int readHeaderLines( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( lineBuffer, lineBufMaxLen ) );
 	assert( isWritePtr( headerInfo, sizeof( HTTP_HEADER_INFO ) ) );
+	assert( isWritePtr( isSoftError, sizeof( BOOLEAN ) ) );
 
 	REQUIRES( lineBufMaxLen >= 256 && lineBufMaxLen < MAX_INTLENGTH_SHORT );
+
+	/* Clear return value */
+	*isSoftError = FALSE;
 
 	/* Read each line in the header checking for any fields that we need to
 	   handle.  We check for a couple of basic problems with the header to
@@ -1003,6 +1064,9 @@ int readHeaderLines( INOUT STREAM *stream,
 		char *lineBufPtr;
 		int lineLength;
 
+		/* Any errors that occur while reading the line data are fatal */
+		*isSoftError = FALSE;
+
 		status = readTextLine( readCharFunction, stream, lineBuffer,
 							   lineBufMaxLen, &lineLength, &textDataError );
 		if( cryptStatusError( status ) )
@@ -1011,11 +1075,25 @@ int readHeaderLines( INOUT STREAM *stream,
 									  "Invalid HTTP header line %d: ", 
 									  lineCount + 2 ) );
 			}
+
+		/* If we've reached the end of the header lines (denoted by a blank
+		   line), exit */
 		if( lineLength <= 0 )
-			{
-			/* End of input, exit */
 			break;
-			}
+
+		/* Beyond this point all errors are soft errors in that they arise 
+		   due to problems in parsing HTTP headers rather than I/O issues, 
+		   so the caller has to call back to read the remaining (possibly
+		   invalid) header lines in order to clear the input stream */
+		*isSoftError = TRUE;
+
+		/* If this is a no-op read (for example lines following a soft error 
+		   or a 100 Continue response), all that we're interested in is 
+		   draining the input, so we don't try and parse the header line */
+		if( headerInfo->flags & HTTP_FLAG_NOOP )
+			continue;
+
+		/* Process the header line to see what we've got */
 		status = processHeaderLine( lineBuffer, lineLength, &headerType,
 									NETSTREAM_ERRINFO, lineCount + 2 );
 		if( cryptStatusError( status ) )
@@ -1061,7 +1139,9 @@ int readHeaderLines( INOUT STREAM *stream,
 					{
 					retExt( CRYPT_ERROR_BADDATA, 
 							( CRYPT_ERROR_BADDATA, NETSTREAM_ERRINFO, 
-							  "Invalid HTTP content length, line %d",
+							  "Invalid HTTP content length '%s', line %d",
+							  sanitiseString( lineBufPtr, lineLength, 
+											  CRYPT_MAX_TEXTSIZE ),
 							  lineCount + 2 ) );
 					}
 				seenLength = TRUE;
@@ -1070,9 +1150,9 @@ int readHeaderLines( INOUT STREAM *stream,
 			case HTTP_HEADER_CONTENT_TYPE:
 				{
 				static const URI_PARSE_INFO typeParseInfo = \
-						{ '/', '\0', 2, CRYPT_MAX_TEXTSIZE };
+						{ '/', '\0', 2, CRYPT_MAX_TEXTSIZE, 2 };
 				static const URI_PARSE_INFO subtypeParseInfo = \
-						{ '\0', ';', 2, CRYPT_MAX_TEXTSIZE };
+						{ '\0', ';', 2, CRYPT_MAX_TEXTSIZE, 0 };
 				BOOLEAN dummy;
 				char *contentType;
 				int contentTypeLen, subTypeLen;
@@ -1200,6 +1280,32 @@ int readHeaderLines( INOUT STREAM *stream,
 					}
 				break;
 
+			case HTTP_HEADER_SERVER:
+				{
+				const int firstChar = toUpper( *lineBufPtr );
+				int i;
+
+				/* Check to see whether we recognise the peer system type */
+				for( i = 0; systemIdInfo[ i ].idString != NULL && \
+							i < FAILSAFE_ARRAYSIZE( systemIdInfo, \
+													SYSTEM_ID_INFO ); i++ )
+					{
+					const SYSTEM_ID_INFO *systemIdInfoPtr = &systemIdInfo[ i ];
+
+					if( systemIdInfoPtr->idString[ 0 ] == firstChar && \
+						lineLength >= systemIdInfoPtr->idStringLen && \
+						!strCompare( lineBufPtr, systemIdInfoPtr->idString, \
+									 systemIdInfoPtr->idStringLen ) )
+						{
+						netStream->systemType = systemIdInfoPtr->systemType;
+						break;
+						}
+					}
+				ENSURES( i < FAILSAFE_ARRAYSIZE( systemIdInfo, \
+												 SYSTEM_ID_INFO ) );
+				break;
+				}
+
 			case HTTP_HEADER_TRAILER:
 				/* The body is followed by trailer lines, used with chunked
 				   encodings where some header lines can't be produced until
@@ -1298,12 +1404,19 @@ int readHeaderLines( INOUT STREAM *stream,
 		{
 		retExt( CRYPT_ERROR_OVERFLOW,
 				( CRYPT_ERROR_OVERFLOW, NETSTREAM_ERRINFO, 
-				  "Too many HTTP header lines" ) );
+				  "Received too many HTTP header lines (more than %d)",
+				  FAILSAFE_ITERATIONS_MED ) );
 		}
 
-	/* If this is a tunnel being opened via an HTTP proxy, we're done */
+	/* If this is a tunnel being opened via an HTTP proxy then we're done */
 	if( !( netStream->nFlags & STREAM_NFLAG_ISSERVER ) && \
 		( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL ) )
+		return( CRYPT_OK );
+
+	/* If this is a no-op read (for example lines following an error or 100
+	   Continue response) then all that we're interested in is draining the
+	   input so we don't check any further */
+	if( headerInfo->flags & HTTP_FLAG_NOOP )
 		return( CRYPT_OK );
 
 	/* If it's a chunked encoding for which the length is kludged on before
@@ -1332,16 +1445,12 @@ int readHeaderLines( INOUT STREAM *stream,
 			{
 			retExt( CRYPT_ERROR_BADDATA,
 					( CRYPT_ERROR_BADDATA, NETSTREAM_ERRINFO, 
-					  "Invalid length for HTTP chunked encoding, line %d",
+					  "Invalid length '%s' for HTTP chunked encoding, line "
+					  "%d", sanitiseString( lineBuffer, lineLength, \
+											CRYPT_MAX_TEXTSIZE ),
 					  lineCount + 2 ) );
 			}
 		}
-
-	/* If this is a no-op read (for example lines following an error or 100
-	   Continue response), all that we're interested in is draining the
-	   input, so we don't check any further */
-	if( headerInfo->flags & HTTP_FLAG_NOOP )
-		return( CRYPT_OK );
 
 	/* If we're a server talking HTTP 1.1 and we haven't seen a "Host:"
 	   header from the client, return an error */
@@ -1415,8 +1524,8 @@ int readTrailerLines( INOUT STREAM *stream,
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 #endif /* USE_ERRMSGS */
 	HTTP_HEADER_INFO headerInfo;
-	BOOLEAN textDataError;
-	int readLength = DUMMY_INIT, dummy, status;
+	BOOLEAN textDataError, dummyBoolean;
+	int readLength = DUMMY_INIT, dummyInt, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( lineBuffer, lineBufMaxLen ) );
@@ -1425,7 +1534,7 @@ int readTrailerLines( INOUT STREAM *stream,
 
 	/* Read the blank line and chunk length */
 	status = readTextLine( readCharFunction, stream, lineBuffer,
-						   lineBufMaxLen, &dummy, &textDataError );
+						   lineBufMaxLen, &dummyInt, &textDataError );
 	if( cryptStatusOK( status ) )
 		status = readTextLine( readCharFunction, stream, lineBuffer, 
 							   lineBufMaxLen, &readLength, &textDataError );
@@ -1447,6 +1556,6 @@ int readTrailerLines( INOUT STREAM *stream,
 	/* Read any remaining trailer lines */
 	initHeaderInfo( &headerInfo, 0, 0, HTTP_FLAG_NOOP );
 	return( readHeaderLines( stream, lineBuffer, lineBufMaxLen,
-							 &headerInfo ) );
+							 &headerInfo, &dummyBoolean ) );
 	}
 #endif /* USE_HTTP */

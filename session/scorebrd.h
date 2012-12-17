@@ -83,7 +83,7 @@ void deleteScoreboardEntry( INOUT void *scoreboardInfoPtr,
 #ifdef USE_SSL
   CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
   int initScoreboard( INOUT void *scoreboardInfoPtr, 
-					  IN_LENGTH_SHORT_MIN( 16 ) const int scoreboardEntries );
+					  IN_LENGTH_SHORT_MIN( 8 ) const int scoreboardEntries );
   STDC_NONNULL_ARG( ( 1 ) ) \
   void endScoreboard( INOUT void *scoreboardInfoPtr );
 #else

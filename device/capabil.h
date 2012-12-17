@@ -274,6 +274,7 @@ typedef const CAPABILITY_INFO * ( *GETCAPABILITY_FUNCTION )( void );
 const CAPABILITY_INFO *get3DESCapability( void );
 const CAPABILITY_INFO *getAESCapability( void );
 const CAPABILITY_INFO *getBlowfishCapability( void );
+const CAPABILITY_INFO *getCASTCapability( void );
 const CAPABILITY_INFO *getDESCapability( void );
 const CAPABILITY_INFO *getIDEACapability( void );
 const CAPABILITY_INFO *getRC2Capability( void );

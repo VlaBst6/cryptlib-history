@@ -255,6 +255,17 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	sMemConnect( stream, sessionInfoPtr->receiveBuffer, length );
+#ifdef ALLOW_SSLV2_HELLO		/* See warning in ssl.h */
+	if( handshakeInfo->isSSLv2 )
+		{
+		int processHelloSSLv2( SESSION_INFO *sessionInfoPtr, 
+							   SSL_HANDSHAKE_INFO *handshakeInfo, 
+							   STREAM *stream );
+
+		status = processHelloSSLv2( sessionInfoPtr, handshakeInfo, stream );
+		}
+	else
+#endif /* ALLOW_SSLV2_HELLO */
 	status = processHelloSSL( sessionInfoPtr, handshakeInfo, stream, TRUE );
 	sMemDisconnect( stream );
 	if( cryptStatusError( status ) )
@@ -484,6 +495,8 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		if( cryptStatusOK( status ) )
 			{
+			ANALYSER_HINT( keyData != NULL );
+
 			status = createKeyexSignature( sessionInfoPtr, handshakeInfo,
 										   stream, keyData, keyDataLength );
 			}

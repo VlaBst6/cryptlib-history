@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Self-test Utility Routines					*
-*						Copyright Peter Gutmann 1997-2009					*
+*						Copyright Peter Gutmann 1997-2011					*
 *																			*
 ****************************************************************************/
 
@@ -79,6 +79,66 @@ int remove( const char *pathname )
 *																			*
 ****************************************************************************/
 
+/* Windows-specific file accessibility check */
+
+#if defined( __WINDOWS__ ) && !defined( _WIN32_WCE ) 
+
+#pragma comment( lib, "advapi32" )
+
+static int checkFileAccessibleACL( const char *fileName )
+	{
+	BYTE sidBuffer[ 1024 ];
+	SECURITY_DESCRIPTOR *pSID = ( void * ) sidBuffer;
+	GENERIC_MAPPING gMapping;
+	PRIVILEGE_SET psPrivilege;
+	HANDLE hThreadToken;
+	DWORD dwPrivilegeLength = sizeof( PRIVILEGE_SET );
+	DWORD cbNeeded, dwGrantedAccess;
+	BOOL fStatus; 
+
+	if( !GetFileSecurity( fileName, ( OWNER_SECURITY_INFORMATION | \
+									   GROUP_SECURITY_INFORMATION | \
+									   DACL_SECURITY_INFORMATION), 
+						   pSID, 1024, &cbNeeded ) )
+		{
+		/* We can't access file security information (presumably due to
+		   insufficient permissions), there's a problem */
+		return( FALSE );
+		}
+	if( !ImpersonateSelf( SecurityImpersonation ) )
+		return( TRUE );
+	if( !OpenThreadToken( GetCurrentThread(), TOKEN_ALL_ACCESS, FALSE, &hThreadToken ) )
+		{
+		RevertToSelf();
+		return( TRUE );
+		}
+	if( !AccessCheck( pSID, hThreadToken, FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE, 
+					  &gMapping, &psPrivilege, &dwPrivilegeLength,
+					  &dwGrantedAccess, &fStatus ) )
+		{
+		const DWORD dwLastError = GetLastError();
+
+		RevertToSelf();
+		CloseHandle( hThreadToken );
+
+		/* If it's FAT32 then there's nothing further to check */
+		if( dwLastError == ERROR_NO_SECURITY_ON_OBJECT || \
+			dwLastError == ERROR_NOT_SUPPORTED )
+			return( TRUE );
+
+		return( FALSE );
+		}
+	RevertToSelf();
+	CloseHandle( hThreadToken );
+	if( !fStatus )
+		{
+		return( FALSE );
+		}
+
+	return( TRUE );
+	}
+#endif /* Windows versions with ACLs */
+
 /* Check that a file is accessible.  This is a generic sanity check to make
    sure that access to keyset files is functioning */
 
@@ -87,20 +147,64 @@ int checkFileAccess( void )
 	CRYPT_KEYSET cryptKeyset;
 	FILE *filePtr;
 	BYTE buffer[ BUFFER_SIZE ];
-	int length, status;
+	int length, failedFileNo = 0, status;
 
 	/* First, check that the file actually exists so that we can return an
 	   appropriate error message */
 	if( ( filePtr = fopen( convertFileName( CA_PRIVKEY_FILE ),
 						   "rb" ) ) == NULL )
+		failedFileNo = 1;
+	else
+		fclose( filePtr );
+	if( failedFileNo == 0 )
 		{
-		printf( "Couldn't access cryptlib keyset file %s.  Please make "
+		if( ( filePtr = fopen( convertFileName( TEST_PRIVKEY_FILE ), \
+							   "rb" ) ) == NULL )
+			failedFileNo = 2;
+		else
+			fclose( filePtr );
+		}
+	if( failedFileNo > 0 )
+		{
+		printf( "Couldn't access cryptlib keyset file '%s'.  Please make "
 				"sure\nthat all the cryptlib files have been installed "
 				"correctly, and the cryptlib\nself-test is being run from "
-				"the correct directory.\n", CA_PRIVKEY_FILE );
+				"the correct directory.\n", 
+				( failedFileNo == 1 ) ? CA_PRIVKEY_FILE : TEST_PRIVKEY_FILE );
 		return( FALSE );
 		}
-	fclose( filePtr );
+
+	/* Now check for accessibility problems due to filesystem permissions.
+	   This can sometimes occur in odd situations for private-key files 
+	   (which are set up with fairly restrictive ACLs) when the files have 
+	   been copied from one filesystem to another with a different user,
+	   so the ACLs grant access to the user on the source filesystem rather
+	   than the destination filesystem (this requires a somewhat messed-
+	   up copy, since the copier will have had access but the current 
+	   requester won't).
+
+	   We check for access to two files, the CA private-key file that ships
+	   with cryptlib and the user private-key file that's created when
+	   cryptlib is run */
+#if defined( __WINDOWS__ ) && !defined( _WIN32_WCE ) 
+	if( !checkFileAccessibleACL( CA_PRIVKEY_FILE ) )
+		failedFileNo = 1;
+	else
+		{
+		if( !checkFileAccessibleACL( TEST_PRIVKEY_FILE ) )
+			failedFileNo = 2;
+		}
+	if( failedFileNo > 0 )
+		{
+		printf( "Couldn't access %s cryptlib keyset file '%s'\nfor "
+				"read/write/delete.  This is probably due to a filesystem "
+				"ACL issue\nin which the current user has insufficient "
+				"permissions to perform the\nrequired file access.\n",
+				( failedFileNo == 1 ) ? "pre-generated" : "test-run generated",
+				( failedFileNo == 1 ) ? CA_PRIVKEY_FILE : TEST_PRIVKEY_FILE );
+		return( FALSE );
+		}
+#endif /* Windows versions with ACLs */
 
 	/* Now read the test files and see if there's any problem due to data 
 	   conversion evident */
@@ -141,7 +245,12 @@ int checkFileAccess( void )
 #endif /* __UNIX__ */
 
 	/* The file exists and is accessible and was copied/installed correctly, 
-	   now try and open it using the cryptlib file access functions */
+	   now try and open it using the cryptlib file access functions.  This
+	   is a bit of a catch-22 because we're trying to at least open a keyset
+	   before the self-test has verified the correct functioning of the
+	   keyset-access code, but in almost all cases it's working OK and this
+	   provides a useful general sanity-check, since the keyset code would
+	   fail in any case when we get to it in the self-test */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 							  CA_PRIVKEY_FILE, CRYPT_KEYOPT_READONLY );
 	if( cryptStatusError( status ) )
@@ -151,7 +260,7 @@ int checkFileAccess( void )
 		if( status == CRYPT_ERROR_NOTAVAIL )
 			return( TRUE );
 
-		printf( "Couldn't access cryptlib keyset file %s even though the "
+		printf( "Couldn't access cryptlib keyset file '%s' even though the "
 				"file\nexists and is readable.  Please make sure that the "
 				"cryptlib self-test is\nbeing run from the correct "
 				"directory.\n", CA_PRIVKEY_FILE );
@@ -337,8 +446,12 @@ const C_STR getKeyfileName( const KEYFILE_TYPE type,
 			return( isPrivKey ? OPENPGP_PRIVKEY_HASH_FILE : OPENPGP_PUBKEY_HASH_FILE );
 		case KEYFILE_OPENPGP_AES:
 			return( isPrivKey ? OPENPGP_PRIVKEY_AES_FILE : OPENPGP_PUBKEY_AES_FILE );
+		case KEYFILE_OPENPGP_CAST:
+			return( OPENPGP_PRIVKEY_CAST_FILE );
 		case KEYFILE_OPENPGP_RSA:
 			return( isPrivKey ? OPENPGP_PRIVKEY_RSA_FILE : OPENPGP_PUBKEY_RSA_FILE );
+		case KEYFILE_OPENPGP_MULT:
+			return( OPENPGP_PUBKEY_MULT_FILE );
 		case KEYFILE_OPENPGP_PARTIAL:
 			return( OPENPGP_PRIVKEY_PART_FILE );
 		case KEYFILE_NAIPGP:
@@ -362,6 +475,8 @@ const C_STR getKeyfilePassword( const KEYFILE_TYPE type )
 			return( TEXT( "test10" ) );
 		case KEYFILE_OPENPGP_AES:
 			return( TEXT( "testkey" ) );
+		case KEYFILE_OPENPGP_CAST:
+			return( TEXT( "test" ) );
 		case KEYFILE_OPENPGP_PARTIAL:
 			return( TEXT( "def" ) );
 		}
@@ -388,8 +503,12 @@ const C_STR getKeyfileUserID( const KEYFILE_TYPE type,
 		case KEYFILE_OPENPGP_HASH:
 		case KEYFILE_OPENPGP_RSA:
 			return( TEXT( "test1" ) );
+		case KEYFILE_OPENPGP_MULT:
+			return( TEXT( "NXX2502" ) );
 		case KEYFILE_OPENPGP_AES:
 			return( TEXT( "Max Mustermann" ) );
+		case KEYFILE_OPENPGP_CAST:
+			return( TEXT( "Trond" ) );
 		}
 	assert( 0 );
 	return( TEXT( "notfound" ) );
@@ -716,6 +835,355 @@ int multiThreadDispatch( THREAD_FUNC clientFunction,
 
 /****************************************************************************
 *																			*
+*							Timing Support Functions						*
+*																			*
+****************************************************************************/
+
+/* Get high-resolution timing info */
+
+#ifdef USE_TIMING
+
+#ifdef USE_32BIT_TIME
+
+HIRES_TIME timeDiff( HIRES_TIME startTime )
+	{
+	HIRES_TIME timeLSB, timeDifference;
+
+#ifdef __WINDOWS__
+  #if 1
+	LARGE_INTEGER performanceCount;
+
+	/* Sensitive to context switches */
+	QueryPerformanceCounter( &performanceCount );
+	timeLSB = performanceCount.LowPart;
+  #else
+	FILETIME dummyTime, kernelTime, userTime;
+	int status;
+
+	/* Only accurate to 10ms, returns constant values in VC++ debugger */
+	GetThreadTimes( GetCurrentThread(), &dummyTime, &dummyTime,
+					&kernelTime, &userTime );
+	timeLSB = userTime.dwLowDateTime;
+  #endif /* 0 */
+#else
+	struct timeval tv;
+
+	/* Only accurate to about 1us */
+	gettimeofday( &tv, NULL );
+	timeLSB = tv.tv_usec;
+#endif /* Windows vs.Unix high-res timing */
+
+	/* If we're getting an initial time, return an absolute value */
+	if( !startTime )
+		return( timeLSB );
+
+	/* We're getting a time difference */
+	if( startTime < timeLSB )
+		timeDifference = timeLSB - startTime;
+	else
+		{
+#ifdef __WINDOWS__
+		/* Windows rolls over at INT_MAX */
+		timeDifference = ( 0xFFFFFFFFUL - startTime ) + 1 + timeLSB;
+#else
+		/* gettimeofday() rolls over at 1M us */
+		timeDifference = ( 1000000L - startTime ) + timeLSB;
+#endif /* __WINDOWS__ */
+		}
+	if( timeDifference <= 0 )
+		{
+		printf( "Error: Time difference = " HIRES_FORMAT_SPECIFIER ", "
+				"startTime = " HIRES_FORMAT_SPECIFIER ", "
+				"endTime = " HIRES_FORMAT_SPECIFIER ".\n",
+				timeDifference, startTime, timeLSB );
+		return( 1 );
+		}
+	return( timeDifference );
+	}
+#else
+
+HIRES_TIME timeDiff( HIRES_TIME startTime )
+	{
+	HIRES_TIME timeValue;
+
+#ifdef __WINDOWS__
+  #if 1
+	LARGE_INTEGER performanceCount;
+
+	/* Sensitive to context switches */
+	QueryPerformanceCounter( &performanceCount );
+	timeValue = performanceCount.QuadPart;
+  #else
+	FILETIME dummyTime, kernelTime, userTime;
+	int status;
+
+	/* Only accurate to 10ms, returns constant values in VC++ debugger */
+	GetThreadTimes( GetCurrentThread(), &dummyTime, &dummyTime,
+					&kernelTime, &userTime );
+	timeLSB = userTime.dwLowDateTime;
+  #endif /* 0 */
+#else
+	struct timeval tv;
+
+	/* Only accurate to about 1us */
+	gettimeofday( &tv, NULL );
+	timeValue = ( ( ( HIRES_TIME ) tv.tv_sec ) << 32 ) | tv.tv_usec;
+#endif /* Windows vs.Unix high-res timing */
+
+	if( !startTime )
+		return( timeValue );
+	return( timeValue - startTime );
+	}
+#endif /* USE_32BIT_TIME */
+
+/* Print timing info.  This gets a bit hairy because we're actually counting 
+   low-level timer ticks rather than abstract thread times which means that 
+   we'll be affected by things like context switches.  There are two 
+   approaches to this:
+
+	1. Take the fastest time, which will be the time least affected by 
+	   system overhead.
+
+	2. Apply standard statistical techniques to weed out anomalies.  Since 
+	   this is just for testing purposes all we do is discard any results 
+	   out by more than 10%, which is crude but reasonably effective.  A 
+	   more rigorous approach is to discards results more than n standard 
+	   deviations out, but this gets screwed up by the fact that a single 
+	   context switch of 20K ticks can throw out results from an execution 
+	   time of only 50 ticks.  In any case (modulo context switches) the 
+	   fastest, 10%-out, and 2 SD out times are all within about 1% of each 
+	   other so all methods are roughly equally accurate */
+
+static void timeDisplay( HIRES_TIME *times, const int noTimes )
+	{
+	HIRES_TIME timeSum = 0, timeAvg, timeDelta;
+	HIRES_TIME timeMin = 1000000L;
+	HIRES_TIME timeCorrSum10 = 0;
+	HIRES_TIME avgTime;
+#ifdef __WINDOWS__
+	LARGE_INTEGER performanceCount;
+#endif /* __WINDOWS__ */
+#ifdef USE_SD
+	HIRES_TIME timeCorrSumSD = 0;
+	double stdDev;
+	int timesCountSD = 0;
+#endif /* USE_SD */
+	long timeMS, ticksPerSec;
+	int i, timesCount10 = 0;
+
+	/* Try and get the clock frequency */
+	printf( "Times given in clock ticks of frequency " );
+#ifdef __WINDOWS__
+	QueryPerformanceFrequency( &performanceCount );
+	ticksPerSec = performanceCount.LowPart;
+	printf( "%ld", ticksPerSec );
+#else
+	printf( "~1M" );
+	ticksPerSec = 1000000;
+#endif /* __WINDOWS__ */
+	printf( " ticks per second.\n\n" );
+
+	/* Find the mean execution time */
+	for( i = 1; i < noTimes; i++ )
+		timeSum += times[ i ];
+	timeAvg = timeSum / noTimes;
+	timeDelta = timeAvg / 10;	/* 10% variation */
+
+	/* Find the fastest overall time */
+	for( i = 1; i < noTimes; i++ )
+		{
+		if( times[ i ] < timeMin )
+			timeMin = times[ i ];
+		}
+
+	/* Find the mean time, discarding anomalous results more than 10% out.  
+	   We cast the values to longs in order to (portably) print them, if we 
+	   want to print the full 64-bit values we have to use nonstandard 
+	   extensions like "%I64d" (for Win32) */
+	for( i = 1; i < noTimes; i++ )
+		{
+		if( times[ i ] > timeAvg - timeDelta && \
+			times[ i ] < timeAvg + timeDelta )
+			{
+			timeCorrSum10 += times[ i ];
+			timesCount10++;
+			}
+		}
+	if( timesCount10 <= 0 )
+		{
+		printf( "Error: No times within +/-%ld of %ld.\n",
+				( long ) timeDelta, ( long ) timeAvg );
+		return;
+		}
+	avgTime = timeCorrSum10 / timesCount10;
+	printf( "Time: min.= %ld, avg.= %ld ", ( long ) timeMin, 
+			( long ) avgTime );
+	timeMS = ( avgTime * 1000 ) / ticksPerSec;
+#if 0	/* Print difference to fastest time, usually only around 1% */
+	printf( "(%4d)", ( timeCorrSum10 / timesCount10 ) - timeMin );
+#endif /* 0 */
+
+#ifdef USE_SD
+	/* Find the standard deviation */
+	for( i = 1; i < noTimes; i++ )
+		{
+		const HIRES_TIME timeDev = times[ i ] - timeAvg;
+
+		timeCorrSumSD += ( timeDev * timeDev );
+		}
+	stdDev = timeCorrSumSD / NO_TESTS;
+	stdDev = sqrt( stdDev );
+
+	/* Find the mean time, discarding anomalous results more than two 
+	   standard deviations out */
+	timeCorrSumSD = 0;
+	timeDelta = ( HIRES_TIME ) stdDev * 2;
+	for( i = 1; j < noTimes; i++ )
+		{
+		if( times[ i ] > timeAvg - timeDelta && \
+			times[ i ] < timeAvg + timeDelta )
+			{
+			timeCorrSumSD += times[ i ];
+			timesCountSD++;
+			}
+		}
+	if( timesCountSD == 0 )
+		timesCountSD++;	/* Context switch, fudge it */
+	printf( "%6ld", ( long ) ( timeCorrSumSD / timesCountSD ) );
+
+#if 1	/* Print difference to fastest and mean times, usually only around
+		   1% */
+	printf( " (dF = %4d, dM = %4d)\n",
+			( timeCorrSumSD / timesCountSD ) - timeMin,
+			abs( ( timeCorrSumSD / timesCountSD ) - \
+				 ( timeCorrSum10 / timesCount10 ) ) );
+#endif /* 0 */
+#endif /* USE_SD */
+
+	/* Print the times in ms */
+	printf( "\n  Per-op time = " );
+	if( timeMS <= 0 )
+		printf( "< 1" );
+	else
+		printf( "%ld", timeMS );
+	printf( " ms.\n" );
+	}
+
+/* Timing-attack evaluation code */
+
+int testTimingAttack( void )
+	{
+	CRYPT_CONTEXT cryptContext, decryptContext;
+	CRYPT_CONTEXT sessionKeyContext;
+	HIRES_TIME times[ 1000 ];
+	BYTE encryptedKeyBlob[ 1024 ];
+	int length, i, status;
+
+	/* Create the contexts needed for the decryption timing checks */
+	status = cryptCreateContext( &sessionKeyContext, CRYPT_UNUSED,
+								 CRYPT_ALGO_3DES );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	status = cryptGenerateKey( sessionKeyContext );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	status = loadRSAContexts( CRYPT_UNUSED, &cryptContext, &decryptContext );
+	if( !status )
+		return( FALSE );
+
+	/* Create the encrypted key blob */
+	status = cryptExportKey( encryptedKeyBlob, 1024, &length, cryptContext, 
+							 sessionKeyContext );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptExportKeyEx() failed with error code %d, line %d.\n",
+				status, __LINE__ );
+		return( FALSE );
+		}
+	if( length != 174 )
+		{
+		printf( "Encrypted key should be %d bytes, was %d, line %d.\n",
+				174, length, __LINE__ );
+		return( FALSE );
+		}
+	cryptDestroyContext( sessionKeyContext );
+
+	/* Determine the time for the unmodified decrypt */
+#if 0
+	for( i = 0; i < 200; i++ )
+		{
+		HIRES_TIME timeVal;
+
+		cryptCreateContext( &sessionKeyContext, CRYPT_UNUSED, 
+							CRYPT_ALGO_3DES );
+		timeVal = timeDiff( 0 );
+		status = cryptImportKey( encryptedKeyBlob, length, decryptContext, 
+								 sessionKeyContext );
+		timeVal = timeDiff( timeVal ); 
+		cryptDestroyContext( sessionKeyContext );
+		if( cryptStatusError( status ) )
+			{
+			printf( "cryptImportKey() failed with status %s, line %d.\n", 
+					status, __LINE__ );
+			return( FALSE );
+			}
+		times[ i ] = timeVal;
+		}
+#if 0
+	printf( "Time for unmodified decrypt:\n" );
+	for( i = 0; i < 200; i++ )
+		{
+		printf( "%5d ", times[ i ] );
+		if( ( ( i + 1 ) % 10 ) == 0 )
+			putchar( '\n' );
+		}
+#endif /* 0 */
+	timeDisplay( times, 200 );
+#endif /* 0 */
+
+	/* Manipulate the encrypted blob and see what timing effect it has */
+	for( i = 0; i < 1000; i++ )
+		{
+		BYTE buffer[ 1024 ], *encryptedKeyPtr;
+		HIRES_TIME timeVal;
+
+		/* For the 1024-bit key the encrypted value in the blob ranges from
+		   n + 46 to n + 173 (128 bytes, zero-based) */
+		encryptedKeyPtr = buffer + 173;
+		memcpy( buffer, encryptedKeyBlob, length );
+		*encryptedKeyPtr ^= 0x01;
+		cryptCreateContext( &sessionKeyContext, CRYPT_UNUSED, 
+							CRYPT_ALGO_3DES );
+		timeVal = timeDiff( 0 );
+		status = cryptImportKey( buffer, length, decryptContext, 
+								 sessionKeyContext );
+		timeVal = timeDiff( timeVal ); 
+		cryptDestroyContext( sessionKeyContext );
+		if( !cryptStatusError( status ) )
+			{
+			printf( "Corrupted import wasn't detected, line %d.\n", 
+					__LINE__ );
+			return( FALSE );
+			}
+		times[ i ] = timeVal;
+		}
+#if 0
+	printf( "Time for modified decrypt:\n" );
+	for( i = 0; i < 1000; i++ )
+		{
+		printf( "%5d ", times[ i ] );
+		if( ( ( i + 1 ) % 10 ) == 0 )
+			putchar( '\n' );
+		}
+#endif
+	timeDisplay( times, 1000 );
+
+	return( TRUE );
+	}
+#endif /* USE_TIMING */
+
+/****************************************************************************
+*																			*
 *							Error-handling Functions						*
 *																			*
 ****************************************************************************/
@@ -807,6 +1275,31 @@ CRYPT_ALGO_TYPE selectCipher( const CRYPT_ALGO_TYPE algorithm )
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_BLOWFISH, NULL ) ) )
 		return( CRYPT_ALGO_BLOWFISH );
 	return( CRYPT_ALGO_3DES );
+	}
+
+/* Print a hex string */
+
+void printHex( const BYTE *value, const int length )
+	{
+	int i;
+
+	for( i = 0; i < length; i += 16 )
+		{
+		const int innerLen = min( length - i, 16 );
+		int j;
+
+		for( j = 0; j < innerLen; j++ )
+			printf( "%02X ", value[ i + j ] );
+		for( ; j < 16; j++ )
+			printf( "   " );
+		for( j = 0; j < innerLen; j++ )
+			{
+			const BYTE ch = value[ i + j ];
+
+			printf( "%c", isprint( ch ) ? ch : '.' );
+			}
+		printf( "\n" );
+		}
 	}
 
 /* Add a collection of fields to a certificate */
@@ -907,36 +1400,32 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 	return( TRUE );
 	}
 
-/* Populate a key database with the contents of a directory.  This is a
-   rather OS-specific utility function for setting up test databases that
-   only works under Win32 (in fact it's not used at all at the moment) */
+/* Compare two blocks and data and check whether they're identical */
 
-#if defined( _MSC_VER ) && defined( _WIN32 ) && !defined( _WIN32_WCE ) && 0
-
-void loadCertificates( void )
+int compareData( const void *origData, const int origDataLength,
+				 const void *recovData, const int recovDataLength )
 	{
-	WIN32_FIND_DATA findData;
-	HANDLE searchHandle;
-
-	searchHandle = FindFirstFile( "d:/tmp/certs/*.der", &findData );
-	if( searchHandle == INVALID_HANDLE_VALUE )
-		return;
-	do
+	if( origDataLength != recovDataLength )
 		{
-		CRYPT_CERTIFICATE cryptCert;
-		int status;
+		printf( "Original length %d doesn't match recovered data "
+				"length %d.\n", origDataLength, recovDataLength );
 
-		printf( "Adding certificate %s.\n", findData.cFileName );
-		status = importCertFile( &cryptCert, findData.cFileName );
-		if( cryptStatusOK( status ) )
-			{
-			cryptDestroyCert( cryptCert );
-			}
+		return( FALSE );
 		}
-	while( FindNextFile( searchHandle, &findData ) );
-	FindClose( searchHandle );
+	if( memcmp( origData, recovData, origDataLength ) )
+		{
+		printf( "Data of length %d doesn't match recovered data:\n", 
+				origDataLength );
+		printf( "Original data:\n" );
+		printHex( origData, min( origDataLength, 64 ) );
+		printf( "Recovered data:\n" );
+		printHex( recovData, min( origDataLength, 64 ) );
+
+		return( FALSE );
+		}
+
+	return( TRUE );
 	}
-#endif /* Win32 */
 
 /****************************************************************************
 *																			*
@@ -983,6 +1472,7 @@ void debugDump( const char *fileName, const void *data, const int dataLength )
   #endif /* VC++ 2005 and newer misconfiguration */
 	if( fileName[ 1 ] != ':' )
 		{
+		/* It's my code, I can use whatever paths I feel like */
 		if( _access( "d:/tmp/", 6 ) == 0 )
 			{
 			/* There's a data partition available, dump the info there */
@@ -1029,10 +1519,11 @@ void debugDump( const char *fileName, const void *data, const int dataLength )
 	filePtr = fopen( fileNameBuffer, formatBuffer );
 	}
 	if( filePtr == NULL )
+		return;
 #else
 	if( ( filePtr = fopen( fileNameBuffer, "wb" ) ) == NULL )
-#endif /* __VMCMS__ */
 		return;
+#endif /* __VMCMS__ */
 	count = fwrite( data, 1, dataLength, filePtr );
 	fclose( filePtr );
 	if( count < length )
@@ -1171,19 +1662,32 @@ int printFingerprint( const CRYPT_SESSION cryptSession,
 	return( TRUE );
 	}
 
-/* Set up a client/server to connect locally.  For the client his simply
-   tells it where to connect, for the server this binds it to the local
+/* Set up a client/server to connect locally.  For the client this simply 
+   tells it where to connect, for the server this binds it to the local 
    (loopback) address so we don't inadvertently open up outside ports 
    (admittedly they can't do much except run the hardcoded self-test, but 
    it's better not to do this at all).
 
-   In order to allow testing against outside clients we optionally allow it
-   to be set to an external interface, but make it a compile-time option to
-   ensure that it can't be enabled by accident */
+   In order to allow testing against non-cryptlib-loopback and/or outside 
+   clients we optionally allow it to be set to an explicit address.  This
+   can be either an explicit IPv4 localhost (since Windows 7 will bind to
+   both IPv4 and IPv6 INADDR_ANY addresses when given "localhost" as an
+   argument and refuses connections on the IPv4 interface, only connecting
+   on the IPv6 one), or an explicit address for external clients */
 
-#if 1
-  #define LOCAL_HOST_NAME		"localhost"
+#ifdef UNICODE_STRINGS
+  #define LOCAL_HOST_NAME			"localhost"
+  #define NATIVE_LOCAL_HOST_NAME	L"localhost"
 #else
+	#define LOCAL_HOST_NAME			"localhost"
+	#define NATIVE_LOCAL_HOST_NAME	LOCAL_HOST_NAME
+#endif /* UNICODE_STRINGS */
+#if 0
+  #undef LOCAL_HOST_NAME
+  #define LOCAL_HOST_NAME		"127.0.0.1"
+#endif /* 0 */
+#if 0
+  #undef LOCAL_HOST_NAME
   #define LOCAL_HOST_NAME		"192.168.1.45"
 #endif /* 0 */
 
@@ -1196,10 +1700,11 @@ BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port )
 		puts( "Warning: Enabling server on non-local interface '" 
 			  LOCAL_HOST_NAME "'." );
 		}
+
 	status = cryptSetAttributeString( cryptSession,
 									  CRYPT_SESSINFO_SERVER_NAME,
-									  TEXT( LOCAL_HOST_NAME ),
-									  paramStrlen( TEXT( LOCAL_HOST_NAME ) ) );
+									  NATIVE_LOCAL_HOST_NAME,
+									  paramStrlen( NATIVE_LOCAL_HOST_NAME ) );
 #ifdef __UNIX__
 	/* If we're running under Unix, set the port to a nonprivileged one so
 	   that we don't have to run as root.  For anything other than very low-
@@ -1224,6 +1729,42 @@ BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port )
 		}
 
 	return( TRUE );
+	}
+
+/* Check whether a remote server might be down, which is treated as a soft 
+   fail rather than a hard-fail error condition */
+
+BOOLEAN isServerDown( const CRYPT_SESSION cryptSession,
+					  const int errorStatus )
+	{
+	/* If we get a straight connect error theb we don't treat it as a 
+	   serious failure */
+	if( errorStatus == CRYPT_ERROR_OPEN || errorStatus == CRYPT_ERROR_NOTFOUND )
+		return( TRUE );
+
+	/* Under Unix a connection-refused will be reported as a 
+	   CRYPT_ERROR_PERMISSION (under Winsock it's just a generic open 
+	   error), so we check for this as an alternative to an open error */
+#ifdef __UNIX__
+	if( errorStatus == CRYPT_ERROR_PERMISSION )
+		{
+		char errorMessage[ 512 ];
+		int errorMessageLength, status;
+
+		status = cryptGetAttributeString( cryptSession, 
+										  CRYPT_ATTRIBUTE_ERRORMESSAGE,
+										  errorMessage, &errorMessageLength );
+		if( cryptStatusOK( status ) )
+			{
+			errorMessage[ errorMessageLength ] = '\0';
+			if( strstr( errorMessage, "ECONNREFUSED" ) != NULL || \
+				strstr( errorMessage, "ETIMEDOUT" ) != NULL )
+				return( TRUE );
+			}
+		}
+#endif /* __UNX__ */
+
+	return( FALSE );
 	}
 
 /* Run a persistent server session, recycling the connection if the client
@@ -1397,21 +1938,6 @@ static BOOLEAN isUnicode( const BYTE *value, const int length )
 		return( TRUE );
 
 	return( FALSE );
-	}
-
-/* Print a hex string */
-
-static void printHex( const BYTE *value, const int length )
-	{
-	int i;
-
-	for( i = 0; i < length; i++ )
-		{
-		if( i )
-			printf( " " );
-		printf( "%02X", value[ i ] );
-		}
-	puts( "." );
 	}
 
 /* The following function performs many attribute accesses, rather than using

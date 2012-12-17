@@ -458,11 +458,8 @@ static int readCertInfo( INOUT STREAM *stream,
 			return( status );
 		}
 
-	/* Read the extensions if there are any present.  Because some 
-	   certificates will have broken encoding of lengths we allow for a bit 
-	   of slop for software that gets the length encoding wrong by a few 
-	   bytes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE )
+	/* Read the extensions if there are any present */
+	if( stell( stream ) < endPos )
 		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_CERTIFICATE, endPos - stell( stream ),
@@ -622,11 +619,8 @@ static int readAttributeCertInfo( INOUT STREAM *stream,
 			return( status );
 		}
 
-	/* Read the extensions if there are any present.  Because some 
-	   certificates will have broken encoding of lengths we allow for a bit 
-	   of slop for software that gets the length encoding wrong by a few 
-	   bytes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE )
+	/* Read the extensions if there are any present */
+	if( stell( stream ) < endPos )
 		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_ATTRIBUTE_CERT, endPos - stell( stream ),
@@ -718,8 +712,7 @@ static int readCRLInfo( INOUT STREAM *stream,
 
 	/* Read the SEQUENCE OF revoked certificates and make the currently 
 	   selected one the start of the list */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE && \
-		peekTag( stream ) == BER_SEQUENCE )
+	if( stell( stream ) < endPos && peekTag( stream ) == BER_SEQUENCE )
 		{
 		int noCrlEntries;
 
@@ -739,7 +732,7 @@ static int readCRLInfo( INOUT STREAM *stream,
 			return( CRYPT_ERROR_BADDATA );
 			}
 		for( noCrlEntries = 0;
-			 cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+			 cryptStatusOK( status ) && length > 0 && \
 				noCrlEntries < FAILSAFE_ITERATIONS_MAX;
 			 noCrlEntries++ )
 			{
@@ -765,10 +758,8 @@ static int readCRLInfo( INOUT STREAM *stream,
 		certRevInfo->currentRevocation = certRevInfo->revocations;
 		}
 
-	/* Read the extensions if there are any present.  Because some CRL's 
-	   will have broken encoding of lengths we allow for a bit of slop for 
-	   software that gets the length encoding wrong by a few bytes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE )
+	/* Read the extensions if there are any present */
+	if( stell( stream ) < endPos )
 		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_CRL, endPos - stell( stream ),
@@ -950,11 +941,11 @@ static int readCertRequestInfo( INOUT STREAM *stream,
 		return( status );
 
 	/* Read the attributes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE && \
+	if( stell( stream ) < endPos && \
 		peekTag( stream ) == MAKE_CTAG( CTAG_CR_ATTRIBUTES ) )
 		{
 		status = readConstructed( stream, &length, CTAG_CR_ATTRIBUTES );
-		if( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE )
+		if( cryptStatusOK( status ) && length > 0 )
 			{
 			status = readAttributes( stream, &certInfoPtr->attributes,
 									 CRYPT_CERTTYPE_CERTREQUEST, length,
@@ -1052,11 +1043,11 @@ static int readCrmfRequestInfo( INOUT STREAM *stream,
 							CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, status ) );
 
 	/* Read the attributes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE && \
+	if( stell( stream ) < endPos && \
 		peekTag( stream ) == MAKE_CTAG( CTAG_CF_EXTENSIONS ) )
 		{
 		status = readConstructed( stream, &length, CTAG_CF_EXTENSIONS );
-		if( cryptStatusOK( status ) && length >= MIN_ATTRIBUTE_SIZE )
+		if( cryptStatusOK( status ) && length > 0 )
 			{
 			status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_REQUEST_CERT, length,
@@ -1078,7 +1069,7 @@ static int readCrmfRequestInfo( INOUT STREAM *stream,
 	   including encoding CMP protocol data inside fields in the issuer 
 	   certificate(!!)).  Because we can't do anything with this 
 	   information, we just skip it if it's present */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE )
+	if( stell( stream ) < endPos )
 		readUniversal( stream );	/* Skip request management information */
 
 	/* CRMF requests are usually self-signed, however if they've been
@@ -1165,11 +1156,11 @@ static int readRevRequestInfo( INOUT STREAM *stream,
 		return( status );
 
 	/* Read the attributes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE && \
+	if( stell( stream ) < endPos && \
 		peekTag( stream ) == MAKE_CTAG( CTAG_CF_EXTENSIONS ) )
 		{
 		status = readConstructed( stream, &length, CTAG_CF_EXTENSIONS );
-		if( cryptStatusOK( status ) && length >= MIN_ATTRIBUTE_SIZE )
+		if( cryptStatusOK( status ) && length > 0 )
 			{
 			status = readAttributes( stream, &certInfoPtr->attributes,
 									 CRYPT_CERTTYPE_REQUEST_REVOCATION,
@@ -1220,7 +1211,7 @@ static int readRtcsRequestInfo( INOUT STREAM *stream,
 	endPos = stell( stream ) + length;
 	status = readSequence( stream, &length );
 	for( fieldsProcessed = 0;
-		 cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+		 cryptStatusOK( status ) && length > 0 && \
 			fieldsProcessed < FAILSAFE_ITERATIONS_LARGE; 
 		 fieldsProcessed++ )
 		{
@@ -1246,10 +1237,8 @@ static int readRtcsRequestInfo( INOUT STREAM *stream,
 		}
 	certValInfo->currentValidity = certValInfo->validityInfo;
 
-	/* Read the extensions if there are any present.  Because some requests
-	   will have broken encoding of lengths we allow for a bit of slop for
-	   software that gets the length encoding wrong by a few bytes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE )
+	/* Read the extensions if there are any present */
+	if( stell( stream ) < endPos )
 		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_RTCS_REQUEST, endPos - stell( stream ),
@@ -1286,7 +1275,7 @@ static int readRtcsResponseInfo( INOUT STREAM *stream,
 		return( status );
 	endPos = stell( stream ) + length;
 	for( fieldsProcessed = 0;
-		 cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+		 cryptStatusOK( status ) && length > 0 && \
 			fieldsProcessed < FAILSAFE_ITERATIONS_LARGE;
 		 fieldsProcessed++ )
 		{
@@ -1312,10 +1301,8 @@ static int readRtcsResponseInfo( INOUT STREAM *stream,
 		}
 	certValInfo->currentValidity = certValInfo->validityInfo;
 
-	/* Read the extensions if there are any present.  Because some requests
-	   will have broken encoding of lengths we allow for a bit of slop for
-	   software that gets the length encoding wrong by a few bytes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE )
+	/* Read the extensions if there are any present */
+	if( stell( stream ) < endPos )
 		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 					CRYPT_CERTTYPE_RTCS_RESPONSE, endPos - stell( stream ),
@@ -1384,7 +1371,7 @@ static int readOcspRequestInfo( INOUT STREAM *stream,
 	   selected one the start of the list */
 	status = readSequence( stream, &length );
 	for( fieldsProcessed = 0;
-		 cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+		 cryptStatusOK( status ) && length > 0 && \
 			fieldsProcessed < FAILSAFE_ITERATIONS_LARGE;
 		 fieldsProcessed++ )
 		{
@@ -1410,10 +1397,8 @@ static int readOcspRequestInfo( INOUT STREAM *stream,
 		}
 	certRevInfo->currentRevocation = certRevInfo->revocations;
 
-	/* Read the extensions if there are any present.  Because some requests
-	   will have broken encoding of lengths we allow for a bit of slop for
-	   software that gets the length encoding wrong by a few bytes */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE )
+	/* Read the extensions if there are any present */
+	if( stell( stream ) < endPos )
 		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_OCSP_REQUEST, endPos - stell( stream ),
@@ -1480,7 +1465,7 @@ static int readOcspResponseInfo( INOUT STREAM *stream,
 	   selected one the start of the list */
 	status = readSequence( stream, &length );
 	for( fieldsProcessed = 0;
-		 cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+		 cryptStatusOK( status ) && length > 0 && \
 			fieldsProcessed < FAILSAFE_ITERATIONS_LARGE;
 		 fieldsProcessed++ )
 		{
@@ -1507,7 +1492,7 @@ static int readOcspResponseInfo( INOUT STREAM *stream,
 	certRevInfo->currentRevocation = certRevInfo->revocations;
 
 	/* Read the extensions if there are any present */
-	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE )
+	if( stell( stream ) < endPos )
 		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_OCSP_RESPONSE, endPos - stell( stream ),

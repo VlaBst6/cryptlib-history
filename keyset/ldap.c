@@ -341,8 +341,10 @@ static void getErrorInfo( KEYSET_INFO *keysetInfoPtr, int ldapStatus )
 #ifndef __WINDOWS__ 
 	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 #endif /* !__WINDOWS__ */
-	char *errorMessage;
+#ifdef __WINDOWS__
 	int errorCode;
+#endif /* __WINDOWS__ */
+	char *errorMessage;
 
 #if defined( __WINDOWS__ )
 	errorCode = LdapGetLastError();
@@ -368,13 +370,6 @@ static void getErrorInfo( KEYSET_INFO *keysetInfoPtr, int ldapStatus )
 #elif defined( NETSCAPE_CLIENT )
 	ldap_get_lderrno( ldapInfo->ld, NULL, &errorMessage );
 #else
-  /* As usual there are various incompatible ways of getting the necessary
-	 information, we use whatever's available */
-  #ifdef LDAP_OPT_ERROR_NUMBER
-	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_NUMBER, &errorCode );
-  #else
-	ldap_get_option( ldapInfo->ld, LDAP_OPT_RESULT_CODE, &errorCode );
-  #endif /* Various ways of getting the error information */
 	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_STRING, &errorMessage );
 #endif /* Different LDAP client types */
 	if( errorMessage != NULL )
@@ -917,7 +912,7 @@ static int addCert( KEYSET_INFO *keysetInfoPtr,
 		L[ CRYPT_MAX_TEXTSIZE + 1 + 8 ], O[ CRYPT_MAX_TEXTSIZE + 1 + 8 ],
 		OU[ CRYPT_MAX_TEXTSIZE + 1 + 8 ], CN[ CRYPT_MAX_TEXTSIZE + 1 + 8 ],
 		email[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
-	int keyDataLength, ldapModIndex = 1, status = CRYPT_OK;
+	int keyDataLength, ldapModIndex = 1, status;
 
 	*C = *SP = *L = *O = *OU = *CN = *email = '\0';
 

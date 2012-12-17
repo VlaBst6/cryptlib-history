@@ -184,7 +184,7 @@ int strExtract( OUT_OPT_PTR const char **newStringPtr,
 	return( strStripWhitespace( newStringPtr, string + startOffset, newLen ) );
 	}
 
-/* Parse a numeric string into an integer value.  Safe conversion of a 
+/* Parse a numeric or hex string into an integer value.  Safe conversion of a 
    numeric string gets a bit problematic because atoi() can't really 
    indicate an error except by returning 0, which is indistinguishable from 
    a zero numeric value.  To handle this we have to perform the conversion 
@@ -235,6 +235,75 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
 
 	*numericValue = value;
 	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int strGetHex( IN_BUFFER( strLen ) const char *str, 
+			   IN_LENGTH_SHORT const int strLen, 
+			   OUT_INT_Z int *numericValue, 
+			   IN_RANGE( 0, 100 ) const int minValue, 
+			   IN_RANGE( minValue, MAX_INTLENGTH ) const int maxValue )
+	{
+	const int strMaxLen = ( maxValue > 0xFFFF ) ? 5 : \
+						  ( maxValue > 0xFFF ) ? 4 : \
+						  ( maxValue > 0xFF ) ? 3 : \
+						  ( maxValue > 0xF ) ? 2 : 1;
+	int i, value = 0;
+
+	assert( isReadPtr( str, strLen ) );
+	assert( isWritePtr( numericValue, sizeof( int ) ) );
+
+	REQUIRES( strLen > 0 && strLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( minValue >= 0 && minValue < maxValue && \
+			  maxValue <= MAX_INTLENGTH );
+
+	/* Clear return value */
+	*numericValue = 0;
+
+	/* Make sure that the length is sensible for the value that we're 
+	   reading */
+	if( strLen < 1 || strLen > strMaxLen )
+		return( CRYPT_ERROR_BADDATA );
+
+	/* Process the numeric string */
+	for( i = 0; i < strLen; i++ )
+		{
+		const int ch = toLower( str[ i ] );
+	
+		if( !isXDigit( ch ) )
+			return( CRYPT_ERROR_BADDATA );
+		value = ( value << 4 ) | \
+				( ( ch <= '9' ) ? ch - '0' : ch - ( 'a' - 10 ) );
+		}
+	if( value < minValue || value > maxValue )
+		return( CRYPT_ERROR_BADDATA );
+
+	*numericValue = value;
+
+	return( CRYPT_OK );
+	}
+
+/* Determine whether a string is printable or not, used when checking whether
+   it should be displayed to the caller as a text string or a hex dump */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN strIsPrintable( IN_BUFFER( strLen ) const void *str, 
+						IN_LENGTH_SHORT const int strLen )
+	{
+	const BYTE *strPtr = str;
+	int i;
+
+	assert( isReadPtr( str, strLen ) );
+
+	REQUIRES( strLen > 0 && strLen < MAX_INTLENGTH_SHORT );
+
+	for( i = 0; i < strLen; i++ )
+		{
+		if( !isPrint( strPtr[ i ] ) )
+			return( FALSE );
+		}
+
+	return( TRUE );
 	}
 
 /* Sanitise a string before passing it back to the user.  This is used to

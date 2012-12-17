@@ -491,6 +491,7 @@ static int addEntry( INOUT TYPECAST( TRUST_INFO ** ) void *trustInfoPtrPtr,
 		status = getCertIdInfo( certObject, certObjectLength, 
 								&subjectDNptr, &subjectDNsize );
 		ENSURES( cryptStatusOK( status ) );
+		ANALYSER_HINT( subjectDNptr != NULL );
 
 		/* Generate the checksum and hash of the encoded certificate's 
 		   subject name and key ID */

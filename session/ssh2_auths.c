@@ -270,8 +270,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int checkCredentialsConsistent( INOUT SSH_INFO *sshInfo,
 									   IN_BUFFER( userNameLength ) \
 											const void *userName,
-									   IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) \
-											const int userNameLength,
+									   IN_LENGTH_TEXT const int userNameLength,
 									   IN_ENUM( METHOD ) \
 											const METHOD_TYPE authMethod,
 									   const BOOLEAN isInitialAuth )

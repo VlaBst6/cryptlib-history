@@ -193,6 +193,7 @@ typedef struct {
 	/* ODBC access information */
 	SQLHENV hEnv;					/* Environment handle */
 	SQLHDBC hDbc;					/* Connection handle */
+	BOOLEAN connectionOpen;			/* Whether hDbc connection is active */
 	ARRAY_FIXED( NO_CACHED_QUERIES ) \
 	SQLHSTMT hStmt[ NO_CACHED_QUERIES + 8 ];/* Statement handles */
 	ARRAY_FIXED( NO_CACHED_QUERIES ) \

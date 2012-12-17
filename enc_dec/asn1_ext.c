@@ -27,12 +27,13 @@ CHECK_RETVAL_LENGTH \
 int sizeofMessageDigest( IN_ALGO const CRYPT_ALGO_TYPE hashAlgo, 
 						 IN_LENGTH_HASH const int hashSize )
 	{
+	const int hashParam = isParameterisedHashAlgo( hashAlgo ) ? hashSize : 0;
 	int algoInfoSize, hashInfoSize;
 
 	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( hashSize >= 16 && hashSize <= CRYPT_MAX_HASHSIZE );
 
-	algoInfoSize = sizeofAlgoID( hashAlgo );
+	algoInfoSize = sizeofAlgoIDex( hashAlgo, hashParam, 0 );
 	hashInfoSize = sizeofObject( hashSize );
 	ENSURES( algoInfoSize > 8 && algoInfoSize < MAX_INTLENGTH_SHORT );
 	ENSURES( hashInfoSize > hashSize && hashInfoSize < MAX_INTLENGTH_SHORT );
@@ -46,6 +47,7 @@ int writeMessageDigest( INOUT STREAM *stream,
 						IN_BUFFER( hashSize ) const void *hash, 
 						IN_LENGTH_HASH const int hashSize )
 	{
+	const int hashParam = isParameterisedHashAlgo( hashAlgo ) ? hashSize : 0;
 	int status;
 	
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -54,9 +56,9 @@ int writeMessageDigest( INOUT STREAM *stream,
 	REQUIRES_S( isHashAlgo( hashAlgo ) );
 	REQUIRES_S( hashSize >= 16 && hashSize <= CRYPT_MAX_HASHSIZE );
 
-	writeSequence( stream, sizeofAlgoID( hashAlgo ) + \
+	writeSequence( stream, sizeofAlgoIDex( hashAlgo, hashParam, 0 ) + \
 				   ( int ) sizeofObject( hashSize ) );
-	status = writeAlgoID( stream, hashAlgo );
+	status = writeAlgoIDex( stream, hashAlgo, hashParam, 0 );
 	if( cryptStatusOK( status ) )
 		status = writeOctetString( stream, hash, hashSize, DEFAULT_TAG );
 	return( status );
@@ -69,7 +71,7 @@ int readMessageDigest( INOUT STREAM *stream,
 					   IN_LENGTH_HASH const int hashMaxLen, 
 					   OUT_LENGTH_SHORT_Z int *hashSize )
 	{
-	int status;
+	int hashAlgoSize, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( hashAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
@@ -84,10 +86,19 @@ int readMessageDigest( INOUT STREAM *stream,
 
 	/* Read the message digest, enforcing sensible size values */
 	readSequence( stream, NULL );
-	status = readAlgoID( stream, hashAlgo, ALGOID_CLASS_HASH );
+	status = readAlgoIDex( stream, hashAlgo, NULL, &hashAlgoSize, 
+						   ALGOID_CLASS_HASH );
+	if( cryptStatusOK( status ) )
+		status = readOctetString( stream, hash, hashSize, 16, hashMaxLen );
 	if( cryptStatusError( status ) )
 		return( status );
-	return( readOctetString( stream, hash, hashSize, 16, hashMaxLen ) );
+
+	/* If it's a parameterised hash algorithm, make sure that the amount of 
+	   hash data matches the algorithm parameter */
+	if( hashAlgoSize != 0 && hashAlgoSize != *hashSize )
+		return( CRYPT_ERROR_BADDATA );
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************

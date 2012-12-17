@@ -55,13 +55,13 @@
  *
  */
 
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "ec_lcl.h"
 #else
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#if defined( USE_ECDH ) || defined( USE_ECDSA )
+#if defined( USE_ECDH ) || defined( USE_ECDSA )	/* pcg */
 
 BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx) 
 /* Returns 'ret' such that
@@ -396,4 +396,4 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 	return ret;
 	}
 
-#endif /* USE_ECDH || USE_ECDSA */
+#endif /* USE_ECDH || USE_ECDSA */	/* pcg */

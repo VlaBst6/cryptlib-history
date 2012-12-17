@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							File Stream I/O Functions						*
-*						Copyright Peter Gutmann 1993-2008					*
+*						Copyright Peter Gutmann 1993-2011					*
 *																			*
 ****************************************************************************/
 
@@ -14,6 +14,10 @@
 	 set up as an extern int rather than a function */
   #include "crypt.h"
 #endif /* Older Linux broken include-file dependencies */
+#if defined( __Nucleus__ )
+  /* Some other OSes also have the same problem */
+  #include "crypt.h"
+#endif /* Nucleus */
 
 #include <stdarg.h>
 #if defined( INC_ALL )
@@ -312,7 +316,7 @@ int fileWrite( INOUT STREAM *stream,
 			   IN_BUFFER( length ) const void *buffer, 
 			   IN_LENGTH const int length )
 	{
-	int bytesWritten;
+	int byteCount;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( buffer, length ) );
@@ -320,8 +324,8 @@ int fileWrite( INOUT STREAM *stream,
 	REQUIRES( stream->type == STREAM_TYPE_FILE );
 	REQUIRES( length > 0 && length < MAX_INTLENGTH );
 
-	if( ( bytesWritten = fjwrite( stream->fd, buffer, length ) ) < 0 || \
-		bytesWritten != length )
+	if( ( byteCount = fjwrite( stream->fd, buffer, length ) ) < 0 || \
+		byteCount != length )
 		return( sSetError( stream, CRYPT_ERROR_WRITE ) );
 	return( CRYPT_OK );
 	}
@@ -443,7 +447,7 @@ void fileErase( IN_STRING const char *fileName )
 	if( cryptStatusError( status ) )
 		{
 		if( status != CRYPT_ERROR_NOTFOUND )
-			remove( fileName );
+			fjunlink( fileName );
 		return;
 		}
 
@@ -740,7 +744,7 @@ void fileErase( IN_STRING const char *fileName )
 	if( cryptStatusError( status ) )
 		{
 		if( status != CRYPT_ERROR_NOTFOUND )
-			remove( fileName );
+			FS_Remove( fileName );
 		return;
 		}
 
@@ -1886,6 +1890,315 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 
 /****************************************************************************
 *																			*
+*						Nucleus File Stream Functions						*
+*																			*
+****************************************************************************/
+
+#elif defined( __Nucleus__ )
+
+/* The Nucleus FILE interface is a DOS-like API used to access a standard 
+   FAT filesystem */
+
+/* Open/close a file stream */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
+			   IN_FLAGS( FILE ) const int mode )
+	{
+	static const int modes[] = {
+		PO_RDONLY, PO_RDONLY,
+		PO_WRONLY | PO_CREAT,
+		PO_RDWR
+		};
+	INT fd;
+	int openMode;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( fileName, 2 ) );
+	
+	REQUIRES( mode != 0 );
+
+	/* Initialise the stream structure */
+	memset( stream, 0, sizeof( STREAM ) );
+	stream->type = STREAM_TYPE_FILE;
+	if( ( mode & FILE_FLAG_RW_MASK ) == FILE_FLAG_READ )
+		stream->flags = STREAM_FLAG_READONLY;
+	openMode = modes[ mode & FILE_FLAG_RW_MASK ];
+
+	/* Try and open the file */
+	fd = NU_Open( ( CHAR * ) fileName, openMode, \
+				  ( openMode & PO_CREAT ) ? \
+					( PS_IREAD | PS_IWRITE ) : PS_IREAD );
+	if( fd < NU_SUCCESS )
+		{
+		return( ( fd == NUF_NOFILE ) ? CRYPT_ERROR_NOTFOUND : \
+				( fd == NUF_SHARE || \
+				  fd == NUF_ACCES ) ? CRYPT_ERROR_PERMISSION : \
+				CRYPT_ERROR_OPEN );
+		}
+	stream->fd = fd;
+
+	return( CRYPT_OK );
+	}
+
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sFileClose( INOUT STREAM *stream )
+	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES( stream->type == STREAM_TYPE_FILE );
+
+	/* Close the file and clear the stream structure */
+	NU_Close( stream->fd );
+	zeroise( stream, sizeof( STREAM ) );
+
+	return( CRYPT_OK );
+	}
+
+/* Read/write a block of data from/to a file stream */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+int fileRead( INOUT STREAM *stream, 
+			  OUT_BUFFER( length, *bytesRead ) void *buffer, 
+			  IN_LENGTH const int length, 
+			  OUT_LENGTH_Z int *bytesRead )
+	{
+	INT byteCount;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( buffer, length ) );
+	assert( isWritePtr( bytesRead, sizeof( int ) ) );
+
+	REQUIRES( stream->type == STREAM_TYPE_FILE );
+	REQUIRES( length > 0 && length < MAX_INTLENGTH );
+
+	/* Clear return value */
+	*bytesRead = 0;
+
+	if( ( byteCount = NU_Read( stream->fd, buffer, length ) ) < 0 )
+		return( sSetError( stream, CRYPT_ERROR_READ ) );
+	*bytesRead = byteCount;
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int fileWrite( INOUT STREAM *stream, 
+			   IN_BUFFER( length ) const void *buffer, 
+			   IN_LENGTH const int length )
+	{
+	INT byteCount;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( buffer, length ) );
+
+	REQUIRES( stream->type == STREAM_TYPE_FILE );
+	REQUIRES( length > 0 && length < MAX_INTLENGTH );
+
+	if( ( byteCount = \
+			NU_Write( stream->fd, ( CHAR * ) buffer, length ) ) < 0 || \
+		byteCount != length )
+		return( sSetError( stream, CRYPT_ERROR_WRITE ) );
+
+	return( CRYPT_OK );
+	}
+
+/* Commit data in a file stream to backing storage */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int fileFlush( INOUT STREAM *stream )
+	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES( stream->type == STREAM_TYPE_FILE );
+
+	if( NU_Flush( stream->fd ) != NU_SUCCESS )
+		return( CRYPT_ERROR_WRITE );
+
+	return( CRYPT_OK );
+	}
+
+/* Change the read/write position in a file */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int fileSeek( INOUT STREAM *stream, IN_LENGTH_Z const long position )
+	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES( stream->type == STREAM_TYPE_FILE );
+	REQUIRES( position >= 0 && position < MAX_INTLENGTH );
+
+	if( NU_Seek( stream->fd, position, PSEEK_SET ) < 0 )
+		return( sSetError( stream, CRYPT_ERROR_READ ) );
+
+	return( CRYPT_OK );
+	}
+
+/* Check whether a file is writeable */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN fileReadonly( IN_STRING const char *fileName )
+	{
+	UINT8 attributes;
+
+	assert( isReadPtr( fileName, 2 ) );
+
+	if( NU_Get_Attributes( &attributes, ( CHAR * ) fileName ) != NU_SUCCESS )
+		return( TRUE );
+	return( ( attributes & ( ARDONLY | AHIDDEN | ASYSTEM ) ) ? \
+			TRUE : FALSE );
+	}
+
+/* File deletion functions: Wipe a file from the current position to EOF,
+   and wipe and delete a file (although it's not terribly rigorous).
+   Vestigia nulla retrorsum */
+
+static void eraseFile( const STREAM *stream, long position, long length )
+	{
+	assert( isReadPtr( stream, sizeof( STREAM ) ) );
+	
+	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
+	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
+
+	/* Wipe everything past the current position in the file */
+	while( length > 0 )
+		{
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( BUFSIZ * 2 ) + 8 ];
+		int bytesToWrite = min( length, BUFSIZ * 2 );
+
+		/* We need to make sure that we fill the buffer with random data for
+		   each write, otherwise compressing filesystems will just compress
+		   it to nothing */
+		setMessageData( &msgData, buffer, bytesToWrite );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
+
+		if( NU_Write( stream->fd, ( CHAR * ) buffer, bytesToWrite ) < 0 )
+			break;	/* An error occurred while writing, exit */
+		length -= bytesToWrite;
+		}
+
+	NU_Truncate( stream->fd, position );
+	}
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+void fileClearToEOF( const STREAM *stream )
+	{
+	INT32 length, position;
+
+	assert( isReadPtr( stream, sizeof( STREAM ) ) );
+	
+	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
+
+	/* Wipe everything past the current position in the file */
+	position = NU_Seek( stream->fd, 0, PSEEK_CUR );
+	length = NU_Seek( stream->fd, 0, PSEEK_END ) - position;
+	NU_Seek( stream->fd, position, PSEEK_SET );
+	if( length <= 0 )
+		return;	/* Nothing to do, exit */
+	eraseFile( stream, position, length );
+	}
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+void fileErase( IN_STRING const char *fileName )
+	{
+	STREAM stream;
+	DSTAT statInfo;
+	UINT32 length;
+	int status;
+
+	assert( isReadPtr( fileName, 2 ) );
+
+	/* Try and open the file so that we can erase it.  If this fails, the
+	   best that we can do is a straight unlink */
+	status = sFileOpen( &stream, fileName,
+						FILE_FLAG_READ | FILE_FLAG_WRITE | \
+						FILE_FLAG_EXCLUSIVE_ACCESS );
+	if( cryptStatusError( status ) )
+		{
+		if( status != CRYPT_ERROR_NOTFOUND )
+			NU_Delete( ( CHAR * ) fileName );
+		return;
+		}
+
+	/* Determine the size of the file and erase it */
+	if( NU_Get_First( &statInfo, ( CHAR * ) fileName ) != NU_SUCCESS )
+		{
+		NU_Delete( ( CHAR * ) fileName );
+		return;
+		}
+	length = statInfo.fsize;
+	NU_Done( &statInfo );
+	eraseFile( &stream, 0, length );
+
+	/* Reset the file's attributes */
+	NU_Set_Attributes( ( CHAR * ) fileName, ANORMAL );
+
+	/* Delete the file */
+	sFileClose( &stream );
+	NU_Delete( fileName );
+	}
+
+/* Build the path to a file in the cryptlib directory */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
+						   IN_LENGTH_SHORT const int pathMaxLen, 
+						   OUT_LENGTH_SHORT_Z int *pathLen,
+						   IN_BUFFER( fileNameLen ) const char *fileName, 
+						   IN_LENGTH_SHORT const int fileNameLen,
+						   IN_ENUM( BUILDPATH_OPTION ) \
+						   const BUILDPATH_OPTION_TYPE option )
+	{
+	assert( isWritePtr( path, pathMaxLen ) );
+	assert( isWritePtr( pathLen, sizeof( int ) ) );
+	assert( isReadPtr( fileName, fileNameLen ) );
+
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
+	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
+
+	/* Make sure that the open fails if we can't build the path */
+	*path = '\0';
+
+	/* Build the path to the configuration file if necessary */
+	strlcpy_s( path, pathMaxLen, "c:\\cryptlib\\" );
+
+	/* If we're being asked to create the cryptlib directory and it doesn't
+	   already exist, create it now.  Detecting whether a directory exists 
+	   is a bit tricky, we use NU_Get_First() as a stat()-substitute and
+	   try and create the directory on error.  In theory we could check
+	   speifically for NUF_NOFILE but there could be some other problem
+	   that causes the NU_Get_First() to fail, so we use NU_Make_Dir() as 
+	   the overall error-catcher */
+	if( option == BUILDPATH_CREATEPATH )
+		{
+		DSTAT statInfo;
+
+		if( NU_Get_First( &statInfo, ( CHAR * ) fileName ) != NU_SUCCESS )
+			{
+			/* The directory doesn't exist, try and create it */
+			if( NU_Make_Dir( path ) != NU_SUCCESS )
+				return( CRYPT_ERROR_OPEN );
+			}
+		else
+			NU_Done( &statInfo );
+		}
+
+	/* Add the filename to the path */
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
+	}
+
+/****************************************************************************
+*																			*
 *							Palm OS File Stream Functions					*
 *																			*
 ****************************************************************************/
@@ -2125,11 +2438,15 @@ void fileClearToEOF( const STREAM *stream )
 
 	/* Wipe everything past the current position in the file */
 	if( VFSFileSize( stream->fileRef, &length ) != errNone || \
-		VFSFileTell( stream->fileRef, &position ) != errNone );
+		VFSFileTell( stream->fileRef, &position ) != errNone )
 		return;
 	length -= position;
-	if( length <= 0 )
-		return;	/* Nothing to do, exit */
+	if( length <= 0 || length >= MAX_INTLENGTH )
+		{
+		/* There's nothing to do, exit.  The odd-looking check for a maximum
+		   size is because length is unsigned */
+		return;	
+		}
 	eraseFile( stream, position, length );
 	}
 
@@ -2153,7 +2470,7 @@ void fileErase( IN_STRING const char *fileName )
 	if( cryptStatusError( status ) )
 		{
 		if( status != CRYPT_ERROR_NOTFOUND )
-			remove( fileName );
+			VFSFileDelete( volRefNum, fileName );
 		return;
 		}
 
@@ -2498,7 +2815,7 @@ void fileErase( IN_STRING const char *fileName )
 	if( cryptStatusError( status ) )
 		{
 		if( status != CRYPT_ERROR_NOTFOUND )
-			remove( fileName );
+			fx_file_delete( media, fileName );
 		return;
 		}
 
@@ -2577,10 +2894,10 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 *																			*
 ****************************************************************************/
 
-#elif defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __MVS__ ) || \
-	  defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
-	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
-	  defined( __UNIX__ )
+#elif defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __iOS__ ) || \
+	  defined( __MVS__ ) || defined( __RTEMS__ ) || \
+	  defined( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
+	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ )
 
 /* Tandem doesn't have ftruncate() even though there's a manpage for it
    (which claims that it's prototyped in sys/types.h (!!)).  unistd.h has
@@ -4200,10 +4517,18 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 #ifndef __WINCE__
 	if( !getSysVar( SYSVAR_ISWIN95 ) && \
 		( mode & FILE_FLAG_WRITE ) && ( mode & FILE_FLAG_PRIVATE ) && \
-		checkUserKnown( fileNamePtr, strlen( fileNamePtr ) ) && \
-		( aclInfo = initACLInfo( FILE_GENERIC_READ | \
-								 FILE_GENERIC_WRITE ) ) == NULL )
-		return( CRYPT_ERROR_OPEN );
+		checkUserKnown( fileNamePtr, strlen( fileNamePtr ) ) )
+		{
+		/* It's a filesystem that supports ACLs and it's safe for us to 
+		   apply them, make sure only the current user can access the file.
+		   We have to explicitly request delete access alongside the usual
+		   read and write otherwise the user can't later delete the file
+		   after they've created it */
+		aclInfo = initACLInfo( FILE_GENERIC_READ | FILE_GENERIC_WRITE | \
+							   DELETE );
+		if( aclInfo == NULL )
+			return( CRYPT_ERROR_OPEN );
+		}
 #endif /* __WINCE__ */
 
 	/* Check that the file isn't a special file type, for example a device
@@ -4257,6 +4582,12 @@ int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName,
 			{
 			if( aclInfo != NULL )
 				freeACLInfo( aclInfo );
+
+			/* This is a sufficiently odd problem that we call extra 
+			   attention to it in debug mode */
+			DEBUG_DIAG(( "Attempt to delete file '%s' in order to replace "
+						 "it failed" ));
+			assert( DEBUG_WARN );
 			return( CRYPT_ERROR_PERMISSION );
 			}
 		stream->hFile = CreateFile( fileNamePtr, GENERIC_READ | GENERIC_WRITE, 0,
@@ -5019,8 +5350,6 @@ void fileClearToEOF( const STREAM *stream )
 STDC_NONNULL_ARG( ( 1 ) ) \
 void fileErase( IN_STRING const char *fileName )
 	{
-	STREAM stream;
-
 	assert( isReadPtr( fileName, 2 ) );
 
 	/* Delete the file */
@@ -5439,8 +5768,6 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 	{
 #if defined( __OS2__ )
 	ULONG aulSysInfo[ 1 ] = { 0 };
-#elif defined( __WIN16__ )
-	BOOLEAN gotPath = FALSE;
 #endif /* OS-specific info */
 
 	assert( isWritePtr( path, pathMaxLen ) );

@@ -145,7 +145,7 @@ F90=fl32.exe
 # ADD F90 /I "Debug/"
 # ADD BASE CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /D "NO_ASM" /FD /c
 # SUBTRACT BASE CPP /Fr /YX
-# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /I ".\docs\\" /D "__i386__" /D "NO_ASM" /FD /c
+# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /I ".\docs\\" /D "__i386__" /D "NO_ASM" /D "CROSSCOMPILE" /FD /c
 # SUBTRACT CPP /Fr /YX
 # ADD BASE MTL /nologo /D "_DEBUG" /win32
 # SUBTRACT BASE MTL /mktyplib203
@@ -429,6 +429,10 @@ SOURCE=.\context\ctx_bf.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\context\ctx_cast.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\context\ctx_des.c
 # End Source File
 # Begin Source File
@@ -574,6 +578,18 @@ SOURCE=.\crypt\bfenc.c
 # Begin Source File
 
 SOURCE=.\crypt\bfskey.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\crypt\castecb.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\crypt\castenc.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\crypt\castskey.c
 # End Source File
 # Begin Source File
 
@@ -827,6 +843,10 @@ SOURCE=.\crypt\aescrypt2.obj
 !ENDIF 
 
 # End Source File
+# Begin Source File
+
+SOURCE=".\crypt\c-win32.obj"
+# End Source File
 # End Group
 # Begin Group "Devices"
 
@@ -978,10 +998,6 @@ SOURCE=.\envelope\res_env.c
 # PROP Default_Filter ""
 # Begin Source File
 
-SOURCE=.\io\cmp_tcp.c
-# End Source File
-# Begin Source File
-
 SOURCE=.\io\dns.c
 # End Source File
 # Begin Source File
@@ -1075,6 +1091,10 @@ SOURCE=.\kernel\objects.c
 # Begin Source File
 
 SOURCE=.\kernel\sec_mem.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\kernel\selftest.c
 # End Source File
 # Begin Source File
 

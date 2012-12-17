@@ -55,7 +55,7 @@
 #ifdef TEST_DEVICE
 
 /* Note that Fortezza support was removed as of cryptlib 3.4.0, the Fortezza 
-   test code is still present here for historical purposes but it's not 
+   test code is still present here for historical purposes but it's no 
    longer supported in cryptlib itself */
 
 /* The device code will produce a large number of warnings because of ASCII
@@ -155,12 +155,14 @@
    complete objects) are only visible for the duration of the session that
    created them.
 
-   The Netscape soft-token (softokn3.dll, i.e. NSS) is a bit problematic to
-   use, it requires the presence of three additional libraries (nspr4.dll,
-   plc4.dll, and plds4.dll) in the same directory, and even then 
-   C_Initialize() returns with CKR_ARGUMENTS_BAD.  The easiest way to 
-   arrange to have all the files in the right place is to chdir to 
-   "C:/Program Files/Mozilla Firefox" before loading the DLL.
+   The Netscape soft-token (softokn3.dll, i.e. NSS) is a bit problematic to 
+   use, it requires the presence of three additional libraries (nspr4.dll, 
+   plc4.dll, and plds4.dll) in the same directory, and even then requires 
+   that C_Initialize() be called with proprietary and only partially-
+   documented nonstandard arguments, see the comment in device/pkcs11_init.c 
+   for more on this.  The easiest way to arrange to have all the files in 
+   the right place is to chdir to "C:/Program Files/Mozilla Firefox" before 
+   loading the DLL, but even this doesn't mean that it'll work properly.
 
    The presence of a device entry in this table doesn't necessarily mean
    that the PKCS #11 driver that it comes with functions correctly, or at
@@ -182,6 +184,7 @@ typedef struct {
 static const DEVICE_CONFIG_INFO pkcs11DeviceInfo[] = {
 	{ "[Autodetect]", "Automatically detect device", "test", "Test user key" },
 	{ "ActivCard Cryptoki Library", "ActivCard", "test", "Test user key" },
+	{ "Bloomberg PKCS#11 Library", "Bloomberg", "test1234", "Test user key" },
 	{ "Chrystoki", "Chrysalis Luna", "test", "Test user key" },
 	{ "CryptoFlex", "CryptoFlex", "ABCD1234", "012345678901234567890123456789ME" },
 	{ "Cryptographic Token Interface", "AET SafeSign", "test", "Test user key" },
@@ -198,6 +201,7 @@ static const DEVICE_CONFIG_INFO pkcs11DeviceInfo[] = {
 	{ "Software Only", "Eracom 2.x soft-token", "test", "Test user key" },
 	{ "eToken PKCS#11", "Aladdin eToken", "test", "Test user key" },
 	{ "G&D PKCS#11 Library", "Giesecke and Devrient", "test", "Test user key" },
+	{ "FTSmartCard", "Feitian", "test", "1234" },
 	{ "iButton", "Dallas iButton", "test", "Test user key" },
 	{ "iD2 Cryptographic Library::iD2 Smart Card (PIN1)", "iD2 signature token::Slot 1", "1234", "Digital Signature" },
 	{ "iD2 Cryptographic Library::iD2 Smart Card (PIN2)", "iD2 signature token::Slot 2", "5678", "Non Repudiation" },
@@ -205,6 +209,7 @@ static const DEVICE_CONFIG_INFO pkcs11DeviceInfo[] = {
 	{ "ISG Cryptoki API library", "CryptoSwift card", "test", "Test user key" },
 	{ "Lynks/EES Token in SpyrusNATIVE", "Spyrus Lynks/EES", "test", "Test user key" },
 	{ "NShield 75", "nCipher", "test", "Test user key" },
+	{ "NSS Generic Crypto Services", "Netscape", "test", "Test user key" },
 	{ "PKCS#11 Private Cryptoki", "GemSAFE", "1234", "Test user key" },
 	{ "Safelayer PKCS#11", "Safelayer", "test", "Test user key" },
 	{ "Schlumberger", "Schlumberger", "QWERTYUI", "Test user key" },
@@ -519,9 +524,10 @@ static const DEVICE_CONFIG_INFO *checkLogonDevice( const CRYPT_DEVICE cryptDevic
 		}
 	if( cryptStatusError( status ) )
 		{
-		printf( "\nDevice %s failed with error code %d, line %d.\n",
+		printf( "\nDevice login%s failed with error code %d, line %d.\n",
 				( status == CRYPT_ERROR_WRONGKEY ) ? \
-				"login" : "initialisation/setup", status, __LINE__ );
+					"" : " for initialisation/setup purposes", 
+				status, __LINE__ );
 		if( status == CRYPT_ERROR_WRONGKEY && willInitialise )
 			{
 			/* If we're going to initialise the card, being in the wrong (or
@@ -1097,7 +1103,7 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 			isAutoDetect = TRUE;
 			}
 		else
-			printf( "\nTesting %s %s...\n", deviceInfo->name, deviceName );
+			printf( "\nTesting %s %s...\n", deviceInfo->description, deviceName );
 		status = cryptDeviceOpen( &cryptDevice, CRYPT_UNUSED, deviceType,
 								  deviceInfo->name );
 		}

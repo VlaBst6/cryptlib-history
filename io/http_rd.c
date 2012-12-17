@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib HTTP Read Routines						*
-*						Copyright Peter Gutmann 1998-2007					*
+*						Copyright Peter Gutmann 1998-2011					*
 *																			*
 ****************************************************************************/
 
@@ -65,6 +65,28 @@ static int readCharFunction( INOUT TYPECAST( STREAM * ) void *streamPtr )
 	return( cryptStatusError( status ) ? status : ch );
 	}
 
+/* Clear the HTTP input stream after a soft error has occurred so that 
+   further HTTP transactions can be read */
+
+RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int clearInputStream( INOUT STREAM *stream, 
+							 OUT_BUFFER_FIXED( lineBufSize ) char *lineBuffer, 
+							 IN_LENGTH_SHORT_MIN( 256 ) const int lineBufSize )
+	{
+	HTTP_HEADER_INFO headerInfo;
+	BOOLEAN isSoftError;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( lineBuffer, lineBufSize ) );
+
+	REQUIRES( lineBufSize >= 256 && lineBufSize < MAX_INTLENGTH_SHORT );
+
+	/* Perform a dummy read to clear any remaining HTTP header lines */
+	initHeaderInfo( &headerInfo, 1, 8192, HTTP_FLAG_NOOP );
+	return( readHeaderLines( stream, lineBuffer, lineBufSize,
+							 &headerInfo, &isSoftError ) );
+	}
+
 /****************************************************************************
 *																			*
 *								Read Request Header							*
@@ -84,7 +106,7 @@ static int readRequestHeader( INOUT STREAM *stream,
 	HTTP_HEADER_INFO headerInfo;
 	HTTP_URI_INFO *uriInfo = httpDataInfo->reqInfo;
 	STREAM_HTTPREQTYPE_TYPE reqType = STREAM_HTTPREQTYPE_NONE;
-	BOOLEAN isTextDataError;
+	BOOLEAN isTextDataError, isSoftError;
 	char *bufPtr;
 	int length, offset, reqNameLen = DUMMY_INIT, i, status;
 
@@ -229,13 +251,18 @@ static int readRequestHeader( INOUT STREAM *stream,
 	initHeaderInfo( &headerInfo, 32, httpDataInfo->bufSize, *flags );
 	if( reqType == STREAM_HTTPREQTYPE_GET )
 		{
-		/* It's an HTTP get, make sure that we don't try and read a body */
+		/* It's an HTTP GET, make sure that we don't try and read a body */
 		headerInfo.flags |= HTTP_FLAG_GET;
 		}
 	status = readHeaderLines( stream, lineBuffer, lineBufSize,
-							  &headerInfo );
+							  &headerInfo, &isSoftError );
 	if( cryptStatusError( status ) )
 		{
+		/* If it's a soft error, clear the input stream of any remaining 
+		   header lines */
+		if( isSoftError )
+			clearInputStream( stream, lineBuffer, lineBufSize );
+
 		/* We always (try and) send an HTTP error response once we get to
 		   this stage since chances are that it'll be a problem with an
 		   HTTP header rather than a low-level network read problem */
@@ -269,7 +296,7 @@ static int readResponseHeader( INOUT STREAM *stream,
 							   OUT_FLAGS_Z( HTTP ) int *flags )
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
-	int repeatCount, status;
+	int repeatCount, persistentStatus = CRYPT_OK, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( lineBuffer, lineBufSize ) );
@@ -300,39 +327,44 @@ static int readResponseHeader( INOUT STREAM *stream,
 		 repeatCount++ )
 		{
 		HTTP_HEADER_INFO headerInfo;
-		BOOLEAN needsSpecialHandling = FALSE, isSoftError = FALSE;
+		BOOLEAN needsSpecialHandling = FALSE;
+		BOOLEAN isSoftError, isResponseSoftError;
 		int httpStatus;
 
 		/* Read the response header */
 		status = readFirstHeaderLine( stream, lineBuffer, lineBufSize,
-									  &httpStatus );
+									  &httpStatus, &isResponseSoftError );
 		if( cryptStatusError( status ) )
 			{
 			/* Some errors like an HTTP 404 aren't necessarily fatal in the 
 			   same way as (say) a CRYPT_ERROR_BADDATA because while the 
 			   latter means that the stream has been corrupted and we can't 
 			   continue, the former merely means that the requested item 
-			   wasn't found but we can still submit further requests.  If 
-			   the caller has indicated that they want certain errors to be
-			   treated as nonfatal, continue processing the stream and then
-			   report the error later */
-			if( httpDataInfo->softErrors && httpStatus == 404 )
-				isSoftError = TRUE;
-
-			if( status != OK_SPECIAL && !isSoftError )
+			   wasn't found but we can still submit further requests */
+			if( !isResponseSoftError )
 				return( status );
 
-			/* It's a special-case header (e.g. a 100 Continue), turn the 
-			   read into a no-op read that drains the input to get to the 
-			   real data */
+			/* Turn the read into a no-op read that drains the input to get 
+			   to the next set of data, and if it's a special-case header 
+			   (e.g. a 100 Continue) remember that it needs special handling
+			   later */
+			persistentStatus = status;
 			*flags |= HTTP_FLAG_NOOP;
-			needsSpecialHandling = TRUE;
+			if( status == OK_SPECIAL )
+				needsSpecialHandling = TRUE;
 			}
 
 		/* Process the remaining header lines.  5 bytes is the minimum-size
 		   object that can be returned from any HTTP-based message which is
 		   exchanged by cryptlib, this being an OCSP response containing a
 		   single-byte status value, i.e. SEQUENCE { ENUM x }.
+
+		   A soft error at this stage is different from a response soft
+		   error (for example one arising from a 403, which is a valid 
+		   response but not the one desired) because it's an error in an 
+		   HTTP header line, which is an invalid response but not a fatal
+		   error.  If we get a soft error at this point we clear the
+		   remaining input in order to allow further input to be processed.
 
 		   If the read buffer is dynamically allocated then we allow an
 		   effectively arbitrary content length, otherwise it has to fit 
@@ -348,9 +380,13 @@ static int readResponseHeader( INOUT STREAM *stream,
 							httpDataInfo->bufSize,
 						*flags );
 		status = readHeaderLines( stream, lineBuffer, lineBufSize,
-								  &headerInfo );
+								  &headerInfo, &isSoftError );
 		if( cryptStatusError( status ) )
+			{
+			if( isSoftError )
+				clearInputStream( stream, lineBuffer, lineBufSize );
 			return( status );
+			}
 
 		/* Copy any status info back to the caller */
 		*flags = headerInfo.flags & ~HTTP_FLAG_NOOP;
@@ -359,8 +395,11 @@ static int readResponseHeader( INOUT STREAM *stream,
 		/* If this was a soft error due to not finding the requested item, 
 		   pass the status on to the caller.  The low-level error
 		   information will still be present from readFirstHeaderLine() */
-		if( isSoftError )
-			return( CRYPT_ERROR_NOTFOUND );
+		if( isResponseSoftError )
+			{
+			return( cryptStatusError( persistentStatus ) ? \
+					persistentStatus : CRYPT_ERROR_NOTFOUND );
+			}
 
 		/* If it's not something like a redirect that needs special-case
 		   handling, we're done */
@@ -375,6 +414,15 @@ static int readResponseHeader( INOUT STREAM *stream,
 		if( httpStatus == 100 )
 			continue;
 
+		/* A redirect isn't permitted for anything other than an HTTP GET */
+		if( !( netStream->nFlags & STREAM_NFLAG_HTTPGET ) )
+			{
+			retExt( CRYPT_ERROR_READ,
+					( CRYPT_ERROR_READ, NETSTREAM_ERRINFO, 
+					  "Received invalid HTTP %d redirect during message "
+					  "exchange", httpStatus ) );
+			}			
+
 		/* If we got a 301, 302, or 307 Redirect then in theory we should
 		   proceed roughly as per the code below, however in practice it's
 		   not nearly as simple as this, because what we're in effect doing
@@ -386,6 +434,10 @@ static int readResponseHeader( INOUT STREAM *stream,
 		   new stream, clean up the old one, and perform a deep copy of the
 		   new stream over to the old one.  We'll leave this for a time when
 		   it's really needed.
+
+		   A less problematic variant occurs when the GET redirects to a 
+		   different abs-path on the same server, which just requires 
+		   resubmitting the GET with a different abs-path.
 
 		   In addition the semantics of the following pseudocode don't quite
 		   match those of RFC 2616 because of the HTTP-as-a-substrate use

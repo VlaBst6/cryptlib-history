@@ -5,7 +5,7 @@ interface
 {****************************************************************************
 *                                                                           *
 *                     Cryptlib external API interface                       *
-*                    Copyright Peter Gutmann 1997-2010                      *
+*                    Copyright Peter Gutmann 1997-2012                      *
 *                                                                           *
 *        adapted for Delphi Version 5 (32 bit) and Kylix Version 3          *
 *                              by W. Gothier                                *
@@ -16,7 +16,7 @@ interface
 
  This file has been created automatically by a perl script from the file:
 
- "cryptlib.h" dated Tue Nov 30 16:05:00 2010, filesize = 97720.
+ "cryptlib.h" dated Wed Aug 29 15:34:08 2012, filesize = 97645.
 
  Please check twice that the file matches the version of cryptlib.h
  in your cryptlib source! If this is not the right version, try to download an
@@ -42,7 +42,7 @@ const
 
 
 const
-  CRYPTLIB_VERSION = 3400;
+  CRYPTLIB_VERSION = 3410;
 
 {****************************************************************************
 *                                                                           *
@@ -63,30 +63,28 @@ const
   { Conventional encryption }
   CRYPT_ALGO_DES = 1;  { DES }
   CRYPT_ALGO_3DES = 2;  { Triple DES }
-  CRYPT_ALGO_IDEA = 3;  { IDEA }
-  CRYPT_ALGO_CAST = 4;  { CAST-128 }
-  CRYPT_ALGO_RC2 = 5;  { RC2 }
+  CRYPT_ALGO_IDEA = 3;  { IDEA (only used for PGP 2.x) }
+  CRYPT_ALGO_CAST = 4;  { CAST-128 (only used for OpenPGP) }
+  CRYPT_ALGO_RC2 = 5;  { RC2 (disabled by default) }
   CRYPT_ALGO_RC4 = 6;  { RC4 }
   CRYPT_ALGO_RC5 = 7;  { RC5 }
   CRYPT_ALGO_AES = 8;  { AES }
   CRYPT_ALGO_BLOWFISH = 9;  { Blowfish }
-  CRYPT_ALGO_SKIPJACK = 10;  { Skipjack }
   
   { Public-key encryption }
   CRYPT_ALGO_DH = 100;  { Diffie-Hellman }
   CRYPT_ALGO_RSA = 101;  { RSA }
   CRYPT_ALGO_DSA = 102;  { DSA }
   CRYPT_ALGO_ELGAMAL = 103;  { ElGamal }
-  CRYPT_ALGO_KEA = 104;  { KEA }
+  CRYPT_ALGO_RESERVED1 = 104;  { Formerly KEA }
   CRYPT_ALGO_ECDSA = 105;  { ECDSA }
   CRYPT_ALGO_ECDH = 106;  { ECDH }
   
   { Hash algorithms }
-  CRYPT_ALGO_MD2 = 200;  { MD2 }
-  CRYPT_ALGO_MD4 = 201;  { MD4 }
+  CRYPT_ALGO_RESERVED2 = 200;  { Formerly MD2 }
+  CRYPT_ALGO_RESERVED3 = 201;  { Formerly MD4 }
   CRYPT_ALGO_MD5 = 202;  { MD5 }
   CRYPT_ALGO_SHA1 = 203;  { SHA/SHA1 }
-  CRYPT_ALGO_SHA = 203; { = CRYPT_ALGO_SHA1 }  { Older form }
   CRYPT_ALGO_RIPEMD160 = 204;  { RIPE-MD 160 }
   CRYPT_ALGO_SHA2 = 205;  { SHA-256 }
   CRYPT_ALGO_SHA256 = 205; { = CRYPT_ALGO_SHA2 }  { Alternate name }
@@ -95,7 +93,6 @@ const
   { MAC's }
   CRYPT_ALGO_HMAC_MD5 = 300;  { HMAC-MD5 }
   CRYPT_ALGO_HMAC_SHA1 = 301;  { HMAC-SHA }
-  CRYPT_ALGO_HMAC_SHA = 301; { = CRYPT_ALGO_HMAC_SHA1 }  { Older form }
   CRYPT_ALGO_HMAC_RIPEMD160 = 302;  { HMAC-RIPEMD-160 }
   CRYPT_ALGO_HMAC_SHA2 = 303;  { HMAC-SHA2 }
   CRYPT_ALGO_HMAC_SHAng = 304;  { HMAC-future-SHA-nextgen }
@@ -112,14 +109,14 @@ const
   { In order that we can scan through a range of algorithms with
   cryptQueryCapability(), we define the following boundary points for
   each algorithm class }
-  CRYPT_ALGO_FIRST_CONVENTIONAL = 1; { = CRYPT_ALGO_DES }  
+  CRYPT_ALGO_FIRST_CONVENTIONAL = 1;  
   CRYPT_ALGO_LAST_CONVENTIONAL = 99;  
-  CRYPT_ALGO_FIRST_PKC = 100; { = CRYPT_ALGO_DH }  
+  CRYPT_ALGO_FIRST_PKC = 100;  
   CRYPT_ALGO_LAST_PKC = 199;  
-  CRYPT_ALGO_FIRST_HASH = 200; { = CRYPT_ALGO_MD2 }  
+  CRYPT_ALGO_FIRST_HASH = 200;  
   CRYPT_ALGO_LAST_HASH = 299;  
-  CRYPT_ALGO_FIRST_MAC = 300; { = CRYPT_ALGO_HMAC_MD5 }  
-  CRYPT_ALGO_LAST_MAC = 399;  { End of mac algo.range }
+  CRYPT_ALGO_FIRST_MAC = 300;  
+  CRYPT_ALGO_LAST_MAC = 399;  
   
 
 
@@ -158,7 +155,7 @@ type
 
   CRYPT_DEVICE_TYPE = (                        {  Crypto device types  }
     CRYPT_DEVICE_NONE,              {  No crypto device  }
-    CRYPT_DEVICE_FORTEZZA,          {  Fortezza card  }
+    CRYPT_DEVICE_FORTEZZA,          {  Fortezza card - Placeholder only  }
     CRYPT_DEVICE_PKCS11,            {  PKCS #11 crypto token  }
     CRYPT_DEVICE_CRYPTOAPI,         {  Microsoft CryptoAPI  }
     CRYPT_DEVICE_HARDWARE,          {  Generic crypo HW plugin  }
@@ -475,6 +472,7 @@ const
   CRYPT_CERTINFO_EDIPARTYNAME_NAMEASSIGNER = 2111;  { ediPartyName.nameAssigner }
   CRYPT_CERTINFO_EDIPARTYNAME_PARTYNAME = 2112;  { ediPartyName.partyName }
   CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER = 2113;  { uniformResourceIdentifier }
+  CRYPT_CERTINFO_URL = 2113; { = CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER }  
   CRYPT_CERTINFO_IPADDRESS = 2114;  { iPAddress }
   CRYPT_CERTINFO_REGISTEREDID = 2115;  { registeredID }
   
@@ -1737,15 +1735,6 @@ function cryptDestroyObject( const cryptObject: CRYPT_HANDLE ): Integer;
 {  Generate a key into a context  }
 
 function cryptGenerateKey( const cryptContext: CRYPT_CONTEXT ): Integer;
-{$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
-
-function cryptGenerateKeyAsync( const cryptContext: CRYPT_CONTEXT ): Integer;
-{$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
-
-function cryptAsyncQuery( const cryptObject: CRYPT_HANDLE ): Integer;
-{$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
-
-function cryptAsyncCancel( const cryptObject: CRYPT_HANDLE ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 

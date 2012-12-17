@@ -389,8 +389,7 @@ int setSessionAttributeCursor( IN_OPT const ATTRIBUTE_LIST *attributeListHead,
 	assert( isWritePtr( attributeListCursorPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	
 	REQUIRES( sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
-			  sessionInfoType == CRYPT_ATTRIBUTE_CURRENT || \
-			  sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_INSTANCE );
+			  sessionInfoType == CRYPT_ATTRIBUTE_CURRENT );
 	REQUIRES( position <= CRYPT_CURSOR_FIRST && \
 			  position >= CRYPT_CURSOR_LAST );
 

@@ -707,7 +707,7 @@ int readDNstring( INOUT_PTR DN_PTR **dnComponentListPtrPtr,
 			 innerIterationCount++ )
 			{
 			CRYPT_ERRTYPE_TYPE dummy;
-			const DN_COMPONENT_INFO *dnComponentInfo = NULL;
+			const DN_COMPONENT_INFO *dnComponentInfo;
 			BYTE textBuffer[ MAX_ATTRIBUTE_SIZE + 8 ];
 			CRYPT_ATTRIBUTE_TYPE type;
 			int i, textIndex = 0, valueStringType, dummy1, dummy2, status;
@@ -921,6 +921,7 @@ int writeDNstring( INOUT STREAM *stream,
 			if( cryptStatusError( status ) )
 				return( status );
 			dnComponentCursor = dnComponentCursor->next;
+			ENSURES( dnComponentCursor != NULL );
 			}
 		ENSURES( innerIterationCount < FAILSAFE_ITERATIONS_MED );
 

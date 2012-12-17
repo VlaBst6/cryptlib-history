@@ -20,6 +20,9 @@
   #include <unistd.h>		/* For lseek() codes */
 #elif defined( __MAC__ )
   #include <Files.h>
+#elif defined( __Nucleus__ )
+  #include <nucleus.h>
+  #include <pcdisk.h>
 #elif defined( __PALMOS__ )
   #include <VFSMgr.h>
 #elif defined( __UCOSII__ )
@@ -78,6 +81,7 @@ typedef enum {
 	STREAM_IOCTL_GETCLIENTNAME,		/* Get client name */
 	STREAM_IOCTL_GETCLIENTNAMELEN,	/* Get client name length */
 	STREAM_IOCTL_GETCLIENTPORT,		/* Get client port */
+	STREAM_IOCTL_GETPEERTYPE,		/* Get peer system type */
 	STREAM_IOCTL_HTTPREQTYPES,		/* Permitted HTTP request types */
 	STREAM_IOCTL_LASTMESSAGE,		/* CMP last message in transaction */
 	STREAM_IOCTL_CLOSESENDCHANNEL,	/* Close send side of channel */
@@ -91,9 +95,18 @@ typedef enum {
 	STREAM_HTTPREQTYPE_NONE,		/* No HTTP request type */
 	STREAM_HTTPREQTYPE_GET,			/* HTTP GET only */
 	STREAM_HTTPREQTYPE_POST,		/* HTTP POST only */
+	STREAM_HTTPREQTYPE_POST_AS_GET,	/* HTTP GET acting as a POST (b0rken svrs) */
 	STREAM_HTTPREQTYPE_ANY,			/* HTTP GET or POST */
 	STREAM_HTTPREQTYPE_LAST			/* Last possible HTTP request type */
 	} STREAM_HTTPREQTYPE_TYPE;
+
+/* Options for STREAM_IOCTL_GETPEERTYPE */
+
+typedef enum {
+	STREAM_PEER_NONE,					/* No information available */
+	STREAM_PEER_MICROSOFT,				/* Microsoft IIS */
+	STREAM_PEER_LAST
+	} STREAM_PEER_TYPE;
 
 /* Stream network protocol types */
 
@@ -101,7 +114,6 @@ typedef enum {
 	STREAM_PROTOCOL_NONE,			/* No protocol type */
 	STREAM_PROTOCOL_TCPIP,			/* TCP/IP */
 	STREAM_PROTOCOL_HTTP,			/* HTTP */
-	STREAM_PROTOCOL_CMP,			/* TCP/IP with CMP packets */
 	STREAM_PROTOCOL_LAST			/* Last possible protocol type */
 	} STREAM_PROTOCOL_TYPE;
 
@@ -149,6 +161,7 @@ typedef struct ST {
 	char name[ MAX_PATH_LENGTH + 8 ];/* Data item associated with stream */
   #endif /* __TESTIO__ */
 #elif defined( __AMX__ ) || defined( __BEOS__ ) || defined( __ECOS__ ) || \
+	  defined( __iOS__ ) || \
 	  ( defined( __MVS__ ) && !defined( CONFIG_NO_STDIO ) ) || \
 	  defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
 	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
@@ -174,6 +187,8 @@ typedef struct ST {
   #elif defined( __MVS__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
 	char name[ MAX_PATH_LENGTH + 8 ];/* Data item associated with stream */
   #endif /* Nonstandard I/O enviroments */
+#elif defined( __Nucleus__ )
+	INT fd;						/* File handle */
 #else
 	FILE *filePtr;				/* The file associated with this stream */
 #endif /* System-specific file I/O information */
@@ -235,7 +250,6 @@ typedef struct {
 typedef enum {
 	NET_OPTION_NONE,			/* No connect option type */
 	NET_OPTION_HOSTNAME,		/* Use host/interface name + port */
-	NET_OPTION_HOSTNAME_TUNNEL,	/* Use host + port tunnelled via proxy */
 	NET_OPTION_TRANSPORTSESSION,/* Use network transport session */
 	NET_OPTION_NETWORKSOCKET,	/* Use user-supplied network socket */
 	NET_OPTION_NETWORKSOCKET_DUMMY,	/* Dummy open to check socket OK */
@@ -302,15 +316,8 @@ typedef struct {
 	   arbitrary-length input.  If the buffer was resized during the read 
 	   then the flag is returned set and the caller has to reset their read 
 	   buffer to { buffer, bufSize }.  If no resize took place then the flag 
-	   is returned cleared.
-	   
-	   If the softErrors flag is set then errors like a CRYPT_ERROR_NOTFOUND 
-	   (= HTTP 404) are treated as non-fatal because while (say) a 
-	   CRYPT_ERROR_BADDATA means that the stream has been corrupted and we 
-	   can't continue, the former merely indicates that the requested item 
-	   wasn't found but we can still submit further requests */
+	   is returned cleared */
 	BOOLEAN bufferResize;			/* Buffer is resizeable */
-	BOOLEAN softErrors;				/* Treat soft errors as nonfatal */
 
 	/* The client's request type and request info (for HTTP GET), and the 
 	   server's status in response to a client GET request */
@@ -487,16 +494,14 @@ int sNetParseURL( OUT URL_INFO *urlInfo,
 				  IN_ENUM_OPT( URL_TYPE ) const URL_TYPE urlTypeHint );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int sNetConnect( OUT STREAM *stream, 
-				 IN_ENUM( STREAM_PROTOCOL ) \
-				 const STREAM_PROTOCOL_TYPE protocol,
+				 IN_ENUM( STREAM_PROTOCOL ) const STREAM_PROTOCOL_TYPE protocol,
 				 const NET_CONNECT_INFO *connectInfo, 
-				 INOUT ERROR_INFO *errorInfo );
+				 OUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int sNetListen( OUT STREAM *stream, 
-				IN_ENUM( STREAM_PROTOCOL ) \
-				const STREAM_PROTOCOL_TYPE protocol,
+				IN_ENUM( STREAM_PROTOCOL ) const STREAM_PROTOCOL_TYPE protocol,
 				const NET_CONNECT_INFO *connectInfo, 
-				INOUT ERROR_INFO *errorInfo );
+				OUT ERROR_INFO *errorInfo );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sNetDisconnect( INOUT STREAM *stream );
 STDC_NONNULL_ARG( ( 1, 2 ) ) \

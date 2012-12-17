@@ -105,7 +105,7 @@ int debugPrintf( const char *format, ... )
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static void buildFilePath( IN_STRING const char *fileName,
-						   OUT_BUFFER_FIXED( 1024 ) char *filenameBuffer )
+						   OUT_BUFFER_FIXED_C( 1024 ) char *filenameBuffer )
 	{
 	int i;
 
@@ -123,8 +123,10 @@ static void buildFilePath( IN_STRING const char *fileName,
 #else
 		strlcpy_s( filenameBuffer, 1024, "/tmp/" );
 #endif /* __WIN32__ */
+		strlcat_s( filenameBuffer, 1024, fileName );
 		}
-	strlcat_s( filenameBuffer, 1024, fileName );
+	else
+		strlcpy_s( filenameBuffer, 1024, fileName );
 	strlcat_s( filenameBuffer, 1024, ".der" );
 	}
 
@@ -188,7 +190,7 @@ void debugDumpFileCert( IN_STRING const char *fileName,
 							  CRYPT_CERTFORMAT_CERTIFICATE );
 	if( cryptStatusOK( status ) )
 		{
-		count = fwrite( msgData.data, 1, msgData.length, filePtr );
+		count = fwrite( certData, 1, msgData.length, filePtr );
 		assert( count == msgData.length );
 		}
 	fclose( filePtr );
@@ -305,6 +307,24 @@ void debugDumpStream( INOUT /*STREAM*/ void *streamPtr,
 		return;
 	ANALYSER_HINT( dataPtr != NULL );
 	debugDumpData( dataPtr, length );
+	}
+
+/* Support function used to access the text string data from an ERROR_INFO
+   structure.  Note that this function isn't thread-safe, but that should be
+   OK since it's only used for debugging */
+
+const char *getErrorInfoString( ERROR_INFO *errorInfo )
+	{
+	static char errorInfoString[ MAX_ERRMSG_SIZE + 1 + 8 ];
+
+	if( errorInfo->errorStringLength <= 0 )
+		return( "<<<No further information available>>>" );
+
+	memcpy( errorInfoString, errorInfo->errorString, 
+			errorInfo->errorStringLength );
+	errorInfoString[ errorInfo->errorStringLength ] = '\0';
+
+	return( errorInfoString );
 	}
 
 /* Support function used with streams to pull data bytes out of the stream,

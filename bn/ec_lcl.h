@@ -71,9 +71,7 @@
 
 
 #include <stdlib.h>
-
-//#include <openssl/obj_mac.h>
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "bn.h"
   #include "ec.h"
 #else
@@ -210,11 +208,14 @@ struct ec_group_st {
 	               * irreducible polynomial defining the field.
 	               */
 
-	unsigned int poly[5]; /* Field specification for curves over GF(2^m).
-	                       * The irreducible f(t) is then of the form:
-	                       *     t^poly[0] + t^poly[1] + ... + t^poly[k]
-	                       * where m = poly[0] > poly[1] > ... > poly[k] = 0.
-	                       */
+	int poly[6]; /* Field specification for curves over GF(2^m).
+	              * The irreducible f(t) is then of the form:
+	              *     t^poly[0] + t^poly[1] + ... + t^poly[k]
+	              * where m = poly[0] > poly[1] > ... > poly[k] = 0.
+	              * The array is terminated with poly[k+1]=-1.
+	              * All elliptic curve irreducibles have at most 5
+	              * non-zero terms.
+	              */
 
 	BIGNUM a, b; /* Curve coefficients.
 	              * (Here the assumption is that BIGNUMs can be used

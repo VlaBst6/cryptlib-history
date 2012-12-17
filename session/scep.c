@@ -53,21 +53,29 @@ void destroySCEPprotocolInfo( INOUT SCEP_PROTOCOL_INFO *protocolInfo )
    because we could be dealing with an RA, which isn't necessarily a CA */
 
 CHECK_RETVAL_BOOL \
-BOOLEAN checkCACert( IN_HANDLE const CRYPT_CERTIFICATE iCaCert )
+BOOLEAN checkSCEPCACert( IN_HANDLE const CRYPT_CERTIFICATE iCaCert,
+ 						 IN_FLAGS( KEYMGMT ) const int options )
 	{
-	int status;
-
 	REQUIRES_B( isHandleRangeValid( iCaCert ) );
+	REQUIRES_B( options == KEYMGMT_FLAG_NONE || \
+				options == KEYMGMT_FLAG_USAGE_CRYPT || \
+				options == KEYMGMT_FLAG_USAGE_SIGN );
 
 	krnlSendMessage( iCaCert, IMESSAGE_SETATTRIBUTE,
 					 MESSAGE_VALUE_CURSORFIRST,
 					 CRYPT_CERTINFO_CURRENT_CERTIFICATE );
-	status = krnlSendMessage( iCaCert, IMESSAGE_CHECK, NULL,
-							  MESSAGE_CHECK_PKC_ENCRYPT );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( iCaCert, IMESSAGE_CHECK, NULL,
-								  MESSAGE_CHECK_PKC_SIGCHECK );
-	return( cryptStatusOK( status ) ? TRUE : FALSE );
+	if( options != KEYMGMT_FLAG_USAGE_SIGN && \
+		cryptStatusError( \
+			krnlSendMessage( iCaCert, IMESSAGE_CHECK, NULL,
+							 MESSAGE_CHECK_PKC_ENCRYPT ) ) )
+		return( FALSE );
+	if( options != KEYMGMT_FLAG_USAGE_CRYPT && \
+		cryptStatusError( \
+			krnlSendMessage( iCaCert, IMESSAGE_CHECK, NULL,
+							 MESSAGE_CHECK_PKC_SIGCHECK ) ) )
+		return( FALSE );
+
+	return( TRUE );
 	}
 
 /* Generate/check the server certificate fingerprint */
@@ -178,8 +186,10 @@ int createScepAttributes( INOUT SESSION_INFO *sessionInfoPtr,
 							  &msgData, CRYPT_CERTINFO_SCEP_TRANSACTIONID );
 	if( cryptStatusOK( status ) )
 		{
-		const char *messageType = isInitiator ? MESSAGETYPE_PKCSREQ : \
-												MESSAGETYPE_CERTREP;
+		const char *messageType = isInitiator ? \
+			( ( sessionInfoPtr->sessionSCEP->flags & SCEP_PFLAG_PENDING ) ? \
+				MESSAGETYPE_GETCERTINITIAL : MESSAGETYPE_PKCSREQ ) : \
+			MESSAGETYPE_CERTREP;
 
 		setMessageData( &msgData, ( MESSAGE_CAST ) messageType, 
 						strlen( messageType ) );
@@ -192,32 +202,36 @@ int createScepAttributes( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 		}
 
-	/* Add the message status */
-	if( !isInitiator && cryptStatusError( scepStatus ) )
+	/* Add the message status if we're the responder */
+	if( !isInitiator )
 		{
-		/* SCEP provides an extremely limited set of error codes so there's 
-		   not much that we can return in the way of additional failure 
-		   information */
-		setMessageData( &msgData, ( scepStatus == CRYPT_ERROR_SIGNATURE ) ? \
-							MESSAGEFAILINFO_BADMESSAGECHECK : \
-							MESSAGEFAILINFO_BADREQUEST,
-						MESSAGEFAILINFO_SIZE );
-		krnlSendMessage( iCmsAttributes, IMESSAGE_SETATTRIBUTE_S,
-						 &msgData, CRYPT_CERTINFO_SCEP_FAILINFO );
-		setMessageData( &msgData, MESSAGESTATUS_FAILURE,
-						MESSAGESTATUS_SIZE );
-		}
-	else
-		{
-		setMessageData( &msgData, MESSAGESTATUS_SUCCESS, 
-						MESSAGESTATUS_SIZE );
-		}
-	status = krnlSendMessage( iCmsAttributes, IMESSAGE_SETATTRIBUTE_S,
-							  &msgData, CRYPT_CERTINFO_SCEP_PKISTATUS );
-	if( cryptStatusError( status ) )
-		{
-		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
-		return( status );
+		if( cryptStatusError( scepStatus ) )
+			{
+			/* SCEP provides an extremely limited set of error codes so 
+			   there's not much that we can return in the way of additional 
+			   failure information */
+			setMessageData( &msgData, 
+							( scepStatus == CRYPT_ERROR_SIGNATURE ) ? \
+								MESSAGEFAILINFO_BADMESSAGECHECK : \
+								MESSAGEFAILINFO_BADREQUEST,
+							MESSAGEFAILINFO_SIZE );
+			krnlSendMessage( iCmsAttributes, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData, CRYPT_CERTINFO_SCEP_FAILINFO );
+			setMessageData( &msgData, MESSAGESTATUS_FAILURE,
+							MESSAGESTATUS_SIZE );
+			}
+		else
+			{
+			setMessageData( &msgData, MESSAGESTATUS_SUCCESS, 
+							MESSAGESTATUS_SIZE );
+			}
+		status = krnlSendMessage( iCmsAttributes, IMESSAGE_SETATTRIBUTE_S,
+								  &msgData, CRYPT_CERTINFO_SCEP_PKISTATUS );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
 		}
 
 	/* Add the nonce, identified as a sender nonce if we're the initiator and 
@@ -340,9 +354,15 @@ static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 	if( type == CRYPT_SESSINFO_CACERTIFICATE )
 		{
-		/* Make sure that the CA certificate meets the SCEP protocol 
-		   requirements */
-		if( !checkCACert( cryptCert ) )
+		/* Make sure that the CA certificate has the unusual additional 
+		   capabilities that are required to meet the SCEP protocol 
+		   requirements.  Microsoft's SCEP server generates and uses 
+		   CA certs that only have CRYPT_KEYUSAGE_KEYENCIPHERMENT set but 
+		   not CRYPT_KEYUSAGE_DIGITALSIGNATURE, making them unusable for 
+		   SCEP, so this check will reject anything coming from a Microsoft 
+		   server unless the certificate compliance level is set to 
+		   oblivious */
+		if( !checkSCEPCACert( cryptCert, KEYMGMT_FLAG_NONE ) )
 			{
 			setErrorInfo( sessionInfoPtr, CRYPT_CERTINFO_KEYUSAGE,
 						  CRYPT_ERRTYPE_ATTR_VALUE );

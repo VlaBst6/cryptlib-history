@@ -152,6 +152,16 @@ int hashEnvelopeData( const ACTION_LIST *actionListPtr,
 			actionListPtr->action != ACTION_MAC )
 			continue;
 
+		/* If the hashing has already been completed due to it being an
+		   externally-supplied value for a detached signature, we don't need 
+		   to do anything further */
+		if( actionListPtr->flags & ACTION_HASHCOMPLETE )
+			{
+			REQUIRES( dataLength == 0 );
+
+			continue;
+			}
+
 		status = krnlSendMessage( actionListPtr->iCryptHandle,
 								  IMESSAGE_CTX_HASH, ( MESSAGE_CAST ) data, 
 								  dataLength );
@@ -491,16 +501,20 @@ static int completeSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 
 	/* If we're enveloping data using indefinite encoding and we're not at
-	   the end of the data, don't emit a sub-segment containing less then 10
+	   the end of the data, don't emit a sub-segment containing less then 32
 	   bytes of data.  This is to protect against users who write code that
 	   performs byte-at-a-time enveloping, at least we can quantize the data
-	   amount to make it slightly more efficient.  As a side-effect it 
-	   avoids occasional inefficiencies at boundaries where one or two bytes
-	   may still be hanging around from a previous data block since they'll
-	   be coalesced into the following block */
+	   amount to make it slightly more efficient.  The reason for the
+	   magic value of 32 bytes is that with a default buffer size of 32K 
+	   the loop exit at FAILSAFE_ITERATIONS_LARGE in copyToDeenvelope() 
+	   won't be triggered if the user's code produces worst-case conditions.
+	   
+	   As a side-effect it avoids occasional inefficiencies at boundaries 
+	   where one or two bytes may still be hanging around from a previous 
+	   data block since they'll be coalesced into the following block */
 	if( !forceCompletion && \
 		envelopeInfoPtr->payloadSize == CRYPT_UNUSED && \
-		( envelopeInfoPtr->bufPos - envelopeInfoPtr->segmentDataStart ) < 10 )
+		( envelopeInfoPtr->bufPos - envelopeInfoPtr->segmentDataStart ) < 32 )
 		{
 		/* We can't emit any of the small sub-segment, however there may be
 		   (non-)data preceding this that we can hand over so we set the
@@ -719,10 +733,10 @@ static int copyToEnvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* If we're generating a detached signature just hash the data and exit */
 	if( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG )
 		{
-		/* Unlike CMS, PGP handles authenticated attributes by extending the
-		   hashing of the payload data to cover the additional attributes
-		   so if this is a flush and we're using the PGP format we can't
-		   wrap up the hashing yet */
+		/* Unlike CMS, PGP handles authenticated attributes by extending the 
+		   hashing of the payload data to cover the additional attributes 
+		   so if this is a flush and we're using the PGP format then we 
+		   can't wrap up the hashing yet */
 		if( length <= 0 && envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
 			return( 0 );
 

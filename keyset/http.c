@@ -141,14 +141,6 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 						  keysetInfoPtr->keyDataSize );
 		}
 
-	/* Some errors like a CRYPT_ERROR_NOTFOUND (= HTTP 404) aren't fatal in
-	   the same way as (say) a CRYPT_ERROR_BADDATA because while the latter
-	   means that the stream has been corrupted and we can't continue the
-	   former merely means that the requested certificate wasn't found but
-	   we can still submit further requests.  To let the lower-level code
-	   know this we set the HTTP_FLAG_SOFTERRORS flag */
-	httpDataInfo.softErrors = TRUE;
-
 	/* Send the request to the server.  Since we don't know the size of the 
 	   data being read in advance we have to tell the stream I/O code to 
 	   adjust the read buffer size if necessary */

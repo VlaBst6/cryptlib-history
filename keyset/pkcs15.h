@@ -319,7 +319,8 @@ PKCS15_INFO *findEntry( IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15inf
 						IN_ENUM( CRYPT_KEYID ) const CRYPT_KEYID_TYPE keyIDtype,
 						IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
 						IN_LENGTH_KEYID_Z const int keyIDlength,
-						IN_FLAGS_Z( KEYMGMT ) const int requestedUsage );
+						IN_FLAGS_Z( KEYMGMT ) const int requestedUsage,
+						const BOOLEAN isWildcardMatch );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 PKCS15_INFO *findFreeEntry( IN_ARRAY( noPkcs15objects ) \
 								const PKCS15_INFO *pkcs15info,

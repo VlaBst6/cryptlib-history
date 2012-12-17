@@ -56,21 +56,25 @@ CCARGS="`./tools/endian`"
 
 # Check whether we're building on one of the development clusters, which
 # allows enabling various unsafe test-only options.  We have to be a bit
-# careful with the Gnu compile farm because it doesn't use FQDNs for the
-# machines, so we check as much as we can and only allow machines on a
-# whitelist to narrow down false positives.
+# careful with some of the machines (CS login02, fish, and the Gnu compile 
+# farm) because they don't use FQDNs for the machines, so we check as much 
+# as we can and (for the Gnu compile farm) only allow machines on a 
+# whitelist to narrow down false positives (unfortunately the filtering 
+# isn't terribly restrictive because "Linux x86-64" is practically
+# universal).
 
 ISDEVELOPMENT=0
-if [ `uname -n | grep -c wintermute0[0-9].cs.auckland.ac.nz` -gt 0 -o \
-	 `uname -n | grep -c login0[0-9].fos.auckland.ac.nz` -gt 0 ] ; then
-	ISDEVELOPMENT=1 ;
-fi
-if [ `uname -s` = "Linux" -a \
-	 `uname -n | grep -c gcc[0-9][0-9]` -gt 0 ] ; then
-	case `uname -n` in
-		'gcc10'|'gcc33'|'gcc40'|'gcc51'|'gcc54'|'gcc55'|'gcc61')
-			ISDEVELOPMENT=1 ;;
-	esac ;
+if [ `uname -s` = "Linux" ] ; then
+	if [ `hostname -f | grep -c login0[0-9].fos.auckland.ac.nz` -gt 0 ] ; then
+		ISDEVELOPMENT=1 ;
+	elif [ `hostname -f` = "pakastelohi.cypherpunks.to" ] ; then
+		ISDEVELOPMENT=1 ;
+	elif [ `uname -n | grep -c gcc[0-9][0-9]` -gt 0 ] ; then
+		case `uname -n` in
+			'gcc10'|'gcc33'|'gcc40'|'gcc51'|'gcc54'|'gcc55'|'gcc61')
+				ISDEVELOPMENT=1 ;;
+		esac ; 
+	fi 
 fi
 
 # Check whether we're running using the clang static analyser
@@ -145,7 +149,7 @@ fi
 # options that are normally disabled by default
 
 if [ $ISDEVELOPMENT -gt 0 ] ; then
-	echo "  (Enabling unsafe options for development version)." >&2 ;
+	echo "  (Enabling unsafe source code options for development version)." >&2 ;
 	CCARGS="$CCARGS -DUSE_CERT_DNSTRING -DUSE_DNSSRV -DUSE_ECC" ;
 fi
 
@@ -162,12 +166,12 @@ if [ $ISCLANG -gt 0 ] ; then
 fi
 
 # If we're building a shared lib, set up the necessary additional cc args.
-# The IRIX cc and Cygwin gcc (and specifically Cygwin-native, not a cross-
-# development toolchain hosted under Cygwin) don't recognise -fPIC, but
-# generate PIC by default anyway.  The PHUX compiler requires +z for PIC,
-# and Solaris cc requires -KPIC for PIC.  OS X generates PIC by default, but
-# doesn't mind having -fPIC specified anyway.  In addition it requires
-# -fno-common for DYLIB use.
+# The IRIX cc and Cygwin/MinGW gcc (and for Cygwin specifically Cygwin-
+# native, not a cross-development toolchain hosted under Cygwin) don't 
+# recognise -fPIC, but generate PIC by default anyway.  The PHUX compiler 
+# requires +z for PIC, and Solaris cc requires -KPIC for PIC.  OS X 
+# generates PIC by default, but doesn't mind having -fPIC specified anyway.  
+# In addition it requires -fno-common for DYLIB use.
 #
 # For the PIC options, the only difference between -fpic and -fPIC is that
 # the latter generates large-displacement jumps while the former doesn't,
@@ -181,11 +185,17 @@ if [ $# -eq 2 ] ; then
 		'Darwin')
 			CCARGS="$CCARGS -fPIC -fno-common" ;;
 
-		'CYGWIN_NT-5.0'|'CYGWIN_NT-5.1'|'IRIX'|'IRIX64')
+		'CYGWIN_NT-5.0'|'CYGWIN_NT-5.1'|'CYGWIN_NT-6.1')
 			;;
-
+		
 		'HP-UX')
 			CCARGS="$CCARGS +z" ;;
+
+		'IRIX'|'IRIX64')
+			;;
+
+		'MINGW_NT-5.0'|'MINGW_NT-5.1'|'MINGW_NT-6.1')
+			;;
 
 		'SunOS')
 			if [ `$CC -v 2>&1 | grep -c "gcc"` = '0' ] ; then
@@ -215,13 +225,13 @@ fi
 # tend to be somewhat hit-and-miss but we at least indicate their presence
 # via a define.
 
-if [ -f /usr/include/pthread.h -a \
-	 `grep -c PTHREAD_MUTEX_RECURSIVE /usr/include/pthread.h` -ge 0 ] ; then
-	CCARGS="$CCARGS -DHAS_RECURSIVE_MUTEX" ;
-fi
-if [ -f /usr/include/pthread.h -a \
-	 `grep -c PTHREAD_MUTEX_ROBUST /usr/include/pthread.h` -ge 0 ] ; then
-	CCARGS="$CCARGS -DHAS_ROBUST_MUTEX" ;
+if [ -f /usr/include/pthread.h ] ; then
+	if [ `grep -c PTHREAD_MUTEX_RECURSIVE /usr/include/pthread.h` -ge 0 ] ; then
+		CCARGS="$CCARGS -DHAS_RECURSIVE_MUTEX" ;
+	fi ;
+	if [ `grep -c PTHREAD_MUTEX_ROBUST /usr/include/pthread.h` -ge 0 ] ; then
+		CCARGS="$CCARGS -DHAS_ROBUST_MUTEX" ;
+	fi ;
 fi
 
 # If we're not using gcc, we're done.  This isn't as simple as a straight
@@ -447,6 +457,9 @@ fi
 # available.  This was introduced (in a slightly hit-and-miss fashion) in
 # later versions of gcc 4.1.x, to be on the safe side we only enable it
 # for gcc 4.2 and newer.
+#
+# Note that this may require adding '-lssp -fno-stack-protector' to the
+# linker command line when building the self-test code.
 
 if [ $GCC_VER -ge 42 ] ; then
   if [ `$CC -fstack-protector -S -o /dev/null -xc /dev/null 2>&1 | grep -c "unrecog"` -eq 0 ] ; then
@@ -482,16 +495,15 @@ fi
 # development box.  We only enable it on this one system to avoid having
 # users complain about getting warnings when they build it.
 #
-# An even higher level of noise can be enabled with -Wall, however in this
-# case -Wno-switch is necessary because all cryptlib attributes are declared
-# from a single pool of enums, but only the values for a particular object
-# class are used in the object-specific code, leading to huge numbers of
-# warnings about unhandled enum values in case statements.  So the extra
-# flags are "-Wall -Wno-switch".
-#
 # The warnings are:
 #
+# -Waddress: Warn about suspicious use of memory addresses, e.g. 
+#		'x == "abc"'  (-Wall).
+#
 # -Waggregate-return: Warn about functions that return structs.
+#
+# -Warray-bounds: Warn about out-of-bounds array accesses, requires the use 
+#		of -ftree-vrp (which is enabled for -O2 and above) (-Wall).
 #
 # -Wcast-align: Warn whenever a pointer is cast such that the required
 #		alignment of the target is increased, for example if a "char *" is
@@ -499,7 +511,14 @@ fi
 #
 # -Wchar-subscripts: Warn when an array has a char subscript (-Wall).
 #
+# -Wdeclaration-after-statement: Warn about a variable declaration found 
+#	after a statement in a function (VC++ 6.0 complains about this too).
+#
 # -Wendif-labels: Warn if an endif is followed by text.
+#
+# -Wempty-body: Warn if an empty body occurs in and if/else or do/while.
+#
+# -Wextra: Extra warnings on top of -Wall
 #
 # -Wformat: Check calls to "printf" etc to make sure that the args supplied
 #		have types appropriate to the format string (-Wall).
@@ -511,20 +530,31 @@ fi
 #
 # -Wimplicit-int: Warn about typeless variable declarations (-Wall)
 #
+# -Winit-self: Warn if a value is initialised to itself, e.g. 'int i=i'.
+#
+# -Wjump-misses-init: Warn if a goto or switch misses initialisation of a
+#		variable.
+#
+# -Wlogical-op: Warn about suspicious use of logical operators in 
+#		expressions, e.g. '|' vs '||'.
+#
 # -Wmissing-braces: Warn if an array initialiser isn't fully bracketed, e.g.
 #		int a[2][2] = { 0, 1, 2, 3 } (-Wall).
 #
-# -Wparentheses: Warn about missing parantheses where the resulting
-#		expression is ambiguous (or at least nonobvious) (-Wall).
-#
 # -Wnonnull: Warn about passing a null for function args tagged as being
 #		__nonnull (-Wall).
+#
+# -Wparentheses: Warn about missing parantheses where the resulting
+#		expression is ambiguous (or at least nonobvious) (-Wall).
 #
 # -Wpointer-arith: Warn about anything that depends on the sizeof a
 #		function type or of void.
 #
 # -Wredundant-decls: Warn if anything is declared more than once in the same
 #		scope.
+#
+# -Wreturn-type: Warn about incorrect return type for function, e.g. 
+#		return( 1 ) for void function (-Wall).
 #
 # -Wsequence-point: Warn about sequence point violations, e.g. a = a++ (-Wall).
 #
@@ -539,13 +569,26 @@ fi
 #
 # -Wstrict-prototypes: Warn if a function is declared or defined K&R-style.
 #
+# -Wtype-limits: Warn if a comparison is always true due to the limited 
+#		range of a data type, e.g. unsigned >= 0.
+#
 # -Wunused-function: Warn if a static function isn't used (-Wall).
 #
 # -Wunused-label: Warn if a label isn't used (-Wall).
 #
 # -Wunused-variable: Warn if a local variable isn't used (-Wall).
 #
+# -Wunused-but-set-variable: Warn when a variable is assigned to but not 
+#		used (-Wall).
+#
+# -Wunused-local-typedefs: Warn about unused typedef (-Wall).
+#
+# -Wunused-value: Warn if a statement produces a result that isn't used, 
+#		e.g. 'x[i]' as a standalone statement (-Wall).
+#
 # -Wundef: Warn if an undefined identifier is used in a #if.
+#
+# -Wvla: Warn if variable-length array is used.
 #
 # -Wwrite-strings: Warn on attempts to assign/use a constant string value
 #		with a non-const pointer.
@@ -554,7 +597,29 @@ fi
 # detected because they require the use of various levels of data flow
 # analysis by the compiler.
 #
-# Warnings that we don't use due to excessive false positives:
+# Warnings that we don't use, or -Wall warnings that we disable, due to 
+# excessive false positives are:
+#
+# -Wconversion: Warn for potentially problematic conversions, e.g. 
+#		'unsigned foo = -1'.  This also warns for things like conversion
+#		from int to long unsigned int, leading to avalanches of pointless
+#		warnings.
+#
+# -Wno-missing-field-initializers: Warn about missing initialisers in structs.
+#		This also warns about things like the fairly common 'struct foo = { 0 }', 
+#		which makes it too noisy for detecting problems (-Wextra).
+#
+# -Wno-sign-compare: Warn about compares between signed and unsigned values.
+#		This leads to endless warnings about comparing a signed to an 
+#		unsigned value, particularly problematic when comparing an integer 
+#		to a CRYPT_xxx_yyy enum because enums are treated as unsigned so 
+#		every comparison leads to a warning (-Wall, -Wextra).
+#
+# -Wno-switch: Warn about unused enum values in a switch statement.  Since 
+#		all cryptlib attributes are declared from a single pool of enums but 
+#		only the values for a particular object class are used in the 
+#		object-specific code, this leads to huge numbers of warnings about 
+#		unhandled enum values in case statements (-Wall).
 #
 # -Wuninitialized: Warn about used-before-initialised.  The detection of this
 #		isn't very good, variables initialised conditionally always produce
@@ -569,17 +634,21 @@ fi
 # In addition to the standard warnings we also enable the use of gcc
 # attributes warn_unused_result and nonnull, which are too broken (and in
 # the case of nonnull far too dangerous) to use in production code (see the
-# long comment in analyse.h for details), and to catch the compiler
+# long comment in misc/analyse.h for details), and to catch the compiler
 # brokenness we undefine NDEBUG to enable the use of assertion checks that
 # will catch the problem.
 
 if [ $ISDEVELOPMENT -gt 0 ] ; then
 	echo "  (Enabling unsafe compiler options for development version)." >&2 ;
-	CCARGS="$CCARGS -Wall -Wno-switch -Waggregate-return -Wcast-align \
-					-Wformat-nonliteral -Wformat-security -Wpointer-arith \
-					-Wredundant-decls -Wshadow -Wstrict-prototypes -Wundef" ;
-	CCARGS="$CCARGS -DUSE_GCC_ATTRIBUTES" ;
-	CCARGS="$CCARGS -UNDEBUG" ;
+	CCARGS="$CCARGS -Wall -Waggregate-return -Wcast-align \
+					-Wdeclaration-after-statement -Wempty-body -Wextra \
+					-Wformat-nonliteral -Wformat-security -Winit-self \
+					-Wlogical-op -Wpointer-arith -Wredundant-decls \
+					-Wshadow -Wstrict-prototypes -Wtype-limits -Wundef \
+					-Wvla" ;
+	CCARGS="$CCARGS -Wno-missing-field-initializers -Wno-switch \
+					-Wno-sign-compare" ;
+	CCARGS="$CCARGS -DUSE_GCC_ATTRIBUTES -UNDEBUG" ;
 	if [ "$GCC_VER" -ge 43 ] ; then
 		echo "  (Enabling additional compiler options for gcc 4.3.x)." >&2 ;
 		CCARGS="$CCARGS -Wparentheses" ;
@@ -589,15 +658,6 @@ if [ $ISDEVELOPMENT -gt 0 ] ; then
 		CCARGS="$CCARGS -Wlogical-op -Wjump-misses-init" ;
 	fi ;
 fi
-
-# if [ $ISDEVELOPMENT -gt 0 ] ; then
-#	CCARGS="$CCARGS -Wcast-align -Wendif-labels -Wformat -Wformat-nonliteral \
-#					-Wformat-security -Wimplicit-int -Wmissing-braces \
-#					-Wnonnull -Wparentheses -Wpointer-arith -Wredundant-decls \
-#					-Wsequence-point -Wshadow -Wstrict-prototypes \
-#					-Wunused-function -Wunused-label -Wunused-variable -Wundef \
-#					-Wwrite-strings" ;
-# fi
 
 # Finally, report what we've found
 

@@ -361,44 +361,47 @@ static int initParams( INOUT CONTEXT_INFO *contextInfoPtr,
 	if( paramType == KEYPARAM_BLOCKSIZE )
 		{
 #ifdef USE_SHA2_EXT
-  #ifdef CONFIG_SUITEB
-		static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
+		static const CAPABILITY_INFO FAR_BSS capabilityInfoSHA384 = {
 				CRYPT_ALGO_SHA2, bitsToBytes( 384 ), "SHA-384", 7,
 				bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
 				selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
 				};
-  #else
-		static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
+		static const CAPABILITY_INFO FAR_BSS capabilityInfoSHA512 = {
 				CRYPT_ALGO_SHA2, bitsToBytes( 512 ), "SHA-512", 7,
 				bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
 				selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
 				};
-  #endif /* CONFIG_SUITEB */
 #endif /* USE_SHA2_EXT */
-
-		/* The default SHA-2 variant is SHA-256, so an attempt to set this 
-		   size is a no-op */
-		if( dataLength == SHA256_DIGEST_SIZE )
-			return( CRYPT_OK );
 
 #ifdef USE_SHA2_EXT
 		/* Switch to the appropriate variant of SHA-2.  Note that the 
 		   initParamsFunction pointer for this version is NULL rather than
 		   pointing to this function, so once the output size has been set 
 		   it can't be changed again */
-  #ifdef CONFIG_SUITEB
-		if( dataLength != SHA384_DIGEST_SIZE )
-			return( CRYPT_ARGERROR_NUM1 );
-		contextInfoPtr->capabilityInfo = &capabilityInfo;
-  #else
-		if( dataLength != SHA512_DIGEST_SIZE )
-			return( CRYPT_ARGERROR_NUM1 );
-		contextInfoPtr->capabilityInfo = &capabilityInfo;
-  #endif /* CONFIG_SUITEB */
+		switch( dataLength )
+			{
+			case SHA256_DIGEST_SIZE:
+				/* The default SHA-2 variant is SHA-256, so an attempt to 
+				   set this size is a no-op */
+				return( CRYPT_OK );
 
+			case SHA384_DIGEST_SIZE:
+				contextInfoPtr->capabilityInfo = &capabilityInfoSHA384;
+				break;
+
+			case SHA512_DIGEST_SIZE:
+				contextInfoPtr->capabilityInfo = &capabilityInfoSHA512;
+				break;
+
+			default:
+				return( CRYPT_ARGERROR_NUM1 );
+			}
 		return( CRYPT_OK );
 #else
-		return( CRYPT_ARGERROR_NUM1 );
+		/* The default SHA-2 variant is SHA-256, so an attempt to set this 
+		   size is a no-op */
+		return( ( dataLength == SHA256_DIGEST_SIZE ) ? \
+				CRYPT_OK : CRYPT_ARGERROR_NUM1 );
 #endif /* USE_SHA2_EXT */
 		}
 

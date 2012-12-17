@@ -83,16 +83,55 @@ static int initKeysetUpdate( INOUT KEYSET_INFO *keysetInfoPtr,
 		  ( keysetInfoPtr->type == KEYSET_FILE && \
 		    keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 ) ) )
 		{
-		HASHFUNCTION_ATOMIC hashFunctionAtomic;
-		int hashSize;
+		HASHINFO hashInfo;
+		STREAM stream;
+		int hashSize, payloadStart = DUMMY_INIT, length, status;
 
-		/* Get the hash algorithm information */
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
-								 &hashSize );
+		/* Hash the full iAndS to get an issuerID and use that for the 
+		   keyID.  This is complicated by the fact that there exist one or 
+		   two broken implementations out there that use a non-DER encoding
+		   of the iAndS wrapper (for example encoding the length as 
+		   '82 00 nn' instead of 'nn').  To handle this we read the wrapper
+		   and then write our own correctly-encoded version to a buffer
+		   that we hash seperately from the iAndS payload */
+		sMemConnect( &stream, keyIDinfo->keyID, keyIDinfo->keyIDlength );
+		status = readSequence( &stream, &length );
+		if( cryptStatusOK( status ) )
+			payloadStart = stell( &stream );
+		sMemDisconnect( &stream );
+		if( cryptStatusOK( status ) )
+			{
+			HASHFUNCTION hashFunction;
+			BYTE buffer[ 8 + 8 ];
 
-		/* Hash the full iAndS to get an issuerID and use that for the keyID */
-		hashFunctionAtomic( keyIDbuffer, keyIdMaxLength, keyIDinfo->keyID, 
-							keyIDinfo->keyIDlength );
+			REQUIRES( payloadStart > 0 && \
+					  payloadStart < keyIDinfo->keyIDlength );
+
+			/* We've processed the wrapper, write our own known-good version
+			   and then hash that and the iAndS payload */
+			getHashParameters( CRYPT_ALGO_SHA1, 0, &hashFunction, &hashSize );
+			sMemOpen( &stream, buffer, 8 );
+			status = writeSequence( &stream, length );
+			ENSURES( cryptStatusOK( status ) );
+			hashFunction( hashInfo, NULL, 0, buffer, stell( &stream ), 
+						  HASH_STATE_START );
+			sMemClose( &stream );
+			hashFunction( hashInfo, keyIDbuffer, keyIdMaxLength, 
+						  ( BYTE * ) keyIDinfo->keyID + payloadStart, 
+						  keyIDinfo->keyIDlength - payloadStart, 
+						  HASH_STATE_END );
+			}
+		else
+			{
+			HASHFUNCTION_ATOMIC hashFunctionAtomic;
+
+			/* The attempt to read the wrapper failed, just hash the whole 
+			   thing as a blob and continue */
+			getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
+									 &hashSize );
+			hashFunctionAtomic( keyIDbuffer, keyIdMaxLength, keyIDinfo->keyID, 
+								keyIDinfo->keyIDlength );
+			}
 		keyIDinfo->keyIDtype = CRYPT_IKEYID_ISSUERID;
 		keyIDinfo->keyID = keyIDbuffer;
 		keyIDinfo->keyIDlength = hashSize;

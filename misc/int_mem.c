@@ -305,7 +305,9 @@ void *clAllocFn( const char *fileName, const char *fnName,
 #ifdef CONFIG_MALLOCTEST
 	static int mallocCount = 0, mallocFailCount = 0;
 #endif /* CONFIG_MALLOCTEST */
+#if defined( __WIN32__ ) || defined( __UNIX__ )
 	char buffer[ 512 + 8 ];
+#endif /* __WIN32__ || __UNIX__ */
 	BYTE *memPtr;
 	int length;
 
@@ -355,7 +357,9 @@ void *clAllocFn( const char *fileName, const char *fnName,
 void clFreeFn( const char *fileName, const char *fnName,
 			   const int lineNo, void *memblock )
 	{
+#if defined( __WIN32__ ) || defined( __UNIX__ )
 	char buffer[ 512 + 8 ];
+#endif /* __WIN32__ || __UNIX__ */
 	BYTE *memPtr = ( BYTE * ) memblock - sizeof( LONG );
 	int index, length;
 

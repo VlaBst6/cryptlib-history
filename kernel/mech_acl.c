@@ -37,8 +37,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),		/* Ctx containing key */
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* PKCS #1 encrypt using PGP formatting */
 #ifdef USE_PGP
@@ -50,8 +50,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 #endif /* USE_PGP */
 
 	/* PKCS #1 encrypt of raw data */
@@ -60,11 +60,11 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 					 CRYPT_MAX_PKCSIZE ),
 		MKACP_S( MIN_KEYSIZE,				/* Raw data */
 				 CRYPT_MAX_KEYSIZE ),
-		MKACP_UNUSED(),
+		MKACP_N_FIXED( CRYPT_UNUSED ),
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* OAEP encrypt */
 #ifdef USE_OAEP
@@ -76,7 +76,7 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),		/* Ctx containing key */
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED(), 
+		MKACP_N_FIXED( CRYPT_UNUSED ),
 		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHAng ) } },
 			/* The algoID CRYPT_ALGO_SHA2 + 1 (= CRYPT_ALGO_SHAng) is a 
 			   special-case placeholder for SHA2-512 until its fate/
@@ -91,8 +91,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),		/* Ctx containing key */
 		MKACP_O( ST_CTX_CONV,				/* Wrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* PKCS #15 private key wrap */
 	{ MECHANISM_PRIVATEKEYWRAP,
@@ -103,8 +103,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_O( ST_CTX_CONV,				/* Wrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* PKCS #8 private key wrap */
 #ifdef USE_PKCS12
@@ -116,8 +116,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_O( ST_CTX_CONV,				/* Wrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 #endif /* USE_PKCS12 */
 
 	/* End-of-ACL marker */
@@ -137,8 +137,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),		/* Ctx to contain key */
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* PKCS #1 decrypt using PGP formatting */
 #ifdef USE_PGP
@@ -146,11 +146,11 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
 					 MAX_PKCENCRYPTED_SIZE ),
 		MKACP_S_NONE(),
-		MKACP_UNUSED(),						/* Placeholder for ctx to contain key */
+		MKACP_N_FIXED( CRYPT_UNUSED ),		/* Placeholder for ctx to contain key */
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 #endif /* USE_PGP */
 
 	/* PKCS #1 decrypt of raw data */
@@ -159,11 +159,11 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 					 CRYPT_MAX_PKCSIZE ),
 		MKACP_S( MIN_KEYSIZE,				/* Raw data */
 				 CRYPT_MAX_PKCSIZE ),
-		MKACP_UNUSED(),
+		MKACP_N_FIXED( CRYPT_UNUSED ),
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* OAEP decrypt */
 #ifdef USE_OAEP
@@ -175,7 +175,7 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),		/* Ctx to contain key */
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
-		MKACP_UNUSED(), 
+		MKACP_N_FIXED( CRYPT_UNUSED ),
 		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHAng ) } },
 			/* The algoID CRYPT_ALGO_SHA2 + 1 (= CRYPT_ALGO_SHAng) is a 
 			   special-case placeholder for SHA2-512 until its fate/
@@ -190,8 +190,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),		/* Ctx to contain key */
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* PKCS #15 private key unwrap */
 	{ MECHANISM_PRIVATEKEYWRAP,
@@ -202,8 +202,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 
 	/* PKCS #8 private key unwrap */
 #ifdef USE_PKCS12
@@ -215,8 +215,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 #endif /* USE_PKCS12 */
 
 	/* PGP 2.x private key unwrap */
@@ -229,8 +229,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 #endif /* USE_PGPKEYS */
 
 	/* PGP 5.x private key unwrap */
@@ -243,8 +243,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 #endif /* USE_PGPKEYS */
 
 	/* OpenPGP private key unwrap */
@@ -257,8 +257,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(), 
-		MKACP_UNUSED() } },
+		MKACP_N_FIXED( CRYPT_UNUSED ),
+		MKACP_N_FIXED( CRYPT_UNUSED ) } },
 #endif /* USE_PGPKEYS */
 
 	/* End-of-ACL marker */
@@ -275,7 +275,7 @@ static const MECHANISM_ACL FAR_BSS mechanismSignACL[] = {
 					 CRYPT_MAX_PKCSIZE ),
 		MKACP_O( ST_CTX_HASH,				/* Hash context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(),						/* Secondary hash context */
+		MKACP_N_FIXED( CRYPT_UNUSED ),		/* Secondary hash context */
 		MKACP_O( ST_CTX_PKC,				/* Signing context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ) } },
 
@@ -306,7 +306,7 @@ static const MECHANISM_ACL FAR_BSS mechanismSigCheckACL[] = {
 				 CRYPT_MAX_PKCSIZE ),
 		MKACP_O( ST_CTX_HASH,				/* Hash context */
 				 ACL_FLAG_HIGH_STATE ),
-		MKACP_UNUSED(),						/* Secondary hash context */
+		MKACP_N_FIXED( CRYPT_UNUSED ),		/* Secondary hash context */
 		MKACP_O( ST_CTX_PKC,				/* Sig.check context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ) } },
 
@@ -345,7 +345,7 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 	{ MECHANISM_DERIVE_SSL,
 	  { MKACP_S( 48, 512 ),					/* Master secret/key data */
 		MKACP_S( 48, CRYPT_MAX_PKCSIZE ),	/* Premaster secret/master secret */
-		MKACP_N( CRYPT_USE_DEFAULT, CRYPT_USE_DEFAULT ),/* SSL uses dual hash */
+		MKACP_N_FIXED( CRYPT_USE_DEFAULT ),	/* SSL uses dual hash */
 		MKACP_N( 0, 0 ),					/* Hash parameters */
 		MKACP_S( 64, 64 ),					/* Salt */
 		MKACP_N( 1, 1 ) } },				/* Iterations */
@@ -359,7 +359,7 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 	{ MECHANISM_DERIVE_TLS,
 	  { MKACP_S( 12, 512 ),					/* Master secret/key data (usually 48) */
 		MKACP_S( 6, CRYPT_MAX_PKCSIZE ),	/* Premaster secret/master secret (us'ly 48) */
-		MKACP_N( CRYPT_USE_DEFAULT, CRYPT_USE_DEFAULT ),/* TLS uses dual hash */
+		MKACP_N_FIXED( CRYPT_USE_DEFAULT ),	/* TLS uses dual hash */
 		MKACP_N( 0, 0 ),					/* Hash parameters */
 		MKACP_S( 13, 512 ),					/* Salt (usually 64) */
 		MKACP_N( 1, 1 ) } },				/* Iterations */
@@ -383,13 +383,10 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 		MKACP_N( 1, MAX_KEYSETUP_ITERATIONS ) } },	/* Iterations */
 #endif /* USE_CMP */
 
-	/* OpenPGP S2K derive.  The INT_MAX bound on the iterations instead of 
-	   the more usual MAX_KEYSETUP_ITERATIONS is because of PGP's strange
-	   handling of this value by counting bytes to process through the 
-	   PRF rather than actual PRF iterations.  The value passed in is the
-	   byte count without an additional '* 64' scaling factor which is 
-	   applied by the S2K code so we divide the INT_MAX bound by 64 to
-	   ensure that the scaled result will still fit into an integer */
+	/* OpenPGP S2K derive.  The MAX_KEYSETUP_HASHSPECIFIER bound on the 
+	   iterations instead of the more usual MAX_KEYSETUP_ITERATIONS is 
+	   because of PGP's strange handling of this value by counting bytes to 
+	   process through the PRF rather than actual PRF iterations */
 #if defined( USE_PGP ) || defined( USE_PGPKEYS )
 	{ MECHANISM_DERIVE_PGP,
 	  { MKACP_S( 16, CRYPT_MAX_KEYSIZE ),	/* Key data */
@@ -397,7 +394,7 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 		MKACP_N( CRYPT_ALGO_MD5, CRYPT_ALGO_SHA256 ),/* Hash algo */
 		MKACP_N( 0, 0 ),					/* Hash parameters */
 		MKACP_S( 8, 8 ),					/* Salt */
-		MKACP_N( 0, INT_MAX >> 6 ) } },		/* Iterations (0 = don't iterate) */
+		MKACP_N( 0, MAX_KEYSETUP_HASHSPECIFIER ) } }, /* Iterations (0 = don't iterate) */
 #endif /* USE_PGP || USE_PGPKEYS */
 
 	/* PKCS #12 derive */
@@ -442,10 +439,76 @@ static const MECHANISM_ACL FAR_BSS mechanismKDFACL[] = {
 *																			*
 ****************************************************************************/
 
+/* Ensure that a mechanism ACL is consistent */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN mechanismAclConsistent( IN_ARRAY( mechanismAclSize ) \
+										const MECHANISM_ACL *mechanismACLPtr,
+									   IN_RANGE( 1, 16 ) \
+										const int mechanismAclSize )
+	{
+	int i;
+
+	assert( isReadPtr( mechanismACLPtr, \
+					   sizeof( MECHANISM_ACL ) * mechanismAclSize ) );
+
+	REQUIRES_B( mechanismAclSize > 0 && mechanismAclSize <= 16 );
+
+	for( i = 0; mechanismACLPtr[ i ].type != MECHANISM_NONE && \
+				i < mechanismAclSize; i++ )
+		{
+		const MECHANISM_ACL *mechanismACL = &mechanismACLPtr[ i ];
+		const PARAM_ACL *paramACL = getParamACL( mechanismACL );
+		const int paramACLSize = getParamACLSize( mechanismACL );
+		BOOLEAN paramACLEmpty = FALSE;
+		int j;
+
+		/* Make sure that the mechanism Acl entries are consistent */
+		if( mechanismACL->type <= MECHANISM_NONE || \
+			mechanismACL->type >= MECHANISM_LAST )
+			return( FALSE );
+
+		/* Check the paramter ACLs within the mechanism ACL */
+		for( j = 0; j < paramACLSize && j < FAILSAFE_ITERATIONS_SMALL; j++ )
+			{
+			if( !paramAclConsistent( &paramACL[ j ], paramACLEmpty ) )
+				return( FALSE );
+			if( paramACL[ j ].valueType == PARAM_VALUE_NONE )
+				paramACLEmpty = TRUE;
+			}
+		ENSURES_B( j < FAILSAFE_ITERATIONS_SMALL );
+		}
+	ENSURES_B( i < mechanismAclSize );
+
+	return( TRUE );
+	}
+
+/* Initialise and check the mechanism ACLs */
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initMechanismACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+
+	/* Perform a consistency check on the various message ACLs */
+	if( !mechanismAclConsistent( mechanismWrapACL, 
+				FAILSAFE_ARRAYSIZE( mechanismWrapACL, MECHANISM_ACL ) ) )
+		return( FALSE );
+	if( !mechanismAclConsistent( mechanismUnwrapACL, 
+				FAILSAFE_ARRAYSIZE( mechanismUnwrapACL, MECHANISM_ACL ) ) )
+		return( FALSE );
+	if( !mechanismAclConsistent( mechanismSignACL, 
+				FAILSAFE_ARRAYSIZE( mechanismSignACL, MECHANISM_ACL ) ) )
+		return( FALSE );
+	if( !mechanismAclConsistent( mechanismSigCheckACL, 
+				FAILSAFE_ARRAYSIZE( mechanismSigCheckACL, MECHANISM_ACL ) ) )
+		return( FALSE );
+	if( !mechanismAclConsistent( mechanismDeriveACL, 
+				FAILSAFE_ARRAYSIZE( mechanismDeriveACL, MECHANISM_ACL ) ) )
+		return( FALSE );
+	if( !mechanismAclConsistent( mechanismKDFACL, 
+				FAILSAFE_ARRAYSIZE( mechanismKDFACL, MECHANISM_ACL ) ) )
+		return( FALSE );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -515,7 +578,8 @@ int preDispatchCheckMechanismWrapAccess( IN_HANDLE const int objectHandle,
 	ENSURES( mechanismACL[ i ].type != MECHANISM_NONE );
 	mechanismACL = &mechanismACL[ i ];
 	isRawMechanism = \
-		( paramInfo( mechanismACL, 2 ).valueType == PARAM_VALUE_UNUSED ) ? \
+		( paramInfo( mechanismACL, 2 ).valueType == PARAM_VALUE_NUMERIC && \
+		  paramInfo( mechanismACL, 2 ).lowRange == CRYPT_UNUSED ) ? \
 		TRUE : FALSE;
 
 	/* Inner precondition: We have an ACL for this mechanism, and the non-
@@ -692,7 +756,8 @@ int preDispatchCheckMechanismSignAccess( IN_HANDLE const int objectHandle,
 	if( !checkParamObject( paramInfo( mechanismACL, 1 ),
 						   mechanismInfo->hashContext ) )
 		return( CRYPT_ARGERROR_NUM1 );
-	if( paramInfo( mechanismACL, 2 ).valueType != PARAM_VALUE_UNUSED && \
+	if( !( paramInfo( mechanismACL, 2 ).valueType == PARAM_VALUE_NUMERIC && \
+		   paramInfo( mechanismACL, 2 ).lowRange == CRYPT_UNUSED ) && \
 		!fullObjectCheck( mechanismInfo->hashContext2, message ) )
 		return( CRYPT_ARGERROR_NUM1 );
 	if( !checkParamObject( paramInfo( mechanismACL, 2 ),
@@ -731,7 +796,8 @@ int preDispatchCheckMechanismSignAccess( IN_HANDLE const int objectHandle,
 	if( !isSameOwningObject( mechanismInfo->hashContext, \
 							 mechanismInfo->signContext ) )
 		return( CRYPT_ARGERROR_NUM2 );
-	if( paramInfo( mechanismACL, 2 ).valueType != PARAM_VALUE_UNUSED )
+	if( !( paramInfo( mechanismACL, 2 ).valueType == PARAM_VALUE_NUMERIC && \
+		   paramInfo( mechanismACL, 2 ).lowRange == CRYPT_UNUSED ) )
 		{
 		if( !isSameOwningObject( objectHandle, mechanismInfo->hashContext2 ) )
 			return( CRYPT_ARGERROR_NUM1 );

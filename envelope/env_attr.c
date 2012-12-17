@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Envelope Attribute Routines					*
-*					  Copyright Peter Gutmann 1996-2007						*
+*					  Copyright Peter Gutmann 1996-2012						*
 *																			*
 ****************************************************************************/
 
@@ -263,6 +263,79 @@ static const void *getAttrFunction( IN_OPT TYPECAST( CONTENT_LIST * ) \
 	if( attributeID != NULL && contentListPtr->type == CONTENT_SIGNATURE )
 		*attributeID = contentListPtr->clSigInfo.attributeCursorEntry;
 	return( contentListPtr );
+	}
+
+/* Set attribute-cursor selection information */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int setCursorSelection( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+							   IN_ATTRIBUTE \
+									const CRYPT_ATTRIBUTE_TYPE attribute,
+							   IN_RANGE( CRYPT_CURSOR_LAST, \
+										 CRYPT_CURSOR_FIRST ) /* Values are -ve */
+									const int cursorMoveType )
+	{
+	const CONTENT_LIST *contentListCursor;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	REQUIRES( attribute == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
+			  attribute == CRYPT_ATTRIBUTE_CURRENT );
+	REQUIRES( cursorMoveType >= CRYPT_CURSOR_LAST && \
+			  cursorMoveType <= CRYPT_CURSOR_FIRST );	/* Values are -ve */
+
+	/* If it's an absolute positioning code, pre-set the attribute cursor if 
+	   required */
+	if( cursorMoveType == CRYPT_CURSOR_FIRST || \
+		cursorMoveType == CRYPT_CURSOR_LAST )
+		{
+		if( envelopeInfoPtr->contentList == NULL )
+			return( CRYPT_ERROR_NOTFOUND );
+
+		ENSURES( envelopeInfoPtr->contentList != NULL );
+
+		/* If it's an absolute attribute positioning code, reset the 
+		   attribute cursor to the start of the list before we try to move 
+		   it and if it's an attribute positioning code initialise the 
+		   attribute cursor if necessary */
+		if( attribute == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
+			envelopeInfoPtr->contentListCurrent == NULL )
+			{
+			envelopeInfoPtr->contentListCurrent = \
+										envelopeInfoPtr->contentList;
+			if( envelopeInfoPtr->contentListCurrent != NULL )
+				resetVirtualCursor( envelopeInfoPtr->contentListCurrent );
+			}
+
+		/* If there are no attributes present, return the appropriate error 
+		   code */
+		if( envelopeInfoPtr->contentListCurrent == NULL )
+			{
+			return( ( cursorMoveType == CRYPT_CURSOR_FIRST || \
+					  cursorMoveType == CRYPT_CURSOR_LAST ) ? \
+						CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_NOTINITED );
+			}
+		}
+	else
+		{
+		/* It's a relative positioning code, return a not-inited error 
+		   rather than a not-found error if the cursor isn't set since there 
+		   may be attributes present but the cursor hasn't been initialised 
+		   yet by selecting the first or last absolute attribute */
+		if( envelopeInfoPtr->contentListCurrent == NULL )
+			return( CRYPT_ERROR_NOTINITED );
+		}
+	ENSURES( envelopeInfoPtr->contentListCurrent != NULL );
+
+	/* Move the cursor */
+	contentListCursor = ( const CONTENT_LIST * ) \
+			attributeMoveCursor( envelopeInfoPtr->contentListCurrent, 
+								 getAttrFunction, attribute, cursorMoveType );
+	if( contentListCursor == NULL )
+		return( CRYPT_ERROR_NOTFOUND );
+	envelopeInfoPtr->contentListCurrent = \
+								( CONTENT_LIST * ) contentListCursor;
+	return( CRYPT_OK );
 	}
 
 /* Instantiate a certificate chain from a collection of certificates */
@@ -770,9 +843,6 @@ static int checkOtherAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			return( CRYPT_OK );
 
 		case CRYPT_ENVINFO_SIGNATURE_EXTRADATA:
-			if( envelopeInfoPtr->type != CRYPT_FORMAT_CMS && \
-				envelopeInfoPtr->type != CRYPT_FORMAT_SMIME )
-				return( CRYPT_ARGERROR_VALUE );
 			if( envelopeInfoPtr->usage != ACTION_NONE && \
 				envelopeInfoPtr->usage != ACTION_SIGN )
 				return( exitErrorInited( envelopeInfoPtr, 
@@ -1163,31 +1233,70 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	{
 	MESSAGE_CHECK_TYPE checkType = MESSAGE_CHECK_NONE;
 	ACTION_TYPE usage = ACTION_NONE;
+	const CRYPT_FORMAT_TYPE *formatTypeInfo = NULL;
+	typedef CRYPT_FORMAT_TYPE PERMITTED_FORMATS[ 7 ];
 	typedef struct {
 		const CRYPT_ATTRIBUTE_TYPE type;	/* Attribute type */
-		const ACTION_TYPE usage;			/* Corresponding usage type */
-		const MESSAGE_CHECK_TYPE checkType;	/*  and check type */
+		const CRYPT_FORMAT_TYPE *formatType;/* Permitted env.types */
+		const ACTION_TYPE usage;			/* Corresponding usage type, */
+		const MESSAGE_CHECK_TYPE checkType;	/*  check type, and */
+		const int requiredFlag;				/*  required env.flag */
 		} CHECK_INFO;
+	static const CRYPT_FORMAT_TYPE formatAll[] = { 
+		CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, 
+		CRYPT_FORMAT_SMIME, CRYPT_FORMAT_PGP, CRYPT_FORMAT_NONE, 
+		CRYPT_FORMAT_NONE };
+	static const CRYPT_FORMAT_TYPE formatAllEnv[] = { 
+		CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME,
+		CRYPT_FORMAT_PGP, CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
+	static const CRYPT_FORMAT_TYPE formatAllDeenv[] = { 
+		CRYPT_FORMAT_AUTO, CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
+	static const CRYPT_FORMAT_TYPE formatAllCMS[] = {
+		CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, 
+		CRYPT_FORMAT_SMIME, CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
+	static const CRYPT_FORMAT_TYPE formatAllSMIME[] = {
+		CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME, 
+		CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
+	static const CRYPT_FORMAT_TYPE formatAllEnvSMIME[] = {
+		CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME, CRYPT_FORMAT_NONE, 
+		CRYPT_FORMAT_NONE };
 	static const CHECK_INFO checkTable[] = {
-		/* The following checks are fairly stereotyped and can be selected 
-		   via a lookup table.  Envelope attributes that require more
-		   specialised checking are handled via custom code in a case 
-		   statement */
+	/* The following lookup table defines the checks that are applied to 
+	   each attribute as it's added.  First, the attribute is checked to 
+	   make sure that it's permitted for this envelope format type.  Then if 
+	   there's a usage defined, it's checked agains the envelope usage, with 
+	   ACTION_NONE being permitted since the usage type may not have been 
+	   defined yet, for example if a modifier attribute like 
+	   CRYPT_ENVINFO_INTEGRITY is added before an attribute like 
+	   CRYPT_ENVINFO_KEY is added.  Next, if a check-action is defined, the 
+	   attribute being added is checked against the action.  Finally, if a
+	   required envelope flag is present, the envelope flags are checked to
+	   make sure that that option is enabled.
+
+	   Some attributes require more specialised checking, indicated by the 
+	   usage being ACTION_NONE.  This is handled via custom code in 
+	   checkOtherAttribute().
+
+	  Attribute						Format			Env.usage		Action to chk.			Env.flags */
 #ifdef USE_COMPRESSION
-		{ CRYPT_ENVINFO_COMPRESSION, ACTION_COMPRESS, MESSAGE_CHECK_NONE },
+	{ CRYPT_ENVINFO_COMPRESSION,	formatAllEnv,	ACTION_COMPRESS, MESSAGE_CHECK_NONE,	0 },
 #endif /* USE_COMPRESSION */
-		{ CRYPT_ENVINFO_KEY, ACTION_CRYPT, MESSAGE_CHECK_CRYPT },
-		{ CRYPT_ENVINFO_PUBLICKEY, ACTION_CRYPT, MESSAGE_CHECK_PKC_ENCRYPT },
-		{ CRYPT_ENVINFO_PRIVATEKEY, ACTION_CRYPT, MESSAGE_CHECK_PKC_DECRYPT },
-		{ CRYPT_ENVINFO_SESSIONKEY, ACTION_CRYPT, MESSAGE_CHECK_CRYPT },
-		{ CRYPT_ENVINFO_HASH, ACTION_SIGN, MESSAGE_CHECK_HASH },
-		{ CRYPT_ENVINFO_TIMESTAMP, ACTION_SIGN, MESSAGE_CHECK_NONE },
-		{ CRYPT_ENVINFO_DETACHEDSIGNATURE, ACTION_SIGN, MESSAGE_CHECK_NONE },
-		{ CRYPT_IATTRIBUTE_INCLUDESIGCERT, ACTION_SIGN, MESSAGE_CHECK_NONE },
-		{ CRYPT_IATTRIBUTE_ATTRONLY, ACTION_SIGN, MESSAGE_CHECK_NONE },
-		{ CRYPT_ATTRIBUTE_NONE, ACTION_NONE }, { CRYPT_ATTRIBUTE_NONE, ACTION_NONE }
-		};
-	int i, status;
+	{ CRYPT_ENVINFO_DETACHEDSIGNATURE, formatAll,	ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_ENVINFO_INTEGRITY,		formatAllEnv,	ACTION_NONE,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_ENVINFO_KEY,			formatAllCMS,	ACTION_CRYPT,	MESSAGE_CHECK_CRYPT,	0 },
+	{ CRYPT_ENVINFO_SIGNATURE,		formatAll,		ACTION_NONE,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_ENVINFO_SIGNATURE_EXTRADATA, formatAllEnvSMIME, ACTION_NONE, MESSAGE_CHECK_NONE, 0 },
+	{ CRYPT_ENVINFO_PUBLICKEY,		formatAllEnv,	ACTION_CRYPT,	MESSAGE_CHECK_PKC_ENCRYPT, 0 },
+	{ CRYPT_ENVINFO_PRIVATEKEY,		formatAllDeenv,	ACTION_CRYPT,	MESSAGE_CHECK_PKC_DECRYPT, 0 },
+	{ CRYPT_ENVINFO_SESSIONKEY,		formatAllCMS,	ACTION_CRYPT,	MESSAGE_CHECK_CRYPT,	0 },
+	{ CRYPT_ENVINFO_HASH,			formatAll,		ACTION_SIGN,	MESSAGE_CHECK_HASH,		ENVELOPE_DETACHED_SIG },
+	{ CRYPT_ENVINFO_TIMESTAMP,		formatAllEnvSMIME, ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_OPTION_ENCR_MAC,		formatAllCMS,	ACTION_NONE,	MESSAGE_CHECK_NONE,		9 },
+	{ CRYPT_IATTRIBUTE_INCLUDESIGCERT, formatAllEnvSMIME, ACTION_SIGN, MESSAGE_CHECK_NONE,	0 },
+	{ CRYPT_IATTRIBUTE_ATTRONLY,	formatAllSMIME,	ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_ATTRIBUTE_NONE, NULL, ACTION_NONE, 0 }, { CRYPT_ATTRIBUTE_NONE, NULL, ACTION_NONE, 0 }
+	};
+	int requiredFlag = 0, i, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
@@ -1210,63 +1319,7 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* If it's meta-information, process it now */
 	if( attribute == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
 		attribute == CRYPT_ATTRIBUTE_CURRENT )
-		{
-		const CONTENT_LIST *contentListCursor;
-
-		/* If it's an absolute positioning code, pre-set the attribute
-		   cursor if required */
-		if( value == CRYPT_CURSOR_FIRST || value == CRYPT_CURSOR_LAST )
-			{
-			if( envelopeInfoPtr->contentList == NULL )
-				return( CRYPT_ERROR_NOTFOUND );
-
-			ENSURES( envelopeInfoPtr->contentList != NULL );
-
-			/* If it's an absolute attribute positioning code, reset the
-			   attribute cursor to the start of the list before we try to
-			   move it and if it's an attribute positioning code initialise 
-			   the attribute cursor if necessary */
-			if( attribute == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
-				envelopeInfoPtr->contentListCurrent == NULL )
-				{
-				envelopeInfoPtr->contentListCurrent = \
-										envelopeInfoPtr->contentList;
-				if( envelopeInfoPtr->contentListCurrent != NULL )
-					resetVirtualCursor( envelopeInfoPtr->contentListCurrent );
-				}
-
-			/* If there are no attributes present, return the appropriate 
-			   error code */
-			if( envelopeInfoPtr->contentListCurrent == NULL )
-				{
-				return( ( value == CRYPT_CURSOR_FIRST || \
-						  value == CRYPT_CURSOR_LAST ) ? \
-							CRYPT_ERROR_NOTFOUND : \
-							CRYPT_ERROR_NOTINITED );
-				}
-			}
-		else
-			{
-			/* It's a relative positioning code, return a not-inited error
-			   rather than a not-found error if the cursor isn't set since
-			   there may be attributes present but the cursor hasn't been
-			   initialised yet by selecting the first or last absolute
-			   attribute */
-			if( envelopeInfoPtr->contentListCurrent == NULL )
-				return( CRYPT_ERROR_NOTINITED );
-			}
-		ENSURES( envelopeInfoPtr->contentListCurrent != NULL );
-
-		/* Move the cursor */
-		contentListCursor = ( const CONTENT_LIST * ) \
-			attributeMoveCursor( envelopeInfoPtr->contentListCurrent, 
-								 getAttrFunction, attribute, value );
-		if( contentListCursor == NULL )
-			return( CRYPT_ERROR_NOTFOUND );
-		envelopeInfoPtr->contentListCurrent = \
-								( CONTENT_LIST * ) contentListCursor;
-		return( CRYPT_OK );
-		}
+		return( setCursorSelection( envelopeInfoPtr, attribute, value ) );
 
 	/* In general we can't add new enveloping information once we've started
 	   processing data */
@@ -1282,27 +1335,6 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			return( CRYPT_ERROR_INITED );
 		}
 
-	/* If we're de-enveloping PGP data, make sure that the attribute is 
-	   valid for PGP envelopes.  We can't perform this check via the ACLs 
-	   because the data type isn't known at envelope creation time so 
-	   there's a single generic de-envelope type for which the ACLs allow 
-	   the union of all de-enveloping attribute types.  The following check 
-	   weeds out the ones that don't work for PGP */
-	if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
-		{
-		if( attribute == CRYPT_OPTION_ENCR_MAC || \
-			attribute == CRYPT_ENVINFO_INTEGRITY || \
-			attribute == CRYPT_ENVINFO_KEY || \
-			attribute == CRYPT_ENVINFO_SESSIONKEY )
-			return( CRYPT_ARGERROR_VALUE );
-		if( attribute == CRYPT_ENVINFO_HASH && \
-			!( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG ) )
-			{
-			/* We can add a hash if we're creating a detached signature */
-			return( CRYPT_ARGERROR_VALUE );
-			}
-		}
-
 	/* Since the information may not be used for quite some time after it's
 	   added we do some preliminary checking here to allow us to return an
 	   error code immediately rather than from some deeply-buried function an
@@ -1314,15 +1346,39 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		{
 		if( checkTable[ i ].type == attribute )
 			{
-			if( envelopeInfoPtr->usage != ACTION_NONE && \
-				envelopeInfoPtr->usage != checkTable[ i ].usage )
-				return( exitErrorInited( envelopeInfoPtr, attribute ) );
+			formatTypeInfo = checkTable[ i ].formatType;
 			usage = checkTable[ i ].usage;
 			checkType = checkTable[ i ].checkType;
+			requiredFlag = checkTable[ i ].requiredFlag;
 			break;
 			}
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( checkTable, CHECK_INFO ) );
+
+	/* Make sure that this attribute is valid for this envelope type */
+	if( formatTypeInfo != NULL )
+		{
+		BOOLEAN formatOK = FALSE;
+
+		for( i = 0; formatTypeInfo[ i ] != CRYPT_FORMAT_NONE && \
+					i < FAILSAFE_ARRAYSIZE( formatAll, \
+											CRYPT_ATTRIBUTE_TYPE ); i++ )
+			{
+			if( envelopeInfoPtr->type == formatTypeInfo[ i ] )
+				{
+				formatOK = TRUE;
+				break;
+				}
+			}
+		ENSURES( i < FAILSAFE_ARRAYSIZE( formatAll, CRYPT_ATTRIBUTE_TYPE ) );
+		if( !formatOK )
+			return( CRYPT_ARGERROR_VALUE );
+		}
+
+	/* Make sure that the attribute is valid for the envelope usage type.
+	   We also allow ACTION_NONE as a usage since the envelope usage type
+	   may not have been nailed down yet by adding the necessary attributes 
+	   or enveloped data */
 	if( usage != ACTION_NONE )
 		{
 		/* Make sure that the usage requirements for the item that we're 
@@ -1349,6 +1405,7 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			}
 		}
 
+	/* Make sure the attribute can be used as required */
 	if( checkType != MESSAGE_CHECK_NONE )
 		{
 		/* Check the object as appropriate */
@@ -1421,6 +1478,47 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE, &inited, 
 									  CRYPT_CERTINFO_IMMUTABLE );
 			if( cryptStatusError( status ) || !inited )
+				return( CRYPT_ARGERROR_NUM1 );
+			}
+		}
+
+	/* Make sure that any required envelope flags are set */
+	if( requiredFlag != 0 )
+		{
+		/* Make sure that the required enveloping flag is set */
+		if( ( envelopeInfoPtr->flags & requiredFlag ) != requiredFlag )
+			return( CRYPT_ARGERROR_NUM1 );
+		}
+
+	/* Hash contexts, being keyless, are always regarded as being in the 
+	   high state so the standard kernel check for their readiness for use
+	   can't be applied to them.  Instead, we have to explicitly check
+	   them here, however we can only perform the check at this point for
+	   envelopes since for de-envelopes the format type won't have been
+	   established yet */
+	if( attribute == CRYPT_ENVINFO_HASH && \
+		!( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) )
+		{
+		MESSAGE_DATA msgData;
+
+		/* Try and read the hash value to check whether the hashing has been
+		   finalised */
+		setMessageData( &msgData, NULL, 0 );
+		status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE_S, &msgData,
+								  CRYPT_CTXINFO_HASHVALUE );
+		if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
+			{
+			/* If it's a PGP envelope then we still need to hash in 
+			   authenticated attributes, so having the hashing completed is
+			   an error */
+			if( cryptStatusOK( status ) )
+				return( CRYPT_ARGERROR_NUM1 );
+			}
+		else
+			{
+			/* If it's a CMS envelope then the hashing must be completed so
+			   that we can read the hash value from the context */
+			if( cryptStatusError( status ) )
 				return( CRYPT_ARGERROR_NUM1 );
 			}
 		}

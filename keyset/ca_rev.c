@@ -425,7 +425,9 @@ int caRevokeCert( INOUT DBMS_INFO *dbmsInfo,
 			  action == CRYPT_CERTACTION_REVOKE_CERT );
 
 	/* It was a direct revocation done invisibly as part of an internal 
-	   certificate management operation, try again with a straight delete */
+	   certificate management operation, try again with a straight delete.
+	   "Where I come from Sherpa Tenzing there's no such word as 'asambhav 
+	   chha'" */
 	initBoundData( boundDataPtr );
 	if( action == CRYPT_CERTACTION_CERT_CREATION_REVERSE )
 		{

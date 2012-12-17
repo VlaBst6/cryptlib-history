@@ -197,6 +197,7 @@ static int readObject( INOUT STREAM *stream,
 				( status, errorInfo, 
 				  "Couldn't read PKCS #15 object data" ) );
 		}
+	ANALYSER_HINT( objectData != NULL );
 
 	/* Read the object attributes from the in-memory object data */
 	sMemConnect( &objectStream, objectData, objectLength );
@@ -316,7 +317,7 @@ int readPkcs15Keyset( INOUT STREAM *stream,
 										   CRYPT_KEYIDEX_ID, 
 										   pkcs15objectInfo.iD,
 										   pkcs15objectInfo.iDlength,
-										   KEYMGMT_FLAG_NONE );
+										   KEYMGMT_FLAG_NONE, FALSE );
 				}
 			if( pkcs15infoPtr == NULL )
 				{

@@ -575,9 +575,11 @@ static int processCertAttribute( INOUT CERT_INFO *certInfoPtr,
 		return( getCertComponent( certInfoPtr, attribute, valuePtr ) );
 		}
 	if( message == MESSAGE_GETATTRIBUTE_S )
+		{
 		return( getCertComponentString( certInfoPtr, attribute, 
 										msgData->data, msgData->length, 
 										&msgData->length ) );
+		}
 	if( message == MESSAGE_SETATTRIBUTE )
 		{
 		const int value = *valuePtr;
@@ -1186,12 +1188,17 @@ int createCertificateIndirect( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
 				createInfo->strArg2 != NULL && \
 				createInfo->strArgLen2 > 2 && \
 				createInfo->strArgLen2 < MAX_INTLENGTH_SHORT ) );
+	REQUIRES( createInfo->arg3 >= KEYMGMT_FLAG_NONE && \
+			  createInfo->arg3 < KEYMGMT_FLAG_MAX && \
+			  ( createInfo->arg3 & ~KEYMGMT_MASK_USAGEOPTIONS ) == 0 );
+	REQUIRES( createInfo->arg2 == 0 || createInfo->arg3 == 0 );
 
 	/* Pass the call through to the low-level import function */
 	status = importCert( createInfo->strArg1, createInfo->strArgLen1,
 						 &iCertificate, createInfo->cryptOwner,
 						 createInfo->arg2, createInfo->strArg2, 
-						 createInfo->strArgLen2, createInfo->arg1 );
+						 createInfo->strArgLen2, createInfo->arg3,
+						 createInfo->arg1 );
 	if( cryptStatusOK( status ) )
 		createInfo->cryptHandle = iCertificate;
 	return( status );

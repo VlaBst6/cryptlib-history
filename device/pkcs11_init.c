@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib PKCS #11 Init/Shutdown Routines				*
-*						Copyright Peter Gutmann 1998-2005					*
+*						Copyright Peter Gutmann 1998-2009					*
 *																			*
 ****************************************************************************/
 
@@ -16,7 +16,7 @@
   #include "context/context.h"
   #include "device/device.h"
   #include "device/pkcs11_api.h"
-  #include "enc_dec//asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PKCS11
@@ -30,13 +30,6 @@
 /* The default slot to look for tokens in */
 
 #define DEFAULT_SLOT			0
-
-/* Define the following to explicitly link each PKCS #11 function rather than
-   using C_GetFunctionList().  Note that this will require changes to the way
-   the functions are accessed, since currently it's done via a global function
-   pointer table in the pkcs11Info struct */
-
-/* #define USE_EXPLICIT_LINKING */
 
 /****************************************************************************
 *																			*
@@ -87,8 +80,6 @@ static int selfTestFunction( void )
 
 static BOOLEAN pkcs11Initialised = FALSE;
 
-#ifdef DYNAMIC_LOAD
-
 /* Since we can be using multiple PKCS #11 drivers, we define an array of
    them and access the appropriate one by name */
 
@@ -96,106 +87,16 @@ typedef struct {
 	char name[ 32 + 1 + 8 ];		/* Name of device */
 	INSTANCE_HANDLE hPKCS11;		/* Handle to driver */
 	CK_FUNCTION_LIST_PTR functionListPtr;	/* Driver access information */
-#ifdef USE_EXPLICIT_LINKING
-	CK_C_CloseSession pC_CloseSession;	/* Interface function pointers */
-	CK_C_CreateObject pC_CreateObject;
-	CK_C_Decrypt pC_Decrypt;
-	CK_C_DecryptInit pC_DecryptInit;
-	CK_C_DestroyObject pC_DestroyObject;
-	CK_C_Digest pC_Digest;
-	CK_C_DigestInit pC_DigestInit;
-	CK_C_Encrypt pC_Encrypt;
-	CK_C_EncryptInit pC_EncryptInit;
-	CK_C_Finalize pC_Finalize;
-	CK_C_FindObjects pC_FindObjects;
-	CK_C_FindObjectsFinal pC_FindObjectsFinal;
-	CK_C_FindObjectsInit pC_FindObjectsInit;
-	CK_C_GenerateKey pC_GenerateKey;
-	CK_C_GenerateKeyPair pC_GenerateKeyPair;
-	CK_C_GenerateRandom pC_GenerateRandom;
-	CK_C_GetAttributeValue pC_GetAttributeValue;
-	CK_C_GetMechanismInfo pC_GetMechanismInfo;
-	CK_C_GetSlotInfo pC_GetSlotInfo;
-	CK_C_GetSlotList pC_GetSlotList;
-	CK_C_GetTokenInfo pC_GetTokenInfo;
-	CK_C_InitPIN pC_InitPIN;
-	CK_C_InitToken pC_InitToken;
-	CK_C_Login pC_Login;
-	CK_C_Logout pC_Logout;
-	CK_C_OpenSession pC_OpenSession;
-	CK_C_SetAttributeValue pC_SetAttributeValue;
-	CK_C_SetPIN pC_SetPIN;
-	CK_C_Sign pC_Sign;
-	CK_C_SignFinal pC_SignFinal;
-	CK_C_SignInit pC_SignInit;
-	CK_C_SignUpdate pC_SignUpdate;
-	CK_C_Verify pC_Verify;
-	CK_C_VerifyInit pC_VerifyInit;
-	CK_C_WrapKey pC_WrapKey;
-	CK_C_UnwrapKey pC_UnwrapKey;
-#endif /* USE_EXPLICIT_LINKING */
 	} PKCS11_DRIVER_INFO;
 
 static PKCS11_DRIVER_INFO pkcs11InfoTbl[ MAX_PKCS11_DRIVERS + 8 ];
-
-/* The use of dynamically bound function pointers vs.statically linked
-   functions requires a bit of sleight of hand since we can't give the
-   pointers the same names as prototyped functions.  To get around this we
-   redefine the actual function names to the names of the pointers */
-
-#ifdef USE_EXPLICIT_LINKING
-
-#define C_CloseSession		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_CloseSession
-#define C_CreateObject		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_CreateObject
-#define C_Decrypt			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Decrypt
-#define C_DecryptInit		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_DecryptInit
-#define C_DestroyObject		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_DestroyObject
-#define C_Digest			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Digest
-#define C_DigestInit		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_DigestInit
-#define C_Encrypt			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Encrypt
-#define C_EncryptInit		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_EncryptInit
-#define C_Finalize			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Finalize
-#define C_FindObjects		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_FindObjects
-#define C_FindObjectsFinal	pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_FindObjectsFinal
-#define C_FindObjectsInit	pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_FindObjectsInit
-#define C_GenerateKey		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_GenerateKey
-#define C_GenerateKeyPair	pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_GenerateKeyPair
-#define C_GenerateRandom	pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_GenerateRandom
-#define C_GetAttributeValue	pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_GetAttributeValue
-#define C_GetMechanismInfo	pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_GetMechanismInfo
-#define C_GetSlotInfo		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_GetSlotInfo
-#define C_GetSlotList		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_GetSlotList
-#define C_GetTokenInfo		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_GetTokenInfo
-#define C_Initialize		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Initialize
-#define C_InitPIN			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_InitPIN
-#define C_InitToken			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_InitToken
-#define C_Login				pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Login
-#define C_Logout			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Logout
-#define C_OpenSession		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_OpenSession
-#define C_SetAttributeValue	pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_SetAttributeValue
-#define C_SetPIN			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_SetPIN
-#define C_Sign				pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Sign
-#define C_SignFinal			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_SignFinal
-#define C_SignInit			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_SignInit
-#define C_SignUpdate		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_SignUpdate
-#define C_Verify			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_Verify
-#define C_VerifyInit		pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_VerifyInit
-#define C_WrapKey			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_WrapKey
-#define C_UnwrapKey			pkcs11InfoTbl[ pkcs11Info->deviceNo ].pC_UnwrapKey
-
-#endif /* USE_EXPLICIT_LINKING */
 
 /* Dynamically load and unload any necessary PKCS #11 drivers */
 
 static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 							 const char *driverName )
 	{
-#ifdef USE_EXPLICIT_LINKING
-	CK_C_GetInfo pC_GetInfo;
-	CK_C_Initialize pC_Initialize;
-#else
 	CK_C_GetFunctionList pC_GetFunctionList;
-#endif /* USE_EXPLICIT_LINKING */
 	CK_INFO info = DUMMY_INIT_STRUCT;
 	CK_RV status;
 #ifdef __WIN16__
@@ -222,118 +123,6 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 		return( CRYPT_ERROR );
 #endif /* OS-specific dynamic load */
 
-	/* Now get pointers to the functions */
-#ifdef USE_EXPLICIT_LINKING
-	pC_GetInfo = ( CK_C_GetInfo ) DynamicBind( pkcs11Info->hPKCS11, "C_GetInfo" );
-	pC_Initialize = ( CK_C_Initialize ) DynamicBind( pkcs11Info->hPKCS11, "C_Initialize" );
-	pkcs11Info->pC_CloseSession = ( CK_C_CloseSession ) DynamicBind( pkcs11Info->hPKCS11, "C_CloseSession" );
-	pkcs11Info->pC_CreateObject = ( CK_C_CreateObject ) DynamicBind( pkcs11Info->hPKCS11, "C_CreateObject" );
-	pkcs11Info->pC_Decrypt = ( CK_C_Decrypt ) DynamicBind( pkcs11Info->hPKCS11, "C_Decrypt" );
-	pkcs11Info->pC_DecryptInit = ( CK_C_DecryptInit ) DynamicBind( pkcs11Info->hPKCS11, "C_DecryptInit" );
-	pkcs11Info->pC_DestroyObject = ( CK_C_DestroyObject ) DynamicBind( pkcs11Info->hPKCS11, "C_DestroyObject" );
-	pkcs11Info->pC_Digest = ( CK_C_Digest ) DynamicBind( pkcs11Info->hPKCS11, "C_Digest" );
-	pkcs11Info->pC_DigestInit = ( CK_C_DigestInit ) DynamicBind( pkcs11Info->hPKCS11, "C_DigestInit" );
-	pkcs11Info->pC_Encrypt = ( CK_C_Encrypt ) DynamicBind( pkcs11Info->hPKCS11, "C_Encrypt" );
-	pkcs11Info->pC_EncryptInit = ( CK_C_EncryptInit ) DynamicBind( pkcs11Info->hPKCS11, "C_EncryptInit" );
-	pkcs11Info->pC_Finalize = ( CK_C_Finalize ) DynamicBind( pkcs11Info->hPKCS11, "C_Finalize" );
-	pkcs11Info->pC_FindObjects = ( CK_C_FindObjects ) DynamicBind( pkcs11Info->hPKCS11, "C_FindObjects" );
-	pkcs11Info->pC_FindObjectsFinal = ( CK_C_FindObjectsFinal ) DynamicBind( pkcs11Info->hPKCS11, "C_FindObjectsFinal" );
-	pkcs11Info->pC_FindObjectsInit = ( CK_C_FindObjectsInit ) DynamicBind( pkcs11Info->hPKCS11, "C_FindObjectsInit" );
-	pkcs11Info->pC_GenerateKey = ( CK_C_GenerateKey ) DynamicBind( pkcs11Info->hPKCS11, "C_GenerateKey" );
-	pkcs11Info->pC_GenerateKeyPair = ( CK_C_GenerateKeyPair ) DynamicBind( pkcs11Info->hPKCS11, "C_GenerateKeyPair" );
-	pkcs11Info->pC_GenerateRandom = ( CK_C_GenerateRandom ) DynamicBind( pkcs11Info->hPKCS11, "C_GenerateRandom" );
-	pkcs11Info->pC_GetAttributeValue = ( CK_C_GetAttributeValue ) DynamicBind( pkcs11Info->hPKCS11, "C_GetAttributeValue" );
-	pkcs11Info->pC_GetMechanismInfo = ( CK_C_GetMechanismInfo ) DynamicBind( pkcs11Info->hPKCS11, "C_GetMechanismInfo" );
-	pkcs11Info->pC_GetSlotInfo = ( CK_C_GetSlotInfo ) DynamicBind( pkcs11Info->hPKCS11, "C_GetSlotInfo" );
-	pkcs11Info->pC_GetSlotList = ( CK_C_GetSlotList ) DynamicBind( pkcs11Info->hPKCS11, "C_GetSlotList" );
-	pkcs11Info->pC_GetTokenInfo = ( CK_C_GetTokenInfo ) DynamicBind( pkcs11Info->hPKCS11, "C_GetTokenInfo" );
-	pkcs11Info->pC_InitPIN = ( CK_C_InitPIN ) DynamicBind( pkcs11Info->hPKCS11, "C_InitPIN" );
-	pkcs11Info->pC_InitToken = ( CK_C_InitToken ) DynamicBind( pkcs11Info->hPKCS11, "C_InitToken" );
-	pkcs11Info->pC_Login = ( CK_C_Login ) DynamicBind( pkcs11Info->hPKCS11, "C_Login" );
-	pkcs11Info->pC_Logout = ( CK_C_Logout ) DynamicBind( pkcs11Info->hPKCS11, "C_Logout" );
-	pkcs11Info->pC_OpenSession = ( CK_C_OpenSession ) DynamicBind( pkcs11Info->hPKCS11, "C_OpenSession" );
-	pkcs11Info->pC_SetAttributeValue = ( CK_C_SetAttributeValue ) DynamicBind( pkcs11Info->hPKCS11, "C_SetAttributeValue" );
-	pkcs11Info->pC_SetPIN = ( CK_C_SetPIN ) DynamicBind( pkcs11Info->hPKCS11, "C_SetPIN" );
-	pkcs11Info->pC_SignFinal = ( CK_C_SignFinal ) DynamicBind( pkcs11Info->hPKCS11, "C_SignFinal" );
-	pkcs11Info->pC_SignInit = ( CK_C_SignInit ) DynamicBind( pkcs11Info->hPKCS11, "C_SignInit" );
-	pkcs11Info->pC_SignUpdate = ( CK_C_SignUpdate ) DynamicBind( pkcs11Info->hPKCS11, "C_SignUpdate" );
-	pkcs11Info->pC_Verify = ( CK_C_Verify ) DynamicBind( pkcs11Info->hPKCS11, "C_Verify" );
-	pkcs11Info->pC_VerifyInit = ( CK_C_VerifyInit ) DynamicBind( pkcs11Info->hPKCS11, "C_VerifyInit" );
-	pkcs11Info->pC_WrapKey = ( CK_C_WrapKey ) DynamicBind( pkcs11Info->hPKCS11, "C_WrapKey" );
-	pkcs11Info->pC_UnwrapKey = ( CK_C_UnwrapKey ) DynamicBind( pkcs11Info->hPKCS11, "C_UnwrapKey" );
-
-	/* Make sure that we got valid pointers for every device function.  
-	   C_FindObjectsFinal() wasn't added until 2.x and some drivers don't
-	   implement it (a smaller subset of them nevertheless claim to be 2.x 
-	   drivers), so we allow this to be null - the code won't call it if it's
-	   not present */
-	if( pC_GetInfo == NULL || pC_Initialize == NULL ||
-		pkcs11Info->pC_CloseSession == NULL ||
-		pkcs11Info->pC_CreateObject == NULL ||
-		pkcs11Info->pC_Decrypt == NULL ||
-		pkcs11Info->pC_DecryptInit == NULL ||
-		pkcs11Info->pC_DestroyObject == NULL ||
-		pkcs11Info->pC_Digest == NULL ||
-		pkcs11Info->pC_DigestInit == NULL ||
-		pkcs11Info->pC_Encrypt == NULL ||
-		pkcs11Info->pC_EncryptInit == NULL ||
-		pkcs11Info->pC_Finalize == NULL ||
-		pkcs11Info->pC_FindObjects == NULL ||
-		pkcs11Info->pC_FindObjectsInit == NULL ||
-		pkcs11Info->pC_GenerateRandom == NULL ||
-		pkcs11Info->pC_GenerateKey == NULL ||
-		pkcs11Info->pC_GenerateKeyPair == NULL ||
-		pkcs11Info->pC_GetAttributeValue == NULL ||
-		pkcs11Info->pC_GetMechanismInfo == NULL ||
-		pkcs11Info->pC_GetSlotInfo == NULL ||
-		pkcs11Info->pC_GetSlotList == NULL ||
-		pkcs11Info->pC_GetTokenInfo == NULL || 
-		pkcs11Info->pC_InitPIN == NULL || 
-		pkcs11Info->pC_InitToken == NULL || pkcs11Info->pC_Login == NULL ||
-		pkcs11Info->pC_Logout == NULL || pkcs11Info->pC_OpenSession == NULL ||
-		pkcs11Info->pC_SetAttributeValue == NULL ||
-		pkcs11Info->pC_SetPIN == NULL || pkcs11Info->pC_Sign == NULL ||
-		pkcs11Info->pC_SignFinal == NULL || pkcs11Info->pC_SignInit == NULL || 
-		pkcs11Info->pC_SignUpdate == NULL || 
-		pkcs11Info->pC_WrapKey == NULL || pkcs11Info->pC_UnwrapKey == NULL || 
-		pkcs11Info->pC_Verify == NULL || pkcs11Info->pC_VerifyInit == NULL )
-		{
-		/* Free the library reference and clear the information */
-		DynamicUnload( pkcs11Info->hPKCS11 );
-		memset( pkcs11Info, 0, sizeof( PKCS11_DRIVER_INFO ) );
-		return( CRYPT_ERROR );
-		}
-
-	/* Initialise the PKCS #11 library and get information on the device.  
-	   There are four types of PKCS #11 driver around: v1, v1-like claiming 
-	   to be v2, v2-like claiming to be v1, and v2.  cryptlib can in theory 
-	   handle all of these, however there are some problem areas with v1 
-	   (for example v1 uses 16-bit values while v2 uses 32-bit ones, this is 
-	   usually OK because data is passed around as 32-bit values with the 
-	   high bits zeroed but some implementations may leave garbage in the 
-	   high 16 bits that leads to all sorts of confusion).  Because of this 
-	   we explicitly fail if something claims to be v1 even though it might 
-	   work in practice */
-	status = pC_Initialize( NULL_PTR ) & 0xFFFF;
-	if( status == CKR_OK || status == CKR_CRYPTOKI_ALREADY_INITIALIZED )
-		{
-		isInitialised = TRUE;
-		status = pC_GetInfo( &info ) & 0xFFFF;
-		}
-	if( status == CKR_OK && info.cryptokiVersion.major <= 1 )
-		{
-		/* It's v1, we can't work with it */
-		status = CKR_FUNCTION_NOT_SUPPORTED;
-		}
-	if( status != CKR_OK )
-		{
-		if( isInitialised )
-			pkcs11Info->pC_Finalize( NULL_PTR );
-		DynamicUnload( pkcs11Info->hPKCS11 );
-		memset( pkcs11Info, 0, sizeof( PKCS11_DRIVER_INFO ) );
-		return( CRYPT_ERROR );
-		}
-#else
 	/* Get the access information for the PKCS #11 library, initialise it, 
 	   and get information on the device.  There are four types of PKCS #11 
 	   driver around: v1, v1-like claiming to be v2, v2-like claiming to be 
@@ -368,6 +157,46 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 		return( CRYPT_ERROR );
 		}
 	status = C_Initialize( NULL_PTR ) & 0xFFFF;
+	if( status == CKR_ARGUMENTS_BAD && \
+		strFindStr( driverName, strlen( driverName ), "softokn3.", 9 ) >= 0 )
+		{
+		typedef struct CK_C_INITIALIZE_ARGS {
+			CK_CREATEMUTEX CreateMutex;
+			CK_DESTROYMUTEX DestroyMutex;
+			CK_LOCKMUTEX LockMutex;
+			CK_UNLOCKMUTEX UnlockMutex;
+			CK_FLAGS flags;
+			CK_VOID_PTR LibraryParameters;
+			CK_VOID_PTR pReserved;
+			} Netscape_CK_C_INITIALIZE_ARGS;
+		Netscape_CK_C_INITIALIZE_ARGS initArgs;
+
+		/* Netscape invented their own extension to CK_C_INITIALIZE_ARGS, 
+		   adding a 'LibraryParameters' string to allow the specification of 
+		   free-form parameters.  If the Netscape library's C_Initialize()
+		   is called then it'll return CKR_ARGUMENTS_BAD (rather than 
+		   assuming sensible default values), so that we have to call it 
+		   again with explicitly-specified parameters.
+
+		   Even this doesn't work properly though, according to the Netscape 
+		   docs we can set LibraryParameters to NULL, but this still results 
+		   in C_Initialize() returning CKR_ARGUMENTS_BAD.  Later in the docs
+		   is a requirement that the softokn3 library be passed a 
+		   "parameters=" string, but it's unclear what parameters need to be 
+		   set, to what values, and what effect these values may have on the
+		   behaviour of existing configs for applications like Firefox.  The
+		   following config lets the C_Initialize() call succeed but causes
+		   odd failures later in other PKCS #11 functions */
+		DEBUG_DIAG(( "Driver is the buggy Netscape/NSS one that requires "
+					 "nonstandard initialisation, see the code comment for "
+					 "details" ));
+		assert( DEBUG_WARN );
+		memset( &initArgs, 0, sizeof( Netscape_CK_C_INITIALIZE_ARGS ) );
+		initArgs.LibraryParameters = \
+			"configdir='.' certPrefix='' keyPrefix='' secmod='secmod.db' "
+			"flags=noModDB,noCertDB,noKeyDB,optimizeSpace,readOnly";
+		status = C_Initialize( &initArgs );
+		}
 	if( status == CKR_OK || status == CKR_CRYPTOKI_ALREADY_INITIALIZED )
 		{
 		isInitialised = TRUE;
@@ -386,7 +215,6 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 		memset( pkcs11Info, 0, sizeof( PKCS11_DRIVER_INFO ) );
 		return( CRYPT_ERROR );
 		}
-#endif /* USE_EXPLICIT_LINKING */
 
 	/* Copy out the device driver's name so that the user can access it by 
 	   name.  Some vendors erroneously null-terminate the string so we check 
@@ -410,13 +238,11 @@ void deviceEndPKCS11( void )
 			{
 			if( pkcs11InfoTbl[ i ].hPKCS11 != NULL_INSTANCE )
 				{
-#ifdef USE_EXPLICIT_LINKING
-				pkcs11InfoTbl[ i ].pC_Finalize( NULL_PTR );
-#else
 				PKCS11_DRIVER_INFO *pkcs11Info = &pkcs11InfoTbl[ i ];
+						/* Needed in macro-ised form of C_Finalize() */
 
 				C_Finalize( NULL_PTR );
-#endif /* USE_EXPLICIT_LINKING */
+
 				DynamicUnload( pkcs11InfoTbl[ i ].hPKCS11 );
 				}
 			pkcs11InfoTbl[ i ].hPKCS11 = NULL_INSTANCE;
@@ -494,32 +320,6 @@ int deviceInitPKCS11( void )
 	
 	return( pkcs11Initialised ? CRYPT_OK : CRYPT_ERROR );
 	}
-
-#else
-
-int deviceInitPKCS11( void )
-	{
-	int status;
-
-	/* If we've previously tried to initialise the drivers, don't try it 
-	   again */
-	if( pkcs11Initialised )
-		return( CRYPT_OK );
-
-	status = C_Initialize( NULL_PTR );
-	if( status != CKR_OK && status != CKR_CRYPTOKI_ALREADY_INITIALIZED )
-		return( CRYPT_ERROR );
-	pkcs11Initialised = TRUE;
-	return( CRYPT_OK );
-	}
-
-void deviceEndPKCS11( void )
-	{
-	if( pkcs11Initialised )
-		C_Finalize( NULL_PTR );
-	pkcs11Initialised = FALSE;
-	}
-#endif /* DYNAMIC_LOAD */
 
 /****************************************************************************
 *																			*
@@ -632,6 +432,12 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 	assert( isReadPtr( mechanismInfoPtr, \
 					   maxMechanisms * sizeof( PKCS11_MECHANISM_INFO ) ) );
 
+	/* Set up canary values for the mechanism information in case the driver
+	   blindly reports success for every mechanism that we ask for */
+	memset( &pMechanism, 0, sizeof( CK_MECHANISM_INFO ) );
+	pMechanism.ulMinKeySize = 0xA5A5;
+	pMechanism.ulMaxKeySize = 0x5A5A;
+
 	/* Get the information for this mechanism.  Since many PKCS #11 drivers
 	   implement some of their capabilities using God knows what sort of 
 	   software implementation, we provide the option to skip emulated 
@@ -641,6 +447,16 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 								 &pMechanism );
 	if( status != CKR_OK )
 		return( NULL );
+	if( pMechanism.ulMinKeySize == 0xA5A5 && \
+		pMechanism.ulMaxKeySize == 0x5A5A )
+		{
+		/* The driver reported that this mechanism is available but didn't
+		   update the mechanism information, it's lying */
+		DEBUG_DIAG(( "Driver reports that mechanism %X is available even "
+					 "though it isn't", mechanismInfoPtr->mechanism ));
+		assert( DEBUG_WARN );
+		return( NULL );
+		}
 	krnlSendMessage( deviceInfo->ownerHandle, IMESSAGE_GETATTRIBUTE, 
 					 &hardwareOnly, CRYPT_OPTION_DEVICE_PKCS11_HARDWAREONLY );
 	if( hardwareOnly && !( pMechanism.flags & CKF_HW ) )
@@ -667,12 +483,30 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		int maxKeySize = ( int ) pMechanism.ulMaxKeySize;
 
 		/* Adjust the key size to bytes and make sure that all values are 
-		   consistent.  Some implementations report silly lower bounds (e.g. 
-		   1-bit RSA, "You naughty minKey") so we adjust them to a sane value 
-		   if necessary.  We also limit the maximum key size to match the
-		   cryptlib native max.key size, both for consistency and because
-		   cryptlib performs buffer allocation based on the maximum native
-		   buffer size */
+		   consistent.  Some implementations report silly bounds (e.g. 1-bit 
+		   RSA, "You naughty minKey" or alternatively 4Gbit RSA) so we 
+		   adjust them to a sane value if necessary.  We also limit the 
+		   maximum key size to match the cryptlib native maximum key size, 
+		   both for consistency and because cryptlib performs buffer 
+		   allocation based on the maximum native buffer size */
+		if( pMechanism.ulMinKeySize < 0 || \
+			pMechanism.ulMinKeySize >= 10000L )
+			{
+			DEBUG_DIAG(( "Driver reports invalid minimum key size %ld for "
+						 "%s algorithm", pMechanism.ulMinKeySize,
+						 capabilityInfo->algoName ));
+			assert( DEBUG_WARN );
+			minKeySize = 0;
+			}
+		if( pMechanism.ulMaxKeySize < 0 || \
+			pMechanism.ulMaxKeySize >= 100000L )
+			{
+			DEBUG_DIAG(( "Driver reports invalid maximum key size %ld for "
+						 "%s algorithm", pMechanism.ulMaxKeySize,
+						 capabilityInfo->algoName ));
+			assert( DEBUG_WARN );
+			maxKeySize = 0;
+			}
 		if( !keysizeInBytes( cryptAlgo ) )
 			{
 			minKeySize = bitsToBytes( minKeySize );
@@ -688,11 +522,19 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 			{
 			/* Serious braindamage in the driver, we'll just have to make
 			   a sensible guess */
-			DEBUG_DIAG(( "Maximum key size < minimum key size" ));
+			DEBUG_DIAG(( "Driver reports maximum key size %d < minimum key "
+						 "size %d for %s algorithm", 
+						 capabilityInfo->maxKeySize, 
+						 capabilityInfo->minKeySize, 
+						 capabilityInfo->algoName ));
 			assert( DEBUG_WARN );
-			capabilityInfo->maxKeySize = \
-									( cryptAlgo == CRYPT_ALGO_RSA || \
-									  isDlpAlgo( cryptAlgo ) ) ? 128 : 16;
+			if( isPKC )
+				{
+				capabilityInfo->maxKeySize = \
+					max( capabilityInfo->minKeySize, bitsToBytes( 2048 ) );
+				}
+			else
+				capabilityInfo->maxKeySize = 16;
 			}
 		if( capabilityInfo->keySize > capabilityInfo->maxKeySize )
 			capabilityInfo->keySize = capabilityInfo->maxKeySize;
@@ -1169,14 +1011,21 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 			theTime <= currentTime + 86400 )
 			deviceInfo->flags |= DEVICE_TIME;
 
-		/* If this assertion is triggered then the token time may be faked 
-		   since it's identical to the host system time, see the comment 
-		   above for details.  We make an exception for soft-tokens, which 
-		   will (by definition) have the same time as the system time */
-		assert( ( pkcs11InfoTbl[ pkcs11Info->deviceNo ].name[ 0 ] && \
-				  !strCompare( pkcs11InfoTbl[ pkcs11Info->deviceNo ].name,
-							   "Software", 8 ) ) || \
-				theTime < currentTime - 1 || theTime > currentTime + 1 );
+		/* If this check is triggered then the token time may be faked since 
+		   it's identical to the host system time, see the comment above for 
+		   details.  We make an exception for soft-tokens (if we can detect 
+		   them), which will (by definition) have the same time as the 
+		   system time */
+		if( !( pkcs11InfoTbl[ pkcs11Info->deviceNo ].name[ 0 ] && \
+			   !strCompare( pkcs11InfoTbl[ pkcs11Info->deviceNo ].name, 
+							"Software", 8 ) ) && \
+			theTime == currentTime )
+			{
+			DEBUG_DIAG(( "PKCS #11 token time is the same as the host "
+						 "system time, token time may be faked by the "
+						 "driver." ));
+			assert( DEBUG_WARN );
+			}
 		}
 	if( tokenInfo.flags & CKF_WRITE_PROTECTED )
 		{
@@ -1314,11 +1163,7 @@ int initPKCS11Init( DEVICE_INFO *deviceInfo, const char *name,
 					const int nameLength )
 	{
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
-#ifdef DYNAMIC_LOAD
 	int i, driverNameLength = nameLength;
-#else
-	UNUSED_ARG( name );
-#endif /* DYNAMIC_LOAD */
 
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isReadPtr( name, nameLength ) );
@@ -1327,7 +1172,6 @@ int initPKCS11Init( DEVICE_INFO *deviceInfo, const char *name,
 	if( !pkcs11Initialised )
 		return( CRYPT_ERROR_OPEN );
 
-#ifdef DYNAMIC_LOAD
 	/* Check whether there's a token name appended to the driver name */
 	for( i = 1; i < nameLength - 1; i++ )
 		{
@@ -1368,7 +1212,6 @@ int initPKCS11Init( DEVICE_INFO *deviceInfo, const char *name,
 			return( CRYPT_ERROR_NOTFOUND );
 		pkcs11Info->deviceNo = i;
 		}
-#endif /* DYNAMIC_LOAD */
 
 	/* Set up remaining function and access information */
 	deviceInfo->initFunction = initFunction;

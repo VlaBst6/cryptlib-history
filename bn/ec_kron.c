@@ -53,13 +53,13 @@
  *
  */
 
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "ec_lcl.h"
 #else
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#if defined( USE_ECDH ) || defined( USE_ECDSA )
+#if defined( USE_ECDH ) || defined( USE_ECDSA )		/* pcg */
 
 /* least significant word */
 #define BN_lsw(n) (((n)->top == 0) ? (BN_ULONG) 0 : (n)->d[0])
@@ -188,4 +188,4 @@ end:
 		return ret;
 	}
 
-#endif /* USE_ECDH || USE_ECDSA */
+#endif /* USE_ECDH || USE_ECDSA */		/* pcg */

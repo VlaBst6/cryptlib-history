@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Session Read/Write Support Routines				*
-*					  Copyright Peter Gutmann 1998-2008						*
+*					  Copyright Peter Gutmann 1998-2011						*
 *																			*
 ****************************************************************************/
 
@@ -437,6 +437,11 @@ static int getData( INOUT SESSION_INFO *sessionInfoPtr,
 	status = tryRead( sessionInfoPtr, &bytesRead, &readInfo );
 	if( cryptStatusError( status ) && status != OK_SPECIAL )
 		{
+		/* If it's an internal error then the states of the by-reference
+		   values may be undefined so we can't check any further */
+		if( isInternalError( status ) )
+			return( status );
+
 		/* If there's an error reading data, only return an error status if 
 		   we haven't already returned all existing/earlier data.  This 
 		   ensures that the caller can drain out any remaining data from the 
@@ -1009,11 +1014,12 @@ int putSessionData( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* If there's too much data to fit into the send buffer we need to send 
 	   it through to the host to make room for more */
-	availableBuffer = getRemainingBufferSpace( sessionInfoPtr );
-	if( cryptStatusError( availableBuffer ) )
-		return( availableBuffer  );
+	status = availableBuffer = getRemainingBufferSpace( sessionInfoPtr );
+	if( cryptStatusError( status ) )
+		return( status );
 	for( iterationCount = 0;
-		 length > availableBuffer && iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 length >= availableBuffer && \
+		 	iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
 		ENSURES( availableBuffer >= 0 && availableBuffer <= length );
@@ -1068,9 +1074,9 @@ int putSessionData( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 
 		/* We've flushed the buffer, update the available-space value */
-		availableBuffer = getRemainingBufferSpace( sessionInfoPtr );
-		if( cryptStatusError( availableBuffer ) )
-			return( availableBuffer );
+		status = availableBuffer = getRemainingBufferSpace( sessionInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
@@ -1107,35 +1113,26 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readPkiDatagram( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	HTTP_DATA_INFO httpDataInfo;
-	int length = DUMMY_INIT, status;
+	int length = DUMMY_INIT, complianceLevel, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
+	/* Some servers send back sufficiently broken responses that they won't
+	   pass the validity check on the data that we perform after we read it, 
+	   so we allow it to be disabled by setting the compliance level to
+	   oblivious */
+	status = krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE, 
+							  IMESSAGE_GETATTRIBUTE, &complianceLevel, 
+							  CRYPT_OPTION_CERT_COMPLIANCELEVEL );
+	if( cryptStatusError( status ) )
+		complianceLevel = CRYPT_COMPLIANCELEVEL_STANDARD;
+
 	/* Read the datagram */
 	sessionInfoPtr->receiveBufEnd = 0;
-#ifdef USE_CMP_TRANSPORT
-	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
-		{
-		initHttpDataInfo( &httpDataInfo, sessionInfoPtr->receiveBuffer,
-						  sessionInfoPtr->receiveBufSize );
-		status = sread( &sessionInfoPtr->stream, &httpDataInfo,
-						sizeof( HTTP_DATA_INFO ) );
-		if( !cryptStatusError( status ) )
-			length = httpDataInfo.bytesAvail;
-		}
-	else
-		{
-		status = length = \
-				sread( &sessionInfoPtr->stream, 
-					   sessionInfoPtr->receiveBuffer,
-					   sessionInfoPtr->receiveBufSize );
-		}
-#else
 	initHttpDataInfo( &httpDataInfo, sessionInfoPtr->receiveBuffer,
 					  sessionInfoPtr->receiveBufSize );
 	status = sread( &sessionInfoPtr->stream, &httpDataInfo,
 					sizeof( HTTP_DATA_INFO ) );
-#endif /* USE_CMP_TRANSPORT */
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
@@ -1159,13 +1156,16 @@ int readPkiDatagram( INOUT SESSION_INFO *sessionInfoPtr )
 	   since checking the ASN.1, which is the data that will actually be
 	   processed, avoids any potential problems with implementations where
 	   the transport layer gets data lengths slightly wrong */
-	status = length = checkObjectEncoding( sessionInfoPtr->receiveBuffer, 
-										   length );
-	if( cryptStatusError( status ) )
+	if( complianceLevel > CRYPT_COMPLIANCELEVEL_OBLIVIOUS )
 		{
-		retExt( status, 
-				( status, SESSION_ERRINFO, 
-				  "Invalid PKI message encoding" ) );
+		status = length = checkObjectEncoding( sessionInfoPtr->receiveBuffer, 
+											   length );
+		if( cryptStatusError( status ) )
+			{
+			retExt( status, 
+					( status, SESSION_ERRINFO, 
+					  "Invalid PKI message encoding" ) );
+			}
 		}
 	sessionInfoPtr->receiveBufEnd = length;
 	return( CRYPT_OK );
@@ -1173,56 +1173,41 @@ int readPkiDatagram( INOUT SESSION_INFO *sessionInfoPtr )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writePkiDatagram( INOUT SESSION_INFO *sessionInfoPtr, 
-					  IN_BUFFER_OPT( contentTypeLength ) \
+					  IN_BUFFER_OPT( contentTypeLen ) \
 							const char *contentType, 
-					  IN_LENGTH_SHORT_Z const int contentTypeLength )
+					  IN_LENGTH_TEXT_Z const int contentTypeLen )
 	{
 	HTTP_DATA_INFO httpDataInfo;
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( contentType == NULL || \
-			isReadPtr( contentType, contentTypeLength ) );
+			isReadPtr( contentType, contentTypeLen ) );
 
-	REQUIRES( ( contentType == NULL && contentTypeLength ) || \
+	REQUIRES( ( contentType == NULL && contentTypeLen ) || \
 			  ( contentType != NULL && \
-				contentTypeLength > 0 && \
-				contentTypeLength < MAX_INTLENGTH_SHORT ) );
+				contentTypeLen > 0 && contentTypeLen <= CRYPT_MAX_TEXTSIZE ) );
 	REQUIRES( sessionInfoPtr->receiveBufEnd > 4 && \
 			  sessionInfoPtr->receiveBufEnd < MAX_INTLENGTH );
 
 	/* Write the datagram.  Request/response sessions use a single buffer 
 	   for both reads and writes, which is why we're (apparently) writing
 	   the contents of the read buffer */
-#ifdef USE_CMP_TRANSPORT
-	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
-		{
-		initHttpDataInfo( &httpDataInfo, sessionInfoPtr->receiveBuffer,
-						  sessionInfoPtr->receiveBufEnd );
-		httpDataInfo.contentType = contentType;
-		httpDataInfo.contentTypeLen = contentTypeLength;
-		status = swrite( &sessionInfoPtr->stream, &httpDataInfo,
-						 sizeof( HTTP_DATA_INFO ) );
-		}
-	else
-		{
-		status = swrite( &sessionInfoPtr->stream, 
-						 sessionInfoPtr->receiveBuffer,
-						 sessionInfoPtr->receiveBufEnd );
-		}
-#else
 	initHttpDataInfo( &httpDataInfo, sessionInfoPtr->receiveBuffer,
 					  sessionInfoPtr->receiveBufEnd );
 	httpDataInfo.contentType = contentType;
-	httpDataInfo.contentTypeLen = contentTypeLength;
+	httpDataInfo.contentTypeLen = contentTypeLen;
 	status = swrite( &sessionInfoPtr->stream, &httpDataInfo,
 					 sizeof( HTTP_DATA_INFO ) );
-#endif /* USE_CMP_TRANSPORT */
 	if( cryptStatusError( status ) )
+		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
 						  &sessionInfoPtr->errorInfo );
+		}
+	else
+		status = CRYPT_OK;	/* swrite() returns a byte count */
 	sessionInfoPtr->receiveBufEnd = 0;
 
-	return( CRYPT_OK );	/* swrite() returns a byte count */
+	return( status );
 	}
 #endif /* USE_SESSIONS */

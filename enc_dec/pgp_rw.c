@@ -69,8 +69,9 @@ static int readOpenPGPLength( INOUT STREAM *stream,
 
 	/* 224...254 is PGP's annoying interpretation of indefinite-length 
 	   encoding.  This is an incredible pain to handle but fortunately 
-	   except for McAfee's PGP implementation it doesn't seem to be used by 
-	   anything.  The only data type that would normally need indefinite 
+	   except for McAfee's PGP implementation and GPG under some 
+	   circumstances when it's used in a pipeline it doesn't seem to be used 
+	   by anything.  The only data type that would normally need indefinite 
 	   lengths, compressed data, uses the 2.x CTB 0xA3 instead */
 	if( localLength < 255 )
 		{
@@ -112,6 +113,8 @@ static int readPGP2Length( INOUT STREAM *stream,
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( length, sizeof( long ) ) );
+
+	REQUIRES( ctb >= 0 && ctb <= 0xFF );
 
 	/* Clear return value */
 	*length = 0;
@@ -273,7 +276,7 @@ static int readPacketHeader( INOUT STREAM *stream,
 	if( length != NULL )
 		*length = localLength;
 
-	return( CRYPT_OK );
+	return( status );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \

@@ -173,10 +173,10 @@ static BOOLEAN readFlag( const PKCS11_INFO *pkcs11Info,
 /* Get the permitted-action flags for an object */
 
 CHECK_RETVAL_RANGE( ACTION_PERM_FLAG_NONE, ACTION_PERM_FLAG_MAX ) STDC_NONNULL_ARG( ( 1 ) ) \
-static int getActionFlags( INOUT PKCS11_INFO *pkcs11Info,
-						   const CK_OBJECT_HANDLE hObject,
-						   IN_ENUM( KEYMGMT_ITEM ) const KEYMGMT_ITEM_TYPE itemType,
-						   IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
+int getActionFlags( INOUT PKCS11_INFO *pkcs11Info,
+					const CK_OBJECT_HANDLE hObject,
+					IN_ENUM( KEYMGMT_ITEM ) const KEYMGMT_ITEM_TYPE itemType,
+					IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
 	{
 	const BOOLEAN checkSign = ( isSigAlgo( cryptAlgo ) || \
 								isMacAlgo( cryptAlgo ) ) ? \
@@ -875,8 +875,6 @@ static int findCertFromObject( INOUT PKCS11_INFO *pkcs11Info,
 							   IN_ENUM( FINDCERT_ACTION ) \
 									const FINDCERT_ACTION_TYPE findAction )
 	{
-	static const CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
-	static const CK_CERTIFICATE_TYPE certType = CKC_X_509;
 	BYTE buffer[ MAX_BUFFER_SIZE + 8 ], *bufPtr;
 	int length, cryptStatus;
 
@@ -1378,7 +1376,8 @@ static int findPubPrivKey( INOUT PKCS11_INFO *pkcs11Info,
 
 /* Instantiate an object in a device.  This works like the create context
    function but instantiates a cryptlib object using data already contained
-   in the device (for example a stored private key or certificate) */
+   in the device (for example public-key components stored with a private 
+   key or a stored certificate) */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int rsaSetPublicComponents( INOUT PKCS11_INFO *pkcs11Info,
@@ -1654,7 +1653,6 @@ static int getSecretKey( INOUT DEVICE_INFO *deviceInfo,
 		   label fails we try again with the label as the iD */
 		keyTemplate[ 1 ].type = CKA_ID;
 		cryptStatus = findObject( pkcs11Info, &hObject, keyTemplate, 2 );
-		keyTemplate[ 1 ].type = CKA_LABEL;
 		}
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
@@ -1815,9 +1813,11 @@ static int getItemFunction( INOUT DEVICE_INFO *deviceInfo,
 									  iAndSTemplateAlt, 4 );
 #ifdef PKCS11_FIND_VIA_CRYPTLIB
 		if( cryptStatus == CRYPT_ERROR_NOTFOUND )
+			{
 			cryptStatus = searchDeviceObjects( pkcs11Info, NULL, 
 											   &hCertificate, keyIDtype, 
 											   keyID, keyIDlength, TRUE );
+			}
 #endif /* PKCS11_FIND_VIA_CRYPTLIB */
 		if( cryptStatusOK( cryptStatus ) )
 			{

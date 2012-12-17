@@ -301,7 +301,7 @@ static int writeKeyex( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		const int dataLeft = min( envelopeInfoPtr->bufSize - \
 									envelopeInfoPtr->bufPos, 
 								  MAX_INTLENGTH_SHORT - 1 );
-		int keyexSize;
+		int keyexSize = 0;
 
 		/* Make sure that there's enough room to emit this key exchange 
 		   action */
@@ -311,7 +311,15 @@ static int writeKeyex( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			break;
 			}
 
-		/* Emit the key exchange action */
+		/* Emit the key exchange action.  The "key exchange" for 
+		   conventional-encryption actions isn't actually a key exchange 
+		   since PGP derives the session key directly from the password, 
+		   so all it does is write the key-derivation parameters and
+		   exit.
+
+		   If we're encrypting with an MDC there's a third type of action 
+		   present, an ACTION_HASH, but since this is unkeyed there's no
+		   key exchange action to be taken for it */
 		if( lastActionPtr->action == ACTION_KEYEXCHANGE_PKC )
 			{
 			status = iCryptExportKey( bufPtr, dataLeft, &keyexSize, 
@@ -321,9 +329,12 @@ static int writeKeyex( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			}
 		else
 			{
-			status = iCryptExportKey( bufPtr, dataLeft, &keyexSize, 
-									  CRYPT_FORMAT_PGP, CRYPT_UNUSED, 
-									  envelopeInfoPtr->iCryptContext );
+			if( lastActionPtr->action == ACTION_CRYPT )
+				{
+				status = iCryptExportKey( bufPtr, dataLeft, &keyexSize, 
+										  CRYPT_FORMAT_PGP, CRYPT_UNUSED, 
+										  envelopeInfoPtr->iCryptContext );
+				}
 			}
 		if( cryptStatusError( status ) )
 			break;
@@ -338,8 +349,15 @@ static int writeKeyex( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int writeEncryptedContentHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
+	CRYPT_CONTEXT iMdcContext = CRYPT_UNUSED;
+	const BOOLEAN hasMDC = ( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ? \
+						   TRUE : FALSE;
 	STREAM stream;
 	BYTE ivInfoBuffer[ ( CRYPT_MAX_IVSIZE + 2 ) + 8 ];
+	const int packetType = hasMDC ? PGP_PACKET_ENCR_MDC : PGP_PACKET_ENCR;
+	const int payloadDataSize = PGP_DATA_HEADER_SIZE + \
+							    envelopeInfoPtr->payloadSize + \
+								( hasMDC ? PGP_MDC_PACKET_SIZE : 0 );
 	const int dataLeft = min( envelopeInfoPtr->bufSize - \
 								envelopeInfoPtr->bufPos, 
 							  MAX_INTLENGTH_SHORT - 1 );
@@ -354,24 +372,42 @@ static int writeEncryptedContentHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 							  CRYPT_CTXINFO_IVSIZE );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( dataLeft < PGP_MAX_HEADER_SIZE + ( ivSize + 2 ) + 8 )
+	if( dataLeft < PGP_MAX_HEADER_SIZE + ( ivSize + 2 ) + \
+									( hasMDC ? 1 : 0 ) + 8 )
 		return( CRYPT_ERROR_OVERFLOW );
+
+	/* If we're using an MDC, we need to hash the IV information before it's
+	   processed in order to create the sort-of-keyed hash */
+	if( hasMDC )
+		{
+		ACTION_LIST *actionListPtr;
+
+		actionListPtr = findAction( envelopeInfoPtr->actionList, ACTION_HASH );
+		ENSURES( actionListPtr != NULL );
+		iMdcContext = actionListPtr->iCryptHandle;
+		}
 
 	/* Set up the PGP IV information */
 	status = pgpProcessIV( envelopeInfoPtr->iCryptContext, 
-						   ivInfoBuffer, ivSize + 2, ivSize, TRUE, TRUE );
+						   ivInfoBuffer, ivSize + 2, ivSize, 
+						   iMdcContext, TRUE );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Write the encrypted content header */
+	/* Write the encrypted content header, with the length being the size of 
+	   the optional MDC indicator, the inner data CTB and length, and the
+	   combined inner data header, payload, and optional MDC */
 	sMemOpen( &stream, envelopeInfoPtr->buffer + envelopeInfoPtr->bufPos, 
 			  dataLeft );
-	pgpWritePacketHeader( &stream, PGP_PACKET_ENCR, 
-						  ( ivSize + 2 ) + 1 + \
-						  pgpSizeofLength( PGP_DATA_HEADER_SIZE + \
-										   envelopeInfoPtr->payloadSize ) + \
-						  PGP_DATA_HEADER_SIZE + \
-						  envelopeInfoPtr->payloadSize );
+	pgpWritePacketHeader( &stream, packetType, 
+						  ( hasMDC ? 1 : 0 ) + ( ivSize + 2 ) + \
+						  1 + pgpSizeofLength( payloadDataSize ) + \
+						  payloadDataSize );
+	if( hasMDC )
+		{
+		/* MDC-encrypted data has a version number before the data */
+		sputc( &stream, 1 );
+		}
 	status = swrite( &stream, ivInfoBuffer, ivSize + 2 );
 	if( cryptStatusOK( status ) )
 		envelopeInfoPtr->bufPos += stell( &stream );
@@ -382,12 +418,11 @@ static int writeEncryptedContentHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 /****************************************************************************
 *																			*
-*					Envelope Pre/Post-processing Functions					*
+*							Header Processing Routines						*
 *																			*
 ****************************************************************************/
 
-/* The following functions take care of pre/post-processing of envelope data
-   during the enveloping process */
+/* Create a session key to encrypt the envelope contents */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int createSessionKey( INOUT ENVELOPE_INFO *envelopeInfoPtr )
@@ -445,6 +480,9 @@ static int createSessionKey( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 	return( CRYPT_OK );
 	}
+
+/* Perform any final initialisation actions before starting the enveloping
+   process */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int preEnvelopeEncrypt( INOUT ENVELOPE_INFO *envelopeInfoPtr )
@@ -560,6 +598,128 @@ static int preEnvelopeSign( const ENVELOPE_INFO *envelopeInfoPtr )
 							&sigParams ) );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int preEnvelopeInit( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+	{
+	int status = CRYPT_OK;
+
+	/* If there's no nested content type set, default to plain data */
+	if( envelopeInfoPtr->contentType == CRYPT_CONTENT_NONE )
+		envelopeInfoPtr->contentType = CRYPT_CONTENT_DATA;
+
+	/* Remember the length information for when we copy in data */
+	envelopeInfoPtr->segmentSize = envelopeInfoPtr->payloadSize;
+
+	/* Perform any remaining initialisation.  Since PGP derives the session 
+	   key directly from the user password we only perform the encryption 
+	   initialisation if there are PKC key exchange actions present */
+	if( envelopeInfoPtr->usage == ACTION_CRYPT && \
+		findAction( envelopeInfoPtr->preActionList,
+					ACTION_KEYEXCHANGE_PKC ) != NULL )
+		status = preEnvelopeEncrypt( envelopeInfoPtr );
+	else
+		{
+		if( envelopeInfoPtr->usage == ACTION_SIGN )
+			status = preEnvelopeSign( envelopeInfoPtr );
+		}
+	if( cryptStatusError( status ) )
+		{
+		retExt( status,
+				( status, ENVELOPE_ERRINFO,
+				  "Couldn't perform final %s initialisation prior to "
+				  "enveloping data", 
+				  ( envelopeInfoPtr->usage == ACTION_SIGN ) ? \
+					"signing" : "encryption" ) );
+		}
+
+	/* If we're performing authenticated encryption, create the hash object 
+	   that's used to sort-of-MAC the data */
+	if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+		{
+		MESSAGE_CREATEOBJECT_INFO createInfo;
+		CRYPT_CONTEXT iHashContext;
+
+		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+								  IMESSAGE_DEV_CREATEOBJECT, &createInfo, 
+								  OBJECT_TYPE_CONTEXT );
+		if( cryptStatusError( status ) )
+			return( status );
+		iHashContext = createInfo.cryptHandle;
+		status = addAction( &envelopeInfoPtr->actionList, 
+							envelopeInfoPtr->memPoolState, ACTION_HASH, 
+							iHashContext );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
+		envelopeInfoPtr->dataFlags |= ENVDATA_HASHACTIONSACTIVE;
+
+		/* Since the MDC packet is tacked onto the end of the payload, we 
+		   need to increase the effect data size by the size of the MDC
+		   packet data */
+		envelopeInfoPtr->segmentSize += PGP_MDC_PACKET_SIZE;
+		}
+
+	/* Delete any orphaned actions such as automatically-added hash actions 
+	   that were overridden with user-supplied alternate actions */
+	status = deleteUnusedActions( envelopeInfoPtr );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	ENSURES( checkActions( envelopeInfoPtr ) );
+
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
+*							Trailer Processing Routines						*
+*																			*
+****************************************************************************/
+
+/* Process an MDC packet */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int emitMDC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+	{
+	CRYPT_CONTEXT iMdcContext;
+	ACTION_LIST *actionListPtr;
+	MESSAGE_DATA msgData;
+	BYTE mdcBuffer[ 2 + CRYPT_MAX_HASHSIZE + 8 ];
+	int status;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	/* Make sure that there's enough room left to emit the MDC packet */
+	if( envelopeInfoPtr->bufSize - \
+			envelopeInfoPtr->bufPos < PGP_MDC_PACKET_SIZE )
+		return( CRYPT_ERROR_OVERFLOW );
+
+	/* Hash the trailer bytes (the start of the MDC packet, 0xD3 0x14) and 
+	   wrap up the hashing */
+	actionListPtr = findAction( envelopeInfoPtr->actionList, ACTION_HASH );
+	ENSURES( actionListPtr != NULL );
+	iMdcContext = actionListPtr->iCryptHandle;
+	memcpy( mdcBuffer, "\xD3\x14", 2 );
+	status = krnlSendMessage( iMdcContext, IMESSAGE_CTX_HASH, mdcBuffer, 2 );
+	if( cryptStatusOK( status ) )
+		status = krnlSendMessage( iMdcContext, IMESSAGE_CTX_HASH, "", 0 );
+	if( cryptStatusError( status ) )
+		return( status );
+	envelopeInfoPtr->dataFlags &= ~ENVDATA_HASHACTIONSACTIVE;
+
+	/* Append the MDC packet to the payload data */
+	setMessageData( &msgData, mdcBuffer + 2, CRYPT_MAX_HASHSIZE );
+	status = krnlSendMessage( iMdcContext, IMESSAGE_GETATTRIBUTE_S, 
+							  &msgData, CRYPT_CTXINFO_HASHVALUE );
+	if( cryptStatusError( status ) )
+		return( status );
+	return( envelopeInfoPtr->copyToEnvelopeFunction( envelopeInfoPtr,
+										mdcBuffer, PGP_MDC_PACKET_SIZE ) );
+	}
+
 /****************************************************************************
 *																			*
 *						Emit Envelope Preamble/Postamble					*
@@ -586,49 +746,12 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   initialisations */
 	if( envelopeInfoPtr->envState == ENVSTATE_NONE )
 		{
-		/* If there's no nested content type set, default to plain data */
-		if( envelopeInfoPtr->contentType == CRYPT_CONTENT_NONE )
-			envelopeInfoPtr->contentType = CRYPT_CONTENT_DATA;
-
-		/* If there's an absolute data length set, remember it for when we 
-		   copy in data */
-		if( envelopeInfoPtr->payloadSize != CRYPT_UNUSED )
-			envelopeInfoPtr->segmentSize = envelopeInfoPtr->payloadSize;
-
-		/* Perform any remaining initialisation.  Since PGP derives the 
-		   session key directly from the user password we only perform the
-		   encryption initialisation if there are PKC key exchange actions 
-		   present */
-		if( envelopeInfoPtr->usage == ACTION_CRYPT && \
-			findAction( envelopeInfoPtr->preActionList,
-						ACTION_KEYEXCHANGE_PKC ) != NULL )
-			status = preEnvelopeEncrypt( envelopeInfoPtr );
-		else
-			{
-			if( envelopeInfoPtr->usage == ACTION_SIGN )
-				status = preEnvelopeSign( envelopeInfoPtr );
-			}
-		if( cryptStatusError( status ) )
-			{
-			retExt( status,
-					( status, ENVELOPE_ERRINFO,
-					  "Couldn't perform final %s initialisation prior to "
-					  "enveloping data", 
-					  ( envelopeInfoPtr->usage == ACTION_SIGN ) ? \
-						"signing" : "encryption" ) );
-			}
-
-		/* Delete any orphaned actions such as automatically-added hash 
-		   actions that were overridden with user-supplied alternate 
-		   actions */
-		status = deleteUnusedActions( envelopeInfoPtr );
+		status = preEnvelopeInit( envelopeInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
 
 		/* We're ready to go, prepare to emit the outer header */
 		envelopeInfoPtr->envState = ENVSTATE_HEADER;
-
-		ENSURES( checkActions( envelopeInfoPtr ) );
 		}
 
 	/* Emit the outer header.  This always follows directly from the final
@@ -701,17 +824,15 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		pgpWritePacketHeader( &stream, PGP_PACKET_DATA, 
 						PGP_DATA_HEADER_SIZE + envelopeInfoPtr->payloadSize );
 		status = swrite( &stream, PGP_DATA_HEADER, PGP_DATA_HEADER_SIZE );
-		if( cryptStatusOK( status ) && \
-			envelopeInfoPtr->payloadSize != CRYPT_UNUSED )
-			{
-			/* There's an absolute data length set, adjust the running total 
-			   count by the size of the additional header that's been 
-			   prepended */
-			envelopeInfoPtr->segmentSize += stell( &stream );
-			}
 		if( cryptStatusOK( status ) )
+			{
+			/* Adjust the running total count by the size of the additional 
+			   header that's been prepended and copy the header to the
+			   envelope */
+			envelopeInfoPtr->segmentSize += stell( &stream );
 			status = envelopeInfoPtr->copyToEnvelopeFunction( envelopeInfoPtr,
 											headerBuffer, stell( &stream ) );
+			}
 		sMemClose( &stream );
 		if( cryptStatusError( status ) )
 			{
@@ -752,6 +873,16 @@ static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   from internal buffers */
 	if( envelopeInfoPtr->envState == ENVSTATE_NONE )
 		{
+		/* If we're using MDC encryption, append the MDC packet to the 
+		   payload data */
+		if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+			{
+			status = emitMDC( envelopeInfoPtr );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
+
+		/* Flush the data through */
 		status = envelopeInfoPtr->copyToEnvelopeFunction( envelopeInfoPtr, 
 														  NULL, 0 );
 		if( cryptStatusError( status ) )

@@ -334,25 +334,6 @@ static int decodeCertWrapper( INOUT STREAM *stream,
 							 BER_OBJECT_IDENTIFIER );
 	if( cryptStatusError( status ) )
 		return( status );
-#if 0	/* 21/10/08 Long-obsolete formats, we shouldn't be seeing these any 
-		   more */
-	if( !memcmp( oid, OID_X509_USERCERTIFICATE, oidLength ) )
-		{
-		/* Oddball wrapper type, set the payload offset to point to the 
-		   certificate and indicate no wrapper present */
-		*objectType = CRYPT_CERTTYPE_CERTIFICATE;
-		*offset = stell( stream );
-		return( readSequence( stream, NULL ) );
-		}
-	if( !memcmp( oid, OID_NS_CERTSEQ, oidLength ) )
-		{
-		/* Netscape certificate sequence, skip the wrapper and exit */
-		*objectType = CRYPT_CERTTYPE_CERTCHAIN;
-		readConstructedI( stream, NULL, 0 );
-		readSequenceI( stream, NULL );
-		return( readSequence( stream, NULL ) );
-		}
-#endif /* 0 */
 	if( oidLength != sizeofOID( OID_CMS_SIGNEDDATA ) || \
 		memcmp( oid, OID_CMS_SIGNEDDATA, oidLength ) )
 		return( CRYPT_ERROR_BADDATA );
@@ -443,6 +424,12 @@ int getCertObjectInfo( INOUT STREAM *stream,
 		return( CRYPT_OK );
 		}
 
+	/* Check whether we need to process the object wrapper using context-
+	   specific tagging rather than the usual SEQUENCE */
+	if( peekTag( stream ) == MAKE_CTAG( 0 ) || \
+		formatHint == CRYPT_ICERTTYPE_CMS_CERTSET )
+		isContextTagged = TRUE;
+
 	/* Get the object's length */
 	status = getStreamObjectLength( stream, &length );
 	if( cryptStatusError( status ) )
@@ -477,11 +464,11 @@ int getCertObjectInfo( INOUT STREAM *stream,
 	*objectLength = length;
 
 	/* Check that the start of the object is in order */
-	if( peekTag( stream ) == MAKE_CTAG( 0 ) || \
-		formatHint == CRYPT_ICERTTYPE_CMS_CERTSET )
-		isContextTagged = TRUE;
-	status = readConstructedI( stream, &length, \
-							   isContextTagged ? 0 : DEFAULT_TAG );
+	if( isLongData )
+		status = readLongSequence( stream, NULL );
+	else
+		status = readConstructedI( stream, NULL, 
+								   isContextTagged ? 0 : DEFAULT_TAG );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -597,18 +584,15 @@ int getCertObjectInfo( INOUT STREAM *stream,
 		long longLength;
 
 		status = readLongSequence( stream, &longLength );
-		if( cryptStatusOK( status ) )
+		if( cryptStatusOK( status ) && longLength == CRYPT_UNUSED )
 			{
-			/* If it's an (invalid) indefinite-length encoding we can't do 
-			   anything with it */
-			if( longLength == CRYPT_UNUSED )
-				status = CRYPT_ERROR_BADDATA;
-			else
-				length = ( int ) longLength;
+			/* If it's an (invalid) indefinite-length encoding then we can't 
+			   do anything with it */
+			status = CRYPT_ERROR_BADDATA;
 			}
 		}
 	else
-		status = readSequence( stream, &length );
+		status = readSequence( stream, NULL );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -623,14 +607,6 @@ int getCertObjectInfo( INOUT STREAM *stream,
 		status = readUniversal( stream );
 	if( cryptStatusError( status ) )
 		return( status );
-#if 0	/* 21/10/08 Disabled, see comment at start */
-	if( length <= 0 )
-		{
-		/* PKI user object with absent (non-specified) DN */
-		*objectType = CRYPT_CERTTYPE_PKIUSER;
-		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
-		}
-#endif /* 0 */
 
 	/* If we've hit a GeneralizedTime it's an OCSP response, if we've hit 
 	   a SET it's PKI user information, and if we've hit a [0] or [1] 
@@ -644,25 +620,6 @@ int getCertObjectInfo( INOUT STREAM *stream,
 		*objectType = CRYPT_CERTTYPE_OCSP_RESPONSE;
 		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
 		}
-#if 0	/* 21/10/08 Disabled, see comment at start */
-	if( tag == BER_OCTETSTRING )
-		{
-		*objectType = CRYPT_CERTTYPE_RTCS_RESPONSE;
-		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
-		}
-	if( tag == BER_SET )
-		{
-		*objectType = CRYPT_CERTTYPE_PKIUSER;
-		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
-		}
-	if( tag == MAKE_CTAG_PRIMITIVE( 0 ) || \
-		tag == MAKE_CTAG_PRIMITIVE( 1 ) || \
-		( tag >= MAKE_CTAG( 3 ) && tag <= MAKE_CTAG( 9 ) ) )
-		{
-		*objectType = CRYPT_CERTTYPE_REQUEST_REVOCATION;
-		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
-		}
-#endif /* 0 */
 
 	/* Read the next SEQUENCE.  If it's followed by an OID it's the 
 	   AlgorithmIdentifier in a certificate or CRL, if it's followed by a 
@@ -704,13 +661,6 @@ int getCertObjectInfo( INOUT STREAM *stream,
 		/* Beyond this point we shouldn't be seeing long-length objects */
 		return( CRYPT_ERROR_OVERFLOW );
 		}
-#if 0	/* 21/10/08 Disabled, see comment at start */
-	if( tag == BER_OCTETSTRING )
-		{
-		*objectType = CRYPT_CERTTYPE_RTCS_REQUEST;
-		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
-		}
-#endif /* 0 */
 	if( tag == MAKE_CTAG( 1 ) )
 		{
 		*objectType = CRYPT_CERTTYPE_ATTRIBUTE_CERT;
@@ -742,21 +692,6 @@ int getCertObjectInfo( INOUT STREAM *stream,
 			}
 		return( CRYPT_ERROR_BADDATA );
 		}
-
-#if 0	/* 21/10/08 Disabled, see comment at start */
-	/* Read the next SEQUENCE.  If it's followed by a yet another SEQUENCE 
-	   or a tag from [0] ... [3] it's an OCSP request */
-	readSequence( stream, NULL );
-	tag = readTag( stream );
-	if( cryptStatusError( tag ) )
-		return( tag );
-	if( tag == BER_SEQUENCE || \
-		( tag >= MAKE_CTAG( 0 ) && tag <= MAKE_CTAG( 3 ) ) )
-		{
-		*objectType = CRYPT_CERTTYPE_OCSP_REQUEST;
-		return( CRYPT_OK );
-		}
-#endif /* 0 */
 
 	/* It's nothing identifiable */
 	return( CRYPT_ERROR_BADDATA );

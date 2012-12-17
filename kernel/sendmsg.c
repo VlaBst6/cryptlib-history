@@ -117,40 +117,126 @@ static const MESSAGE_ACL *findParamACL( IN_MESSAGE const MESSAGE_TYPE message )
 #define MAX_WAITCOUNT				10000
 #define WAITCOUNT_WARN_THRESHOLD	100
 
-#if !defined( NDEBUG ) && !defined( __WIN16__ )
+#if !defined( NDEBUG )
+
+/* Get a text description of an object associated with a given object 
+   handle */
+
+static void getObjectDescription( IN_HANDLE const int objectHandle, 
+								  OUT char *description )
+	{
+	static const char *objectTypeNames[] = {
+		"none", "context", "keyset", "envelope", "certificate", "device",
+		"session", "user", "none", "none"
+		};
+	typedef struct {
+		const OBJECT_SUBTYPE subType;
+		const char *description;
+		} OBJECT_DESCRIPTION_MAP;
+	static const OBJECT_DESCRIPTION_MAP descriptionMap[] = {
+		{ SUBTYPE_CTX_CONV, "conventional encryption" },
+		{ SUBTYPE_CTX_PKC, "public-key encryption" },
+		{ SUBTYPE_CTX_HASH, "hash" },
+		{ SUBTYPE_CTX_MAC, "MAC" },
+		{ SUBTYPE_CTX_GENERIC, "generic" },
+		{ SUBTYPE_CERT_CERT, "certificate" },
+		{ SUBTYPE_CERT_CERTREQ, "PKCS #10 cert.request" },
+		{ SUBTYPE_CERT_REQ_CERT, "CRMF cert.request" },
+		{ SUBTYPE_CERT_REQ_REV, "CRMF rev.request" },
+		{ SUBTYPE_CERT_CERTCHAIN, "cert.chain" },
+		{ SUBTYPE_CERT_ATTRCERT, "attribute cert." },
+		{ SUBTYPE_CERT_CRL, "CRK" },
+		{ SUBTYPE_CERT_CMSATTR, "CMS attributes" },
+		{ SUBTYPE_CERT_RTCS_REQ, "RTCS request" },
+		{ SUBTYPE_CERT_RTCS_RESP, "RTCS response" },
+		{ SUBTYPE_CERT_OCSP_REQ, "OCSP request" },
+		{ SUBTYPE_CERT_OCSP_RESP, "OCSP response" },
+		{ SUBTYPE_CERT_PKIUSER, "PKI user" },
+		{ SUBTYPE_ENV_ENV, "PKCS #7/CMS envelope" },
+		{ SUBTYPE_ENV_ENV_PGP, "PGP envelope" },
+		{ SUBTYPE_ENV_DEENV, "de-envelope" },
+		{ SUBTYPE_KEYSET_FILE, "file" },
+		{ SUBTYPE_KEYSET_FILE_PARTIAL, "file (partial)" },
+		{ SUBTYPE_KEYSET_FILE_READONLY, "file (readonly)" },
+		{ SUBTYPE_KEYSET_DBMS, "database" },
+		{ SUBTYPE_KEYSET_DBMS_STORE, "database store" },
+		{ SUBTYPE_KEYSET_HTTP, "HTTP" },
+		{ SUBTYPE_KEYSET_LDAP, "LDAP" },
+		{ SUBTYPE_DEV_SYSTEM, "system" },
+		{ SUBTYPE_DEV_PKCS11, "PKCS #11" },
+		{ SUBTYPE_DEV_CRYPTOAPI, "CryptoAPI" },
+		{ SUBTYPE_DEV_HARDWARE, "hardware" },
+		{ SUBTYPE_SESSION_SSH, "SSH" },
+		{ SUBTYPE_SESSION_SSH_SVR, "SSH server" },
+		{ SUBTYPE_SESSION_SSL, "SSL" },
+		{ SUBTYPE_SESSION_SSL_SVR, "SSL server" },
+		{ SUBTYPE_SESSION_RTCS, "RTCS" },
+		{ SUBTYPE_SESSION_RTCS_SVR, "RTCS server" },
+		{ SUBTYPE_SESSION_OCSP, "OCSP" },
+		{ SUBTYPE_SESSION_OCSP_SVR, "OCSP server" },
+		{ SUBTYPE_SESSION_TSP, "TSP" },
+		{ SUBTYPE_SESSION_TSP_SVR, "TSP server" },
+		{ SUBTYPE_SESSION_CMP, "CMP" },
+		{ SUBTYPE_SESSION_CMP_SVR, "CMP server" },
+		{ SUBTYPE_SESSION_SCEP, "SCEP" },
+		{ SUBTYPE_SESSION_SCEP_SVR, "SCEP server" },
+		{ SUBTYPE_SESSION_CERT_SVR, "cerificate store" },
+		{ SUBTYPE_USER_SO, "SO user" },
+		{ SUBTYPE_USER_NORMAL, "standard user" },
+		{ SUBTYPE_USER_CA, "CA user" },
+		{ SUBTYPE_NONE, "NONE" }, { SUBTYPE_NONE, "NONE" },
+		};
+	const OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
+	int i;
+
+	assert( isValidObject( objectHandle ) );
+
+	REQUIRES_V( isValidType( objectInfoPtr->type ) );
+
+	if( objectHandle == SYSTEM_OBJECT_HANDLE )
+		{
+		strlcpy_s( description, 128, "system object" );
+		return;
+		}
+	if( objectHandle == DEFAULTUSER_OBJECT_HANDLE )
+		{
+		strlcpy_s( description, 128, "default user object" );
+		return;
+		}
+	for( i = 0; descriptionMap[ i ].subType != objectInfoPtr->subType && \
+				descriptionMap[ i ].subType != SUBTYPE_NONE; i++ );
+	sprintf_s( description, 128, "object %d (%s/%s)", objectHandle, 
+			   objectTypeNames[ objectInfoPtr->type ],
+			   descriptionMap[ i ].description );
+	}
+
+/* Non thread-safe version of the above that can be used directly in
+   printf() statements.  This is only called for diagnostics during startup/
+   shutdown when there's guaranteed to be only one thread active */
+
+const char *getObjectDescriptionNT( IN_HANDLE const int objectHandle )
+	{
+	static char buffer[ 128 ];
+
+	getObjectDescription( objectHandle, buffer );
+	return( buffer );
+	}
+
+/* Warn about an excessive wait for an object to become available */
 
 static void waitWarn( IN_HANDLE const int objectHandle, 
 					  IN_INT const int waitCount )
 	{
-	static const char *objectTypeNames[] = {
-		"None", "Context", "Keyset", "Envelope", "Certificate", "Device",
-		"Session", "User", "None", "None"
-		};
-	const OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
-	char buffer[ 128 + 8 ];
+	char description[ 128 + 8 ];
 
 	assert( isValidObject( objectHandle ) );
 	assert( waitCount > WAITCOUNT_WARN_THRESHOLD && \
 			waitCount <= MAX_WAITCOUNT );
 
-	REQUIRES_V( isValidType( objectInfoPtr->type ) );
-
-	if( objectHandle == SYSTEM_OBJECT_HANDLE )
-		strlcpy_s( buffer, 128, "system object" );
-	else
-		{
-		if( objectHandle == DEFAULTUSER_OBJECT_HANDLE )
-			strlcpy_s( buffer, 128, "default user object" );
-		else
-			{
-			sprintf_s( buffer, 128, "object %d (%s, subtype %X)",
-					   objectHandle, objectTypeNames[ objectInfoPtr->type ],
-					   objectInfoPtr->subType );
-			}
-		}
+	getObjectDescription( objectHandle, description );
 	DEBUG_PRINT(( "\nWarning: Thread %lX waited %d iteration%s for %s.\n",
 				  ( unsigned long ) THREAD_SELF(), waitCount, 
-				  ( waitCount == 1 ) ? "" : "s", buffer ));
+				  ( waitCount == 1 ) ? "" : "s", description ));
 	}
 #endif /* Debug mode only */
 
@@ -499,7 +585,7 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	{ MESSAGE_DESTROY,				/* Destroy the object */
 	  ROUTE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_NONE_NONE,
-	  PRE_DISPATCH( SignalDependentObjects ) },
+	  PRE_POST_DISPATCH( SignalDependentObjects, SignalDependentDevices ) },
 	{ MESSAGE_INCREFCOUNT,			/* Increment object ref.count */
 	  ROUTE_NONE, ST_ANY_A, ST_ANY_B, ST_ANY_C, 
 	  PARAMTYPE_NONE_NONE,
@@ -1302,11 +1388,26 @@ static int dispatchMessage( IN_HANDLE const int localObjectHandle,
 	if( ( cryptStatusOK( status ) || localMessage == MESSAGE_DESTROY ) && \
 		handlingInfoPtr->postDispatchFunction != NULL )
 		{
+		const BOOLEAN isIncomplete = ( localMessage == MESSAGE_DESTROY && \
+									   status == CRYPT_ERROR_INCOMPLETE ) ? \
+									 TRUE : FALSE;
+
 		status = handlingInfoPtr->postDispatchFunction( localObjectHandle,
 												messageQueueData->message,
 												messageQueueData->messageDataPtr,
 												messageQueueData->messageValue,
 												aclPtr );
+		if( isIncomplete )
+			{
+			/* Normally we don't call the post-dispatch handler on error, 
+			   however if it's a destroy message then we have to call it 
+			   in order to handle any additional cleanup operations since 
+			   the object is about to be destroyed, so if the destroy 
+			   message to the object returned an incomplete error a we 
+			   override any post-dispatch status with the original error
+			   status */
+			status = CRYPT_ERROR_INCOMPLETE;
+			}
 		}
 	return( status );
 	}
@@ -1594,7 +1695,10 @@ int krnlSendMessage( IN_HANDLE const int objectHandle,
 			( messageQueueData.message & MESSAGE_MASK ) == MESSAGE_USER_USERMGMT && \
 			messageQueueData.messageValue == MESSAGE_USERMGMT_ZEROISE )
 			{
-			endCryptlib();
+			/* Since it's a zeroise we return the status of the overall 
+			   zeroise operation rather than any possible non-OK status from
+			   shutting down the kernel at the end of the zeroise */
+			( void ) endCryptlib();
 			}
 
 		/* Postcondition: The return status is valid */
@@ -1744,8 +1848,10 @@ int krnlSendMessage( IN_HANDLE const int objectHandle,
 		   processing */
 		if( isDestroy )
 			{
-			status = destroyObjectData( localObjectHandle );
-			ENSURES( cryptStatusOK( status ) );
+			int destroyStatus;	/* Preserve original status value */
+
+			destroyStatus = destroyObjectData( localObjectHandle );
+			ENSURES( cryptStatusOK( destroyStatus ) );
 			dequeueAllMessages( localObjectHandle );
 			}
 		else
@@ -1773,7 +1879,10 @@ int krnlSendMessage( IN_HANDLE const int objectHandle,
 	if( cryptStatusOK( status ) && localMessage == MESSAGE_USER_USERMGMT && \
 		messageValue == MESSAGE_USERMGMT_ZEROISE )
 		{
-		endCryptlib();
+		/* Since it's a zeroise we return the status of the overall zeroise 
+		   operation rather than any possible non-OK status from shutting 
+		   down the kernel at the end of the zeroise */
+		( void ) endCryptlib();
 		}
 
 	/* Postcondition: The return status is valid */

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Context Support Routines					*
-*						Copyright Peter Gutmann 1995-2007					*
+*						Copyright Peter Gutmann 1995-2011					*
 *																			*
 ****************************************************************************/
 
@@ -459,80 +459,167 @@ void freeContextBignums( INOUT PKC_INFO *pkcInfo,
 		clFree( "contextMessageFunction", pkcInfo->publicKeyInfo );
 	}
 
-/* Calculate a key checksum */
+/* Calculate a bignum checksum */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int calculateBignumChecksum( INOUT PKC_INFO *pkcInfo, 
-							 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
+static int metadataChecksum( INOUT PKC_INFO *pkcInfo, 
+							 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+							 OUT_INT_Z int *checksum )
 	{
-	BN_ULONG checksum = 0L;
+	int value = 0;
 
 	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
 
 	REQUIRES( isPkcAlgo( cryptAlgo ) );
 
+	/* Clear return value */
+	*checksum = 0;
+
 	/* Calculate the key data checksum */
 #if defined( USE_ECDH ) || defined( USE_ECDSA )
 	if( isEccAlgo( cryptAlgo ) )
 		{
-		BN_checksum( &pkcInfo->eccParam_p, &checksum );
-		BN_checksum( &pkcInfo->eccParam_a, &checksum );
-		BN_checksum( &pkcInfo->eccParam_b, &checksum );
-		BN_checksum( &pkcInfo->eccParam_gx, &checksum );
-		BN_checksum( &pkcInfo->eccParam_gy, &checksum );
-		BN_checksum( &pkcInfo->eccParam_n, &checksum );
-		BN_checksum( &pkcInfo->eccParam_h, &checksum );
-		BN_checksum( &pkcInfo->eccParam_qx, &checksum );
-		BN_checksum( &pkcInfo->eccParam_qy, &checksum );
-		BN_checksum( &pkcInfo->eccParam_d, &checksum );
-		BN_checksum( &pkcInfo->eccParam_mont_p.RR, &checksum );
-		BN_checksum( &pkcInfo->eccParam_mont_p.N, &checksum );
-		BN_checksum( &pkcInfo->eccParam_mont_p.Ni, &checksum );
-		BN_checksum( &pkcInfo->eccParam_mont_n.RR, &checksum );
-		BN_checksum( &pkcInfo->eccParam_mont_n.N, &checksum );
-		BN_checksum( &pkcInfo->eccParam_mont_n.Ni, &checksum );
+		BN_checksum_metadata( &pkcInfo->eccParam_p, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_a, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_b, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_gx, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_gy, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_n, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_h, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_qx, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_qy, &value );
+		BN_checksum_metadata( &pkcInfo->eccParam_d, &value );
+		BN_checksum_montgomery_metadata( &pkcInfo->eccParam_mont_p, &value );
+		BN_checksum_montgomery_metadata( &pkcInfo->eccParam_mont_n, &value );
+		BN_checksum_ec_group_metadata( pkcInfo->ecCTX, &value );
+		BN_checksum_ec_point_metadata( pkcInfo->ecPoint, &value );
 		}
 	else
 #endif /* USE_ECDH || USE_ECDSA */
 	if( isDlpAlgo( cryptAlgo ) )
 		{
-		BN_checksum( &pkcInfo->dlpParam_p, &checksum );
-		BN_checksum( &pkcInfo->dlpParam_g, &checksum );
-		BN_checksum( &pkcInfo->dlpParam_q, &checksum );
-		BN_checksum( &pkcInfo->dlpParam_y, &checksum );
-		BN_checksum( &pkcInfo->dlpParam_x, &checksum );
-		BN_checksum( &pkcInfo->dlpParam_mont_p.RR, &checksum );
-		BN_checksum( &pkcInfo->dlpParam_mont_p.N, &checksum );
-		BN_checksum( &pkcInfo->dlpParam_mont_p.Ni, &checksum );
+		BN_checksum_metadata( &pkcInfo->dlpParam_p, &value );
+		BN_checksum_metadata( &pkcInfo->dlpParam_g, &value );
+		BN_checksum_metadata( &pkcInfo->dlpParam_q, &value );
+		BN_checksum_metadata( &pkcInfo->dlpParam_y, &value );
+		BN_checksum_metadata( &pkcInfo->dlpParam_x, &value );
+		BN_checksum_montgomery_metadata( &pkcInfo->dlpParam_mont_p, &value );
 		}
 	else
 		{
-		BN_checksum( &pkcInfo->rsaParam_n, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_e, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_d, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_p, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_q, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_u, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_exponent1, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_exponent2, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_n.RR, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_n.N, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_n.Ni, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_p.RR, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_p.N, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_p.Ni, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_q.RR, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_q.N, &checksum );
-		BN_checksum( &pkcInfo->rsaParam_mont_q.Ni, &checksum );
+		BN_checksum_metadata( &pkcInfo->rsaParam_n, &value );
+		BN_checksum_metadata( &pkcInfo->rsaParam_e, &value );
+		BN_checksum_metadata( &pkcInfo->rsaParam_d, &value );
+		BN_checksum_metadata( &pkcInfo->rsaParam_p, &value );
+		BN_checksum_metadata( &pkcInfo->rsaParam_q, &value );
+		BN_checksum_metadata( &pkcInfo->rsaParam_u, &value );
+		BN_checksum_metadata( &pkcInfo->rsaParam_exponent1, &value );
+		BN_checksum_metadata( &pkcInfo->rsaParam_exponent2, &value );
+		BN_checksum_montgomery_metadata( &pkcInfo->rsaParam_mont_n, &value );
+		BN_checksum_montgomery_metadata( &pkcInfo->rsaParam_mont_p, &value );
+		BN_checksum_montgomery_metadata( &pkcInfo->rsaParam_mont_q, &value );
+		}
+	*checksum = value;
+
+	return( CRYPT_OK ); 
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int bignumChecksum( INOUT PKC_INFO *pkcInfo, 
+						   IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+						   OUT_INT_Z int *checksum )
+	{
+	int value = 0;
+
+	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
+
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
+
+	/* Clear return value */
+	*checksum = 0;
+
+	/* Calculate the key data checksum */
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
+	if( isEccAlgo( cryptAlgo ) )
+		{
+		BN_checksum( &pkcInfo->eccParam_p, &value );
+		BN_checksum( &pkcInfo->eccParam_a, &value );
+		BN_checksum( &pkcInfo->eccParam_b, &value );
+		BN_checksum( &pkcInfo->eccParam_gx, &value );
+		BN_checksum( &pkcInfo->eccParam_gy, &value );
+		BN_checksum( &pkcInfo->eccParam_n, &value );
+		BN_checksum( &pkcInfo->eccParam_h, &value );
+		BN_checksum( &pkcInfo->eccParam_qx, &value );
+		BN_checksum( &pkcInfo->eccParam_qy, &value );
+		BN_checksum( &pkcInfo->eccParam_d, &value );
+		BN_checksum_montgomery( &pkcInfo->eccParam_mont_p, &value );
+		BN_checksum_montgomery( &pkcInfo->eccParam_mont_n, &value );
+		BN_checksum_ec_group( pkcInfo->ecCTX, &value );
+		BN_checksum_ec_point( pkcInfo->ecPoint, &value );
+		}
+	else
+#endif /* USE_ECDH || USE_ECDSA */
+	if( isDlpAlgo( cryptAlgo ) )
+		{
+		BN_checksum( &pkcInfo->dlpParam_p, &value );
+		BN_checksum( &pkcInfo->dlpParam_g, &value );
+		BN_checksum( &pkcInfo->dlpParam_q, &value );
+		BN_checksum( &pkcInfo->dlpParam_y, &value );
+		BN_checksum( &pkcInfo->dlpParam_x, &value );
+		BN_checksum_montgomery( &pkcInfo->dlpParam_mont_p, &value );
+		}
+	else
+		{
+		BN_checksum( &pkcInfo->rsaParam_n, &value );
+		BN_checksum( &pkcInfo->rsaParam_e, &value );
+		BN_checksum( &pkcInfo->rsaParam_d, &value );
+		BN_checksum( &pkcInfo->rsaParam_p, &value );
+		BN_checksum( &pkcInfo->rsaParam_q, &value );
+		BN_checksum( &pkcInfo->rsaParam_u, &value );
+		BN_checksum( &pkcInfo->rsaParam_exponent1, &value );
+		BN_checksum( &pkcInfo->rsaParam_exponent2, &value );
+		BN_checksum_montgomery( &pkcInfo->rsaParam_mont_n, &value );
+		BN_checksum_montgomery( &pkcInfo->rsaParam_mont_p, &value );
+		BN_checksum_montgomery( &pkcInfo->rsaParam_mont_q, &value );
+		}
+	*checksum = value;
+
+	return( CRYPT_OK ); 
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int calculateBignumChecksum( INOUT PKC_INFO *pkcInfo, 
+							 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
+	{
+	int checksum, status;
+
+	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
+
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
+
+	/* Set or update the metadata checksum */
+	status = metadataChecksum( pkcInfo, cryptAlgo, &checksum );
+	ENSURES( cryptStatusOK( status ) );
+	if( pkcInfo->metadataChecksum == 0L )
+		pkcInfo->metadataChecksum = checksum;
+	else
+		{
+		if( pkcInfo->metadataChecksum != checksum )
+			return( CRYPT_ERROR );
 		}
 
-	/* Set or update the checksum */
+	/* Set or update the data checksum */
+	status = bignumChecksum( pkcInfo, cryptAlgo, &checksum );
+	ENSURES( cryptStatusOK( status ) );
 	if( pkcInfo->checksum == 0L )
-		{
 		pkcInfo->checksum = checksum;
-		return( CRYPT_OK );
+	else
+		{
+		if( pkcInfo->checksum != checksum )
+			return( CRYPT_ERROR );
 		}
-	return( ( pkcInfo->checksum == checksum ) ? CRYPT_OK : CRYPT_ERROR );
+
+	return( CRYPT_OK );
 	}
 
 /* Convert a byte string to and from a BIGNUM value */
@@ -765,7 +852,7 @@ int importECCPoint( INOUT TYPECAST( BIGNUM * ) void *bignumPtr1,
 						  checkType ) );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4, 5) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4, 5 ) ) \
 int exportECCPoint( OUT_BUFFER_OPT( dataMaxLength, *dataLength ) void *data, 
 					IN_LENGTH_SHORT_Z const int dataMaxLength, 
 					OUT_LENGTH_SHORT_Z int *dataLength,

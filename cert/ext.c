@@ -267,19 +267,24 @@ ATTRIBUTE_LIST *findAttributeStart( IN_OPT const ATTRIBUTE_LIST *attributeListPt
    if one of the attribute fields such as CRYPT_CERTINFO_ISSUINGDIST_FULLNAME
    is present */
 
-CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
-ATTRIBUTE_PTR *findAttributeByOID( const ATTRIBUTE_PTR *attributePtr,
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
+ATTRIBUTE_PTR *findAttributeByOID( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 								   IN_BUFFER( oidLength ) const BYTE *oid, 
 								   IN_LENGTH_OID const int oidLength )
 	{
 	const ATTRIBUTE_LIST *attributeListPtr;
 	int iterationCount;
 
-	assert( isReadPtr( attributePtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( attributePtr == NULL || \
+			isReadPtr( attributePtr, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isReadPtr( oid, oidLength ) );
 	
 	REQUIRES_N( oidLength >= MIN_OID_SIZE && oidLength <= MAX_OID_SIZE && \
 				oidLength == sizeofOID( oid ) );
+
+	/* Early-out check for empty attribute lists */
+	if( attributePtr == NULL )
+		return( NULL );
 
 	/* Find the position of this component in the list */
 	for( attributeListPtr = attributePtr, iterationCount = 0;
@@ -304,8 +309,8 @@ ATTRIBUTE_PTR *findAttributeByOID( const ATTRIBUTE_PTR *attributePtr,
 
 CHECK_RETVAL_PTR \
 ATTRIBUTE_PTR *findAttributeField( IN_OPT const ATTRIBUTE_PTR *attributePtr,
-									IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
-									IN_ATTRIBUTE_OPT \
+								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
+								   IN_ATTRIBUTE_OPT \
 										const CRYPT_ATTRIBUTE_TYPE subFieldID )
 	{
 	assert( attributePtr == NULL || \
@@ -316,6 +321,10 @@ ATTRIBUTE_PTR *findAttributeField( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 	REQUIRES_N( subFieldID == CRYPT_ATTRIBUTE_NONE || \
 				( subFieldID >= CRYPT_CERTINFO_FIRST_NAME && \
 				  subFieldID <= CRYPT_CERTINFO_LAST_GENERALNAME ) );
+
+	/* Early-out check for empty attribute lists */
+	if( attributePtr == NULL )
+		return( NULL );
 
 	if( subFieldID == CRYPT_ATTRIBUTE_NONE )
 		return( attributeFind( attributePtr, getAttrFunction, fieldID ) );
@@ -358,6 +367,7 @@ ATTRIBUTE_PTR *findAttributeFieldEx( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 	REQUIRES_N( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
 				fieldID <= CRYPT_CERTINFO_LAST );
 
+	/* Early-out check for empty attribute lists */
 	if( attributePtr == NULL )
 		return( NULL );
 

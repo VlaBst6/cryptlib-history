@@ -61,13 +61,13 @@
  * and contributed to the OpenSSL project.
  */
 
-#if defined( INC_ALL )
+#if defined( INC_ALL )		/* pcg */
   #include "ec_lcl.h"
 #else
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#if defined( USE_ECDH ) || defined( USE_ECDSA )
+#if defined( USE_ECDH ) || defined( USE_ECDSA )	/* pcg */
 
 #if 0	/* pcg */
 
@@ -115,7 +115,7 @@ const EC_METHOD *EC_GFp_mont_method(void)
 
 	return &ret;
 	}
-#endif /* 0 */
+#endif /* 0 - pcg */
 
 int ec_GFp_mont_group_init(EC_GROUP *group)
 	{
@@ -319,4 +319,4 @@ int ec_GFp_mont_field_set_to_one(const EC_GROUP *group, BIGNUM *r, BN_CTX *ctx)
 	return 1;
 	}
 
-#endif /* USE_ECDH || USE_ECDSA */
+#endif /* USE_ECDH || USE_ECDSA */	/* pcg */

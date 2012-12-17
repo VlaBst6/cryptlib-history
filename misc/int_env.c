@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Internal Enveloping API						*
-*					Copyright Peter Gutmann 1992-2008						*
+*					Copyright Peter Gutmann 1992-2011						*
 *																			*
 ****************************************************************************/
 
@@ -34,7 +34,8 @@ int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData,
 				  IN_ENUM( CRYPT_FORMAT ) const CRYPT_FORMAT_TYPE formatType,
 				  IN_ENUM_OPT( CRYPT_CONTENT ) \
 					const CRYPT_CONTENT_TYPE contentType,
-				  IN_HANDLE_OPT const CRYPT_HANDLE iPublicKey )
+				  IN_HANDLE_OPT const CRYPT_HANDLE iPublicKey,
+				  OUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_ENVELOPE iCryptEnvelope;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -45,6 +46,7 @@ int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData,
 	assert( isReadPtr( inData, inDataLength ) );
 	assert( isWritePtr( outData, outDataMaxLength ) );
 	assert( isWritePtr( outDataLength, sizeof( int ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
 	REQUIRES( inDataLength > 16 && inDataLength < MAX_INTLENGTH );
 	REQUIRES( outDataMaxLength > 16 && \
@@ -61,6 +63,7 @@ int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData,
 	   at this point since this function is frequently used for in-place 
 	   processing, so we clear it after we've pushed the input data */
 	*outDataLength = 0;
+	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
 
 	/* Create an envelope to wrap the data, add the encryption key if
 	   necessary, and pop the wrapped result */
@@ -121,6 +124,11 @@ int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData,
 		if( cryptStatusOK( status ) )
 			*outDataLength = msgData.length;
 		}
+	if( cryptStatusError( status ) )
+		{
+		/* Fetch any addition error information that may be available */
+		readErrorInfo( errorInfo, iCryptEnvelope );
+		}
 	krnlSendNotifier( iCryptEnvelope, IMESSAGE_DECREFCOUNT );
 
 	ENSURES( cryptStatusError( status ) || \
@@ -137,7 +145,8 @@ int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData,
 								*outDataLength ) void *outData, 
 					IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
 					OUT_LENGTH_Z int *outDataLength, 
-					IN_HANDLE_OPT const CRYPT_CONTEXT iPrivKey )
+					IN_HANDLE_OPT const CRYPT_CONTEXT iPrivKey,
+					OUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_ENVELOPE iCryptEnvelope;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -148,6 +157,7 @@ int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData,
 	assert( isReadPtr( inData, inDataLength ) );
 	assert( isWritePtr( outData, outDataMaxLength ) );
 	assert( isWritePtr( outDataLength, sizeof( int ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
 	REQUIRES( inDataLength > 16 && inDataLength < MAX_INTLENGTH );
 	REQUIRES( outDataMaxLength > 16 && \
@@ -160,6 +170,7 @@ int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData,
 	   at this point since this function is frequently used for in-place 
 	   processing, so we clear it after we've pushed the input data */
 	*outDataLength = 0;
+	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
 
 	/* Create an envelope to unwrap the data, add the decryption key if
 	   necessary, and pop the unwrapped result.  In theory we could use 
@@ -217,6 +228,11 @@ int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData,
 					 msgData.length < outDataMaxLength );
 			}
 		}
+	if( cryptStatusError( status ) )
+		{
+		/* Fetch any addition error information that may be available */
+		readErrorInfo( errorInfo, iCryptEnvelope );
+		}
 	krnlSendNotifier( iCryptEnvelope, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusOK( status ) )
 		*outDataLength = msgData.length;
@@ -231,9 +247,9 @@ int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData,
 *																			*
 ****************************************************************************/
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
-int envelopeSign( IN_BUFFER( inDataLength ) const void *inData, 
-				  IN_LENGTH_MIN( 16 ) const int inDataLength,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
+int envelopeSign( IN_BUFFER_OPT( inDataLength ) const void *inData, 
+				  IN_LENGTH_Z const int inDataLength,
 				  OUT_BUFFER( outDataMaxLength, \
 							  *outDataLength ) void *outData, 
 				  IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
@@ -241,7 +257,8 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 				  IN_ENUM_OPT( CRYPT_CONTENT ) \
 					const CRYPT_CONTENT_TYPE contentType,
 				  IN_HANDLE const CRYPT_CONTEXT iSigKey,
-				  IN_HANDLE_OPT const CRYPT_CERTIFICATE iCmsAttributes )
+				  IN_HANDLE_OPT const CRYPT_CERTIFICATE iCmsAttributes,
+				  OUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_ENVELOPE iCryptEnvelope;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -249,14 +266,17 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 	const int minBufferSize = max( MIN_BUFFER_SIZE, inDataLength + 1024 );
 	int status;
 
-	assert( isReadPtr( inData, inDataLength ) );
+	assert( ( inData == NULL && inDataLength == 0 ) || \
+			isReadPtr( inData, inDataLength ) );
 	assert( isWritePtr( outData, outDataMaxLength ) );
 	assert( isWritePtr( outDataLength, sizeof( int ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
-	REQUIRES( ( inDataLength > 16 && inDataLength < MAX_INTLENGTH ) || \
-			  ( contentType == CRYPT_CONTENT_NONE && \
-				isHandleRangeValid( iCmsAttributes ) && \
-				inDataLength == 0 ) );
+	REQUIRES( ( inData != NULL && \
+				inDataLength > 16 && inDataLength < MAX_INTLENGTH ) || \
+			  ( inData == NULL && inDataLength == 0 && \
+				contentType == CRYPT_CONTENT_NONE && \
+				isHandleRangeValid( iCmsAttributes ) ) );
 	REQUIRES( outDataMaxLength > 16 && \
 			  outDataMaxLength >= inDataLength + 512 && \
 			  outDataMaxLength < MAX_INTLENGTH );
@@ -270,6 +290,7 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 	   at this point since this function is frequently used for in-place 
 	   processing, so we clear it after we've pushed the input data */
 	*outDataLength = 0;
+	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
 
 	/* Create an envelope to sign the data, add the signature key and
 	   optional signing attributes, and pop the signed result */
@@ -297,13 +318,17 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 								  CRYPT_ENVINFO_CONTENTTYPE );
 		}
 	if( cryptStatusOK( status ) )
+		{
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
 								  ( MESSAGE_CAST ) &iSigKey,
 								  CRYPT_ENVINFO_SIGNATURE );
+		}
 	if( cryptStatusOK( status ) && iCmsAttributes != CRYPT_UNUSED )
+		{
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
 								  ( MESSAGE_CAST ) &iCmsAttributes,
 								  CRYPT_ENVINFO_SIGNATURE_EXTRADATA );
+		}
 	if( cryptStatusOK( status ) )
 		{
 		/* If there's no data supplied it's an attributes-only message
@@ -345,6 +370,11 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 		if( cryptStatusOK( status ) )
 			*outDataLength = msgData.length;
 		}
+	if( cryptStatusError( status ) )
+		{
+		/* Fetch any addition error information that may be available */
+		readErrorInfo( errorInfo, iCryptEnvelope );
+		}
 	krnlSendNotifier( iCryptEnvelope, IMESSAGE_DECREFCOUNT );
 
 	ENSURES( cryptStatusError( status ) || \
@@ -364,7 +394,8 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 					  IN_HANDLE_OPT const CRYPT_CONTEXT iSigCheckKey,
 					  OUT_STATUS int *sigResult, 
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iSigningCert,
-					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iCmsAttributes )
+					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iCmsAttributes,
+					  OUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_ENVELOPE iCryptEnvelope;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -380,6 +411,7 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 			isWritePtr( iSigningCert, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( iCmsAttributes == NULL || \
 			isWritePtr( iCmsAttributes, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
 	REQUIRES( inDataLength > 16 && inDataLength < MAX_INTLENGTH );
 	REQUIRES( outDataMaxLength > 16 && \
@@ -397,6 +429,7 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 		*iSigningCert = CRYPT_ERROR;
 	if( iCmsAttributes != NULL )
 		*iCmsAttributes = CRYPT_ERROR;
+	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
 
 	/* Create an envelope to sig.check the data, push in the signed data and
 	   sig.check key, and pop the result.  We also speculatively set the
@@ -442,9 +475,11 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 								  &msgData, 0 );
 		}
 	if( cryptStatusOK( status ) && iSigCheckKey != CRYPT_UNUSED )
+		{
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
 								  ( MESSAGE_CAST ) &iSigCheckKey,
 								  CRYPT_ENVINFO_SIGNATURE );
+		}
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_GETATTRIBUTE,
 								  sigResult, CRYPT_ENVINFO_SIGNATURE_RESULT );
@@ -460,9 +495,11 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 			}
 		}
 	if( cryptStatusOK( status ) && iSigningCert != NULL )
+		{
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_GETATTRIBUTE,
 								  iSigningCert,
 								  CRYPT_ENVINFO_SIGNATURE );
+		}
 	if( cryptStatusOK( status ) && iCmsAttributes != NULL )
 		{
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_GETATTRIBUTE,
@@ -473,6 +510,11 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 			krnlSendNotifier( *iSigningCert, IMESSAGE_DECREFCOUNT );
 			*iSigningCert = CRYPT_ERROR;
 			}
+		}
+	if( cryptStatusError( status ) )
+		{
+		/* Fetch any addition error information that may be available */
+		readErrorInfo( errorInfo, iCryptEnvelope );
 		}
 	krnlSendNotifier( iCryptEnvelope, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusOK( status ) )

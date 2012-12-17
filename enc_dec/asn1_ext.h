@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				ASN.1 Supplementary Constants and Structures				*
-*						Copyright Peter Gutmann 1992-2009					*
+*						Copyright Peter Gutmann 1992-2011					*
 *																			*
 ****************************************************************************/
 
@@ -38,6 +38,8 @@
 						 4 = cryptlibRtcsRequest
 						 5 = cryptlibRtcsResponse
 						 6 = cryptlibRtcsResponseExt
+					 x36\xDD\x24\x36 = TSA policy ('snooze policy, "Anything 
+									   that arrives, we sign").
 					 x58 x59 x5A x5A x59 = XYZZY cert policy */
 
 /* Attribute OIDs */
@@ -85,6 +87,7 @@
 /* Misc OIDs */
 
 #define OID_ANYPOLICY			MKOID( "\x06\x04\x55\x1D\x20\x00" )
+#define OID_TSP_POLICY			MKOID( "\x06\x0B\x2B\x06\x01\x04\x01\x97\x55\x36\xDD\x24\x36" )
 #define OID_CRYPTLIB_XYZZYCERT	MKOID( "\x06\x0C\x2B\x06\x01\x04\x01\x97\x55\x58\x59\x5A\x5A\x59" )
 #define OID_PKCS12_PBEWITHSHAAND3KEYTRIPLEDESCBC MKOID( "\x06\x0A\x2A\x86\x48\x86\xF7\x0D\x01\x0C\x01\x03" )
 #define OID_PKCS12_PBEWITHSHAAND2KEYTRIPLEDESCBC MKOID( "\x06\x0A\x2A\x86\x48\x86\xF7\x0D\x01\x0C\x01\x04" )
@@ -134,23 +137,28 @@ RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeAlgoID( INOUT STREAM *stream, 
 				 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeAlgoIDex( INOUT STREAM *stream, 
+				   IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+				   IN_RANGE( 0, 999 ) const int parameter, 
+				   IN_LENGTH_SHORT_Z const int extraLength );
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeAlgoIDparam( INOUT STREAM *stream, 
 					  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
-					  IN_LENGTH_SHORT_Z const int paramLength );
+					  IN_LENGTH_SHORT_Z const int extraLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2) ) \
 int readAlgoID( INOUT STREAM *stream, 
 				OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
 				IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int readAlgoIDex( INOUT STREAM *stream, 
 				  OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
-				  OUT_ALGO_Z CRYPT_ALGO_TYPE *altCryptAlgo,
+				  OUT_OPT_ALGO_Z CRYPT_ALGO_TYPE *altCryptAlgo,
 				  OUT_INT_Z int *parameter,
 				  IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readAlgoIDparam( INOUT STREAM *stream, 
 					 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
-					 OUT_LENGTH_SHORT_Z int *paramLength,
+					 OUT_LENGTH_SHORT_Z int *extraLength,
 					 IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type );
 
 /* Alternative versions that read/write various algorithm ID types (algo and

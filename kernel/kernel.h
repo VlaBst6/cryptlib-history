@@ -403,11 +403,21 @@ typedef struct {
    the following macro to clear only the appropriate area of the kernel data
    block */
 
+#ifdef __STDC__
+
+#include <stddef.h>		/* For offsetof() */
+
+#define CLEAR_KERNEL_DATA()     \
+		zeroise( ( BYTE * ) krnlData + offsetof( KERNEL_DATA, initLevel ), \
+				 sizeof( KERNEL_DATA ) - offsetof( KERNEL_DATA, initLevel ) )
+#else
+
 #define CLEAR_KERNEL_DATA()     \
 		assert( &krnlDataBlock.endMarker - \
 				&krnlDataBlock.initLevel < sizeof( krnlDataBlock ) ); \
 		zeroise( ( void * ) ( &krnlDataBlock.initLevel ), \
 				 &krnlDataBlock.endMarker - &krnlDataBlock.initLevel )
+#endif /* C89 compilers */
 
 /****************************************************************************
 *																			*
@@ -473,6 +483,9 @@ int preDispatchCheckMechanismKDFAccess( IN_HANDLE const int objectHandle,
 
 /* Prototypes for functions in msg_acl.c */
 
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN paramAclConsistent( const PARAM_ACL *paramACL,
+							const BOOLEAN mustBeEmpty );
 CHECK_RETVAL \
 int preDispatchSignalDependentObjects( IN_HANDLE const int objectHandle,
 									   STDC_UNUSED const MESSAGE_TYPE dummy1,
@@ -556,6 +569,12 @@ int preDispatchCheckTrustMgmtAccess( IN_HANDLE const int objectHandle,
 									 const void *messageDataPtr,
 									 STDC_UNUSED const int messageValue, 
 									 STDC_UNUSED const void *dummy );
+CHECK_RETVAL \
+int postDispatchSignalDependentDevices( IN_HANDLE const int objectHandle,
+										STDC_UNUSED const MESSAGE_TYPE dummy1,
+										STDC_UNUSED const void *dummy2,
+										STDC_UNUSED const int dummy3,
+										STDC_UNUSED const void *dummy4 );
 CHECK_RETVAL \
 int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 									IN_MESSAGE const MESSAGE_TYPE message,

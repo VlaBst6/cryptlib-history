@@ -89,13 +89,13 @@ static int loadPrivateKeyContext( CRYPT_CONTEXT *cryptContext,
 			return( loadRSAContexts( CRYPT_UNUSED, NULL, cryptContext ) );
 
 		case CRYPT_ALGO_DSA:
-			return( loadDSAContexts( CRYPT_UNUSED, cryptContext, NULL ) );
+			return( loadDSAContexts( CRYPT_UNUSED, NULL, cryptContext ) );
 
 		case CRYPT_ALGO_ELGAMAL:
 			return( loadElgamalContexts( NULL, cryptContext ) );
 
 		case CRYPT_ALGO_ECDSA:
-			return( loadECDSAContexts( cryptContext, NULL ) );
+			return( loadECDSAContexts( NULL, cryptContext ) );
 		}
 
 	printf( "Algorithm %d not available, line %d.\n", cryptAlgo, __LINE__ );
@@ -269,7 +269,14 @@ int testGetPGPPublicKey( void )
 		return( FALSE );
 	if( !getPGPPublicKey( KEYFILE_OPENPGP_AES, NULL, "OpenPGP (GPG/AES-256 key)" ) )
 		return( FALSE );
+#if 0	/* The key in this file has an S2K iteration count of 3.5M and will 
+		   be rejected by cryptlib's anti-DoS sanity checks */
+	if( !getPGPPublicKey( KEYFILE_OPENPGP_CAST, NULL, "OpenPGP (GPG/CAST5 key)" ) )
+		return( FALSE );
+#endif /* 0 */
 	if( !getPGPPublicKey( KEYFILE_OPENPGP_RSA, NULL, "OpenPGP (GPG/RSA key)" ) )
+		return( FALSE );
+	if( !getPGPPublicKey( KEYFILE_OPENPGP_MULT, NULL, "OpenPGP (multiple subkeys)" ) )
 		return( FALSE );
 	if( !getPGPPublicKey( KEYFILE_NAIPGP, NULL, "OpenPGP (NAI)" ) )
 		return( FALSE );
@@ -370,6 +377,13 @@ int testGetPGPPrivateKey( void )
 	/* OpenPGP file, DSA+Elgamal with AES, sec_aes.skr */
 	if( !getPGPPrivateKey( KEYFILE_OPENPGP_AES, "OpenPGP (GPG/AES-256 key)" ) )
 		return( FALSE );
+
+#if 0	/* The key in this file has an S2K iteration count of 3.5M and will 
+		   be rejected by cryptlib's anti-DoS sanity checks */
+	/* OpenPGP file, DSA+Elgamal with CAST5, sec_cast.gpg */
+	if( !getPGPPrivateKey( KEYFILE_OPENPGP_CAST, "OpenPGP (GPG/CAST5 key)" ) )
+		return( FALSE );
+#endif /* 0 */
 	
 	/* OpenPGP file, RSA+RSA with 3DES and SHA256, sec_rsa.gpg.  Create with:
 
@@ -556,14 +570,16 @@ int testReadAltFileKey( void )
 /* Read/write a private key from a file */
 
 static int readFileKey( const CRYPT_ALGO_TYPE cryptAlgo,
-						const BOOLEAN useAltKeyFile )
+						const BOOLEAN useAltKeyFile,
+						const BOOLEAN useWildcardRead )
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CONTEXT cryptContext;
 	int status;
 
-	printf( "Testing %s private key read from %skey file...\n", 
-			getAlgoName( cryptAlgo ), useAltKeyFile ? "alternative " : "" );
+	printf( "Testing %s private key read from %skey file%s...\n", 
+			getAlgoName( cryptAlgo ), useAltKeyFile ? "alternative " : "",
+			useWildcardRead ? " using wildcard ID" : "" );
 
 	/* Open the file keyset */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
@@ -586,7 +602,8 @@ static int readFileKey( const CRYPT_ALGO_TYPE cryptAlgo,
 
 	/* Read the key from the file */
 	status = cryptGetPrivateKey( cryptKeyset, &cryptContext,
-								 CRYPT_KEYID_NAME, getAlgoLabel( cryptAlgo ),
+								 CRYPT_KEYID_NAME, useWildcardRead ? \
+									TEXT( "[none]" ) : getAlgoLabel( cryptAlgo ),
 								 TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
@@ -701,23 +718,25 @@ int testReadWriteFileKey( void )
 	{
 	if( !writeFileKey( CRYPT_ALGO_RSA, FALSE, FALSE ) )
 		return( FALSE );
-	if( !readFileKey( CRYPT_ALGO_RSA, FALSE ) )
+	if( !readFileKey( CRYPT_ALGO_RSA, FALSE, FALSE ) )
+		return( FALSE );
+	if( !readFileKey( CRYPT_ALGO_RSA, FALSE, TRUE ) )
 		return( FALSE );
 	if( !writeFileKey( CRYPT_ALGO_DSA, FALSE, FALSE ) )
 		return( FALSE );
-	if( !readFileKey( CRYPT_ALGO_DSA, FALSE ) )
+	if( !readFileKey( CRYPT_ALGO_DSA, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
 		!writeFileKey( CRYPT_ALGO_ELGAMAL, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
-		!readFileKey( CRYPT_ALGO_ELGAMAL, FALSE ) )
+		!readFileKey( CRYPT_ALGO_ELGAMAL, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
 		!writeFileKey( CRYPT_ALGO_ECDSA, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
-		!readFileKey( CRYPT_ALGO_ECDSA, FALSE ) )
+		!readFileKey( CRYPT_ALGO_ECDSA, FALSE, FALSE ) )
 		return( FALSE );
 	return( TRUE );
 	}
@@ -726,7 +745,7 @@ int testReadWriteAltFileKey( void )
 	{
 	if( !writeFileKey( CRYPT_ALGO_RSA, TRUE, FALSE ) )
 		return( FALSE );
-	return( readFileKey( CRYPT_ALGO_RSA, TRUE ) );
+	return( readFileKey( CRYPT_ALGO_RSA, TRUE, FALSE ) );
 	}
 
 static int fileKeyImport( const int fileNo )

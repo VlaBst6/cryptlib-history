@@ -260,12 +260,8 @@ void slowPoll( void )
 	HWND hwndParent;
 	HWND hwndNext;
 	HENUM henum;
-	BOOL fSuccess;
-	SHORT sRetLen;
-	SHORT sLength=10;
 	PID pib;
 	TID tib;
-	char pchBuffer[ 10 + 8 ];
 	RECTL rcl;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
@@ -283,7 +279,7 @@ void slowPoll( void )
 		WinQueryWindowRect( hwndNext, &rcl );
 		addRandomData( randomState, &rcl, sizeof( RECTL ) );
 		}
-	fSuccess = WinEndEnumWindows( henum );
+	WinEndEnumWindows( henum );
 
 	/* Flush any remaining data through */
 	endRandomData( randomState, 50 );

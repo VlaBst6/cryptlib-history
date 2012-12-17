@@ -141,7 +141,8 @@ PKCS12_INFO *pkcs12FindEntry( IN_ARRAY( noPkcs12objects ) \
 							  IN_LENGTH_SHORT const int noPkcs12objects,
 							  IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
 							  IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
-							  IN_LENGTH_KEYID_Z const int keyIDlength );
+							  IN_LENGTH_KEYID_Z const int keyIDlength,
+							  const BOOLEAN isWildcardMatch );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 PKCS12_INFO *pkcs12FindFreeEntry( IN_ARRAY( noPkcs12objects ) \
 									const PKCS12_INFO *pkcs12info,
@@ -155,14 +156,14 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int createPkcs12KeyWrapContext( INOUT PKCS12_OBJECT_INFO *pkcs12objectInfo,
 								IN_HANDLE const CRYPT_USER cryptOwner,
 								IN_BUFFER( passwordLength ) const char *password, 
-								IN_LENGTH_NAME const int passwordLength,
+								IN_LENGTH_TEXT const int passwordLength,
 								OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 								const BOOLEAN initParams );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int createPkcs12MacContext( INOUT PKCS12_INFO *pkcs12info,
 							IN_HANDLE const CRYPT_USER cryptOwner,
 							IN_BUFFER( passwordLength ) const char *password, 
-							IN_LENGTH_NAME const int passwordLength,
+							IN_LENGTH_TEXT const int passwordLength,
 							OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 							const BOOLEAN initParams );
 

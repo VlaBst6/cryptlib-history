@@ -201,8 +201,7 @@ static int checkKeyIntegrity( IN_BUFFER( dataLength ) const void *data,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int checkPgp2KeyIntegrity( IN_BUFFER( dataLength ) const void *data, 
 								  IN_LENGTH_SHORT_MIN( 16 ) const int dataLength, 
-								  IN_LENGTH_SHORT_MIN( 16 ) const int keyDataLength, 
-								  const BOOLEAN isDlpAlgo )
+								  IN_LENGTH_SHORT_MIN( 16 ) const int keyDataLength )
 	{
 	STREAM stream;
 	const BYTE *keyData = data;
@@ -223,6 +222,7 @@ static int checkPgp2KeyIntegrity( IN_BUFFER( dataLength ) const void *data,
 	   continuous block */
 	for( i = 0; i < keyDataLength; i++ )
 		checksum += keyData[ i ];
+	checksum &= 0xFFFF;		/* MPI checksum is a 16-bit value */
 
 	/* Recover the stored checksum that follows the MPI data and compare it 
 	   to the calculated checksum */
@@ -576,9 +576,7 @@ static int privateKeyUnwrapPGP( STDC_UNUSED void *dummy,
 		if( type == PRIVATEKEYPGP_WRAP_OPENPGP_OLD )
 			bytesToChecksum = mechanismInfo->wrappedDataLength - UINT16_SIZE;
 		status = checkPgp2KeyIntegrity( buffer, mechanismInfo->wrappedDataLength,
-										bytesToChecksum,
-										( pkcAlgorithm != CRYPT_ALGO_RSA ) ? \
-											TRUE : FALSE  );
+										bytesToChecksum );
 		}
 	else
 		{

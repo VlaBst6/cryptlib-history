@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Data Size and Crypto-related Constants 			*
-*						Copyright Peter Gutmann 1992-2010					*
+*						Copyright Peter Gutmann 1992-2012					*
 *																			*
 ****************************************************************************/
 
@@ -151,11 +151,13 @@
    backdated cert revocations, as a rule of thumb we allow a date up to two
    years in the past), an approximation of the current time (with the 
    constraint that it's not after the current date), and a somewhat more
-   relaxed minimum time value used when reading stored data, which can
-   contain keys that have been hanging around for years */
+   relaxed minimum time value used when reading stored data like private 
+   keys, which can contain associated certificates that have been hanging 
+   around for years.  This can't safely be set to after about 1995 because
+   there are mid-90s CA root certificates that are still in use today */
 
-#define MIN_TIME_VALUE			( ( 2007 - 1970 ) * 365 * 86400L )
-#define CURRENT_TIME_VALUE		( ( 2009 - 1970 ) * 365 * 86400L )
+#define MIN_TIME_VALUE			( ( 2010 - 1970 ) * 365 * 86400L )
+#define CURRENT_TIME_VALUE		( ( 2012 - 1970 ) * 365 * 86400L )
 #define MIN_STORED_TIME_VALUE	( ( 1995 - 1970 ) * 365 * 86400L )
 
 /* The minimum and maximum network port numbers.  Note that we allow ports 
@@ -180,6 +182,28 @@
    containing excessive iteration counts */
 
 #define MAX_KEYSETUP_ITERATIONS	20000
+
+/* PGP's S2K uses a bizarre processing-complexity specifier that specifies,
+   in a very roundabout manner, the number of bytes hashed rather than the 
+   iteration count.  In addition a number of PGP implementations specify
+   ridiculous levels of hashing that make them more akin to a DoS attack 
+   than any legitimate security measure.  In theory we could recalculate the 
+   above define for an assumption of an 8-byte hash salt and and 8-byte 
+   password to get a value of ( ( MAX_KEYSETUP_ITERATIONS * 16 ) / 64 ),
+   with the '/ 64' term being present because what's specified is the value 
+   without an additional * 64 multiplier that's added by the S2K mechanism 
+   code, so we divide by 64 to account for this later scaling.  However in
+   2011 GPG raised its default hash specifier count from 64K to over 2M 
+   (while still defaulting to the 15-year-old CAST5 for its block cipher, so 
+   it may use an obsolete 64-bit crypto algorithm but at least it iterates 
+   the password hashing enough to perform a DoS on anyone with an older 
+   machine) and some configurations go even further and set it at 3407872. 
+   This means that using any kind of anti-DoS check would prevent us from 
+   reading newer GPG keyrings, so instead of trying to use a sane value as 
+   the upper limit we hardcode in the smallest value that'll still allow us 
+   to read these keyrings */
+
+#define MAX_KEYSETUP_HASHSPECIFIER	( 3407872 / 64 )
 
 /* The maximum certificate compliance level */
 

@@ -894,7 +894,7 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 	if( contextInfoPtr->type == CONTEXT_CONV )
 		{
 		CONV_INFO *convInfo = contextInfoPtr->ctxConv;
-		int keySize = convInfo->userKeyLength;
+		int keySize;
 
 		keySize = ( convInfo->userKeyLength > 0 ) ? \
 				  convInfo->userKeyLength : \

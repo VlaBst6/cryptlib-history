@@ -79,7 +79,7 @@ static int prfInit( IN const HASHFUNCTION hashFunction,
 	   with the ipad value */
 	memset( hashBuffer, HMAC_IPAD, HMAC_DATASIZE );
 	for( i = 0; i < *processedKeyLength; i++ )
-		hashBuffer[ i ] ^= *keyPtr++;
+		hashBuffer[ i ] ^= keyPtr[ i ];
 	hashFunction( hashState, NULL, 0, hashBuffer, HMAC_DATASIZE, 
 				  HASH_STATE_START );
 	zeroise( hashBuffer, HMAC_DATASIZE );
@@ -464,7 +464,7 @@ static int initDSP( OUT_BUFFER( dspMaxLen, *dspLen ) BYTE *dsp,
 					IN_RANGE( P12_DSPSIZE, 512 ) const int dspMaxLen,
 					OUT_RANGE( 0, 512 ) int *dspLen,
 					IN_BUFFER( keyLength ) const BYTE *key,
-					IN_LENGTH_NAME const int keyLength,
+					IN_LENGTH_TEXT const int keyLength,
 					IN_BUFFER( saltLength ) const BYTE *salt,
 					IN_RANGE( 1, P12_BLOCKSIZE ) const int saltLength,
 					IN_RANGE( 1, 3 ) const int diversifier )
@@ -1067,7 +1067,7 @@ int derivePGP( STDC_UNUSED void *dummy,
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
 
 	REQUIRES( mechanismInfo->iterations >= 0 && \
-			  mechanismInfo->iterations < ( MAX_INTLENGTH >> 6 ) );
+			  mechanismInfo->iterations <= MAX_KEYSETUP_HASHSPECIFIER );
 	REQUIRES( byteCount >= 0 && byteCount < MAX_INTLENGTH );
 
 	/* Clear return value */
@@ -1095,10 +1095,21 @@ int derivePGP( STDC_UNUSED void *dummy,
 
 		salt || password || salt || password || ...
 
-	   until we've processed 'byteCount' bytes of data */
+	   until we've processed 'byteCount' bytes of data.
+
+	   This processing is complicated by the ridiculous number of iterations
+	   of processing specified by some versions of GPG (see the long comment
+	   in misc/consts.h), so that we can no longer employ the standard
+	   FAILSAFE_ITERATIONS_MAX as a failsafe value but have to use a 
+	   multiple of that.  There's no clean way to do this, the following
+	   hardcodes an upper bound that'll have to be varied based on what
+	   MAX_KEYSETUP_HASHSPECIFIER is set to */
+	#define GPG_FAILSAFE_ITERATIONS_MAX	( 3 * FAILSAFE_ITERATIONS_MAX )
+	static_assert( MAX_KEYSETUP_HASHSPECIFIER < GPG_FAILSAFE_ITERATIONS_MAX,
+				   "Failsafe value for PGP hashing" );
 	for( i = 0, iterationCount = 0;
 		 byteCount > 0 && cryptStatusOK( status ) && \
-			iterationCount < FAILSAFE_ITERATIONS_MAX;
+			iterationCount < GPG_FAILSAFE_ITERATIONS_MAX;
 		 i++, iterationCount++ )
 		{
 		status = pgpPrfHash( mechanismInfo->dataOut, 
@@ -1109,12 +1120,12 @@ int derivePGP( STDC_UNUSED void *dummy,
 							 mechanismInfo->saltLength, &byteCount, 
 							 ( i <= 0 ) ? 0 : CRYPT_UNUSED );
 		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+	ENSURES( iterationCount < GPG_FAILSAFE_ITERATIONS_MAX );
 	if( cryptStatusOK( status ) && secondByteCount > 0 )
 		{
 		for( i = 0, iterationCount = 0;
 			 secondByteCount > 0 && cryptStatusOK( status ) && \
-				iterationCount < FAILSAFE_ITERATIONS_MAX;
+				iterationCount < GPG_FAILSAFE_ITERATIONS_MAX;
 			 i++, iterationCount++ )
 			{
 			status = pgpPrfHash( ( BYTE * ) mechanismInfo->dataOut + hashSize, 
@@ -1125,7 +1136,7 @@ int derivePGP( STDC_UNUSED void *dummy,
 								 mechanismInfo->saltLength, &secondByteCount, 
 								 ( i <= 0 ) ? 1 : CRYPT_UNUSED );
 			}
-		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+		ENSURES( iterationCount < GPG_FAILSAFE_ITERATIONS_MAX );
 		}
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 	if( cryptStatusError( status ) )

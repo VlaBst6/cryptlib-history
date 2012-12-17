@@ -826,6 +826,7 @@ static int signUserData( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
 						 const USER_INFO *userInfoPtr,
 						 IN_HANDLE const CRYPT_CONTEXT iSignContext )
 	{
+	ERROR_INFO errorInfo;
 	BYTE userInfoBuffer[ USERDATA_BUFFERSIZE + 8 ];
 	int userInfoLength, status;
 
@@ -844,7 +845,7 @@ static int signUserData( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
 	status = envelopeSign( userInfoBuffer, userInfoLength, 
 						   userInfoBuffer, USERDATA_BUFFERSIZE, 
 						   &userInfoLength, CRYPT_CONTENT_DATA, 
-						   iSignContext, CRYPT_UNUSED );
+						   iSignContext, CRYPT_UNUSED, &errorInfo );
 	if( cryptStatusError( status ) )
 		return( status );
 

@@ -24,28 +24,37 @@
 *																			*
 ****************************************************************************/
 
-/* There are various SCEP test servers available, the following mappings
-   can be used to test different ones.  Implementation peculiarities:
+/* There were various SCEP test servers available at some point, although 
+   most of them are either semi- or entirely nonfunctional or vanished years
+   ago.  The following mappings can be used to test different ones.  
+   Implementation peculiarities:
 
 	#1 - cryptlib: None.
 
 	#2 - SSH (www.ssh.com/support/testzone/pki.html): Invalid CA 
-	     certificates.
+	     certificates, and disappeared some years ago.
 
 	#3 - OpenSCEP (openscep.othello.ch): Seems to be permanently unavailable.
 
 	#4 - Entrust (freecerts.entrust.com/vpncerts/cep.htm): Only seems to be
 		 set up to handle Cisco gear.
 
-	#5 - EJBCA: 
+	#5 - EJBCA: Server has vanished.
 	
 	#6 - Insta-Certifier: Information at 
 		 http://www.certificate.fi/resources/demos/demo.htm.
 
-	#7 - Microsoft NDES: Invalid CA certificates, set compliance level to
-	     CRYPT_COMPLIANCELEVEL_OBLIVIOUS to handle this.  GetCACaps 
+	#7 - Microsoft NDES: Reverted to a fresh install with no content several 
+		 years ago, but used to return an invalid CA certificate.  The code 
+		 sets the compliance level to CRYPT_COMPLIANCELEVEL_OBLIVIOUS to 
+		 handle this.  GetCACaps 
 		 (via http://qa4-mdm3.qa4.imdmdemo.com/certsrv/mscep/?operation=GetCACaps) 
-		 is implemented but broken, returns a zero-length response */
+		 is implemented but broken, returns a zero-length response.
+	
+	#8 - Windows Server 2008: Also returns an invalid CA certificate 
+		 (keyUsage is set to keyEncipherment but not digitalSignature).  The 
+		 code sets the compliance level to CRYPT_COMPLIANCELEVEL_OBLIVIOUS 
+		 to handle this */
 
 #define SCEP_NO		1
 
@@ -56,7 +65,8 @@ typedef struct {
 
 static const SCEP_INFO FAR_BSS scepInfo[] = {
 	{ NULL },	/* Dummy so index == SCEP_NO */
-	{ /*1*/ "cryptlib", TEXT( "http://localhost/pkiclient.exe" ), NULL, NULL, NULL },
+	{ /*1*/ "cryptlib", TEXT( "http://localhost/pkiclient.exe" ), NULL, NULL, 
+			TEXT( "http://localhost/pkiclient.exe?operation=GetCACert&message=*" ) },
 			/* The CA certificate URL may be overridden by passing a 
 			   CA-cert-read flag to the SCEP client function, it's tested 
 			   both with an explicitly-added certificate via a file and
@@ -69,14 +79,26 @@ static const SCEP_INFO FAR_BSS scepInfo[] = {
 	{ /*4*/ "Entrust", TEXT( "http://vpncerts.entrust.com/pkiclient.exe" ), 
 			TEXT( "????" ), TEXT( "????" ), NULL },
 	{ /*5*/ "EJBCA", TEXT( "http://q-rl-xp:8080/ejbca/publicweb/apply/scep/pkiclient.exe" ),
-			TEXT("test2"), TEXT("test2"),
+			TEXT( "test2" ), TEXT( "test2" ),
 			TEXT( "http://q-rl-xp:8080/ejbca/publicweb/webdist/certdist?cmd=nscacert&issuer=O=Test&+level=1" ) },
-	{ /*6*/ "SSH", TEXT( "http://pki.certificate.fi:8082/scep/" ), 
-			NULL, TEXT( "scep" ), NULL },
+	{ /*6*/ "Insta-Certifier", TEXT( "http://pki.certificate.fi:8082/scep/" ), 
+			TEXT( "user" ), TEXT( "scep" ), NULL },
 	{ /*7*/ "Microsoft NDES", TEXT( "http://qa4-mdm3.qa4.imdmdemo.com" ), 
 			TEXT( "cryptlibtest" ), TEXT( "password!1" ), 
-			TEXT( "http://qa4-mdm3.qa4.imdmdemo.com/certsrv/mscep/?operation=GetCACert&message=qa" ) }
+			TEXT( "http://qa4-mdm3.qa4.imdmdemo.com/certsrv/mscep/?operation=GetCACert&message=qa" ) },
+	{ /*8*/ "Win Server 2008", TEXT( "http://142.176.86.157" ), 
+			TEXT( "cryptlibtest" ), TEXT( "password!1" ), 
+			TEXT( "http://142.176.86.157/certsrv/mscep/?operation=GetCACert&message=qa" ) }
 	};
+
+/* SCEP requires that its CA certificates be usable for decryption of request
+   messages and signing of response messages.  Some SCEP CAs don't have the
+   appropriate keyUsage bits for this set, in which case we have to process 
+   the certificates in oblivious mode in order to use them */
+
+#if ( SCEP_NO == 6 ) || ( SCEP_NO == 7 ) || ( SCEP_NO == 8 ) 
+  #define SCEP_BROKEN_CA_CERT
+#endif /* Insta-Certifier, Windows Server 2008 */
 
 /* Certificate request data for the certificate from the SCEP server.  Note 
    that we have to set the CN to the PKI user CN, for CMP ir's we just omit 
@@ -292,13 +314,13 @@ int pkiGetUserInfo( C_STR userID, C_STR issuePW, C_STR revPW,
 	   object */
 	status = cryptKeysetOpen( &cryptCertStore, CRYPT_UNUSED,
 							  CERTSTORE_KEYSET_TYPE, CERTSTORE_KEYSET_NAME,
-							  CRYPT_KEYOPT_NONE );
+							  CRYPT_KEYOPT_READONLY );
 	if( status == CRYPT_ERROR_PARAM3 )
 		{
 		/* This type of keyset access isn't available, return a special error
 		   code to indicate that the test wasn't performed, but that this
 		   isn't a reason to abort processing */
-		puts( "No certificate store available, aborting CMP test.\n" );
+		puts( "No certificate store available, aborting CMP/SCEP test.\n" );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
 	if( cryptStatusError( status ) )
@@ -475,9 +497,9 @@ static int connectSCEP( const BOOLEAN localSession,
 	const C_STR userPtr = scepInfo[ SCEP_NO ].user;
 	const C_STR passwordPtr = scepInfo[ SCEP_NO ].password;
 #endif /* cryptlib SCEP server */
-#if ( SCEP_NO == 7 )
+#ifdef SCEP_BROKEN_CA_CERT
 	int complianceValue;
-#endif /* MS NDES SCEP server */
+#endif /* SCEP servers with broken CA certificates */
 	int status;
 
 	printf( "Testing %s SCEP session%s...\n", scepInfo[ SCEP_NO ].name,
@@ -504,14 +526,14 @@ static int connectSCEP( const BOOLEAN localSession,
 		}
 #endif /* cryptlib SCEP server */
 
-#if ( SCEP_NO == 7 )
-	/* The MS SCEP server certificate is broken so we have to turn down the
-	   compliance level to allow it to be used */
+#ifdef SCEP_BROKEN_CA_CERT
+	/* Some SCEP server's CA certificates are broken so we have to turn 
+	   down the compliance level to allow them to be used */
 	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &complianceValue );
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
-#endif /* MS NDES SCEP server */
+#endif /* SCEP servers with broken CA certificates */
 
 	/* Get the issuing CA's certificate if required */
 	if( userSuppliesCACert )
@@ -596,9 +618,11 @@ static int connectSCEP( const BOOLEAN localSession,
 	if( userSuppliesCACert )
 		{
 		if( cryptStatusOK( status ) )
+			{
 			status = cryptSetAttribute( cryptSession,
 										CRYPT_SESSINFO_CACERTIFICATE,
 										cryptCACert );
+			}
 		cryptDestroyCert( cryptCACert );
 		}
 	if( cryptStatusError( status ) )
@@ -642,7 +666,7 @@ static int connectSCEP( const BOOLEAN localSession,
 		return( FALSE );
 		}
 
-	/* Set up the private key and request, and activate the session */
+	/* Set up the private key and request */
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_PRIVATEKEY,
 								cryptContext );
 	cryptDestroyContext( cryptContext );
@@ -656,28 +680,51 @@ static int connectSCEP( const BOOLEAN localSession,
 				status, __LINE__ );
 		return( FALSE );
 		}
+
+	/* If we've explicitly fetched the issuing CA's certificate via an HTTP
+	   request then the server session has already been run, so we need to
+	   wait for it to recycle before we continue */
+	if( localSession && userSuppliesCACert && \
+		scepInfo[ SCEP_NO ].caCertUrl != NULL && \
+		waitMutex() == CRYPT_ERROR_TIMEOUT )
+		{
+		printf( "Timed out waiting for server to initialise, line %d.\n", 
+				__LINE__ );
+		return( FALSE );
+		}
+
+	/* Activate the session */
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
+	if( status == CRYPT_ENVELOPE_RESOURCE )
+		{
+		/* The server has indicated that the certificate-issue operation is 
+		   pending, try again in case it works this time */
+		printExtError( cryptSession, "Attempt to activate SCEP client "
+					   "session", status, __LINE__ );
+		puts( "  (Retrying operation in case certificate issue is now "
+			  "approved...)\n" );
+		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, 
+									TRUE );
+		}
 	if( cryptStatusError( status ) )
 		{
 		printExtError( cryptSession, "Attempt to activate SCEP client "
 					   "session", status, __LINE__ );
-		cryptDestroySession( cryptSession );
-		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_READ )
+		if( isServerDown( cryptSession, status ) )
 			{
-			/* These servers are constantly appearing and disappearing so if
-			   we get a straight connect error we don't treat it as a serious
-			   failure */
 			puts( "  (Server could be down, faking it and continuing...)\n" );
+			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_FAILED );
 			}
+		cryptDestroySession( cryptSession );
 		return( FALSE );
 		}
 
-#if ( SCEP_NO == 7 )
+#ifdef SCEP_BROKEN_CA_CERT
 	/* Restore normal certificate checking */
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   complianceValue );
-#endif /* MS NDES SCEP server */
+#endif /* SCEP servers with broken CA certificates */
 
 	/* Print the session security information */
 	printFingerprint( cryptSession, FALSE );
@@ -723,7 +770,9 @@ int testSessionSCEPCACert( void )
 	return( connectSCEP( FALSE, FALSE ) );
 	}
 
-static int scepServer( void )
+enum { MUTEX_NONE, MUTEX_ACQUIRE, MUTEX_ACQUIRE_REACQUIRE };
+
+static int scepServer( const int mutexBehaviour )
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_CONTEXT cryptCAKey;
@@ -731,9 +780,15 @@ static int scepServer( void )
 	int status;
 
 	/* Acquire the init mutex */
-	acquireMutex();
+	if( mutexBehaviour == MUTEX_ACQUIRE || \
+		mutexBehaviour == MUTEX_ACQUIRE_REACQUIRE )
+		acquireMutex();
 
-	puts( "SVR: Testing SCEP server session ..." );
+	printf( "SVR: Testing SCEP server session%s...\n",
+			( mutexBehaviour == MUTEX_ACQUIRE_REACQUIRE ) ? \
+				" (GetCACert portion)" : \
+			( mutexBehaviour == MUTEX_NONE ) ? \
+				" following GetCACert" : "" );
 
 	/* Perform a test create of a SCEP server session to verify that we can
 	   do this test */
@@ -786,12 +841,20 @@ static int scepServer( void )
 							  "server session", status, __LINE__ ) );
 		}
 
+	/* If we're running a second server session, reacquire the mutex for
+	   the client to wait on */
+	if( mutexBehaviour == MUTEX_ACQUIRE_REACQUIRE )
+		acquireMutex();
+
 	/* Clean up */
 	cryptDestroySession( cryptSession );
 	cryptKeysetClose( cryptCertStore );
 	cryptDestroyContext( cryptCAKey );
 
-	puts( "SVR: SCEP session succeeded.\n" );
+	if( mutexBehaviour == MUTEX_ACQUIRE_REACQUIRE )
+		puts( "SVR: SCEP session (GetCACert portion) succeeded." );
+	else
+		puts( "SVR: SCEP session succeeded.\n" );
 	return( TRUE );
 	}
 
@@ -800,7 +863,7 @@ int testSessionSCEPServer( void )
 	int status;
 
 	createMutex();
-	status = scepServer();
+	status = scepServer( MUTEX_ACQUIRE );
 	destroyMutex();
 
 	return( status );
@@ -812,7 +875,10 @@ int testSessionSCEPServer( void )
 
 unsigned __stdcall scepServerThread( void *dummy )
 	{
-	scepServer();
+	/* Since we're doing a GetCACert before the main SCEP session we have to
+	   run the server twice */
+	scepServer( MUTEX_ACQUIRE_REACQUIRE );
+	scepServer( MUTEX_NONE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -878,6 +944,13 @@ int testSessionSCEPSHA2ClientServer( void )
 	return( status );
 	}
 
+unsigned __stdcall scepServerCACertThread( void *dummy )
+	{
+	scepServer( MUTEX_ACQUIRE );
+	_endthreadex( 0 );
+	return( 0 );
+	}
+
 int testSessionSCEPCACertClientServer( void )
 	{
 	HANDLE hThread;
@@ -894,7 +967,7 @@ int testSessionSCEPCACertClientServer( void )
 
 	/* Start the server and wait for it to initialise */
 	createMutex();
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, scepServerThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, scepServerCACertThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 

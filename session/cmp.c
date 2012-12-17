@@ -596,15 +596,6 @@ static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setAccessMethodCMP( INOUT SESSION_INFO *sessionInfoPtr )
 	{
-#ifdef USE_CMP_TRANSPORT
-	static const ALTPROTOCOL_INFO altProtocolInfo = {
-		STREAM_PROTOCOL_CMP,		/* Alt.protocol type */
-		"cmp://", 6,				/* Alt.protocol URI type */
-		CMP_PORT,					/* Alt.protocol port */
-		SESSION_ISHTTPTRANSPORT,	/* Protocol flags to replace */
-		SESSION_USEALTTRANSPORT		/* Alt.protocol flags */
-		};
-#endif /* USE_CMP_TRANSPORT */
 	static const PROTOCOL_INFO protocolInfo = {
 		/* General session information */
 		TRUE,						/* Request-response protocol */
@@ -621,9 +612,6 @@ int setAccessMethodCMP( INOUT SESSION_INFO *sessionInfoPtr )
 	
 		/* Protocol-specific information */
 		BUFFER_SIZE_DEFAULT			/* Buffer size information */
-#ifdef USE_CMP_TRANSPORT
-		, &altProtocolInfo			/* Alt.transport protocol */
-#endif /* USE_CMP_TRANSPORT */
 		};
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );

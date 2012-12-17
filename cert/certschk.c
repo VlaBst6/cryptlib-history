@@ -37,7 +37,6 @@ static int generateCertID( IN_BUFFER( dnLength ) const void *dn,
 						   OUT_BUFFER_FIXED_C( KEYID_SIZE ) BYTE *certID, 
 						   IN_LENGTH_FIXED( KEYID_SIZE ) const int certIdLength )
 	{
-	HASHFUNCTION_ATOMIC hashFunctionAtomic;
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
 	STREAM stream;
@@ -58,7 +57,6 @@ static int generateCertID( IN_BUFFER( dnLength ) const void *dn,
 	memset( certID, 0, min( 16, certIdLength ) );
 
 	/* Get the hash algorithm information */
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, NULL );
 	getHashParameters( CRYPT_ALGO_SHA1, 0, &hashFunction, NULL );
 
 	/* Write the relevant information to a buffer and hash the data to get
@@ -477,6 +475,7 @@ static int checkSelfSignedCert( INOUT CERT_INFO *certInfoPtr,
 									CRYPT_ERROR_SIGNALLED );
 		if( cryptStatusError( status ) )
 			return( status );
+		ANALYSER_HINT( issuerCertInfoPtr != NULL );
 		iCryptContext = iCryptCert;
 		trustedCertAcquired = TRUE;
 		}
@@ -709,6 +708,7 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 									CRYPT_ARGERROR_VALUE );
 		if( cryptStatusError( status ) )
 			return( status );
+		ANALYSER_HINT( issuerCertInfoPtr != NULL );
 		issuerCertAcquired = TRUE;
 		}
 	else
@@ -730,6 +730,7 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 										CRYPT_ARGERROR_VALUE );
 			if( cryptStatusError( status ) )
 				return( status );
+			ANALYSER_HINT( issuerCertInfoPtr != NULL );
 			issuerCertAcquired = TRUE;
 			}
 		}
