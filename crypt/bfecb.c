@@ -66,6 +66,8 @@
   #include "crypt/bflocl.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_BLOWFISH
+
 /* Blowfish as implemented from 'Blowfish: Springer-Verlag paper'
  * (From LECTURE NOTES IN COMPUTER SCIENCE 809, FAST SOFTWARE ENCRYPTION,
  * CAMBRIDGE SECURITY WORKSHOP, CAMBRIDGE, U.K., DECEMBER 9-11, 1993)
@@ -97,4 +99,4 @@ void BF_ecb_encrypt(const unsigned char *in, unsigned char *out,
 	l=d[1]; l2n(l,out);
 	l=d[0]=d[1]=0;
 	}
-
+#endif /* USE_BLOWFISH */

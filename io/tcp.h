@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib TCP/IP Interface Header					*
-*						Copyright Peter Gutmann 1998-2007					*
+*						Copyright Peter Gutmann 1998-2013					*
 *																			*
 ****************************************************************************/
 
@@ -111,7 +111,7 @@
    stacks.  The following is a representative entry for Treck's network 
    stack */
 
-#include "r:/temp/trsocket.h"
+#include "trsocket.h"
 
 #undef USE_DNSSRV
 #undef __WINDOWS__
@@ -177,6 +177,67 @@
    equivalent uITRON API glue code */
 
 #error You need to set up the TCP/IP headers and interface in net_tcp.c/net_dns.c
+
+/****************************************************************************
+*																			*
+*						 			Nucleus									*
+*																			*
+****************************************************************************/
+
+#elif defined( __Nucleus__ )
+
+/* Nucleus has it's own functions for network I/O that provide a sort of 
+   weird parallel-universe version of the standard sockets API, we map these 
+   to standard sockets functions, types, and constants */
+
+#include <nu_net.h>
+
+#define sockaddr_in		SCK_SOCKADDR_IP_STRUCT
+#define sin_family		sck_family
+#define sin_port		sck_port
+#define sin_addr		sck_addr
+
+#define AF_INET			SK_FAM_IP
+#define FD_SETSIZE		FD_ELEMENTS
+#define INADDR_ANY		IP_ADDR_ANY
+#define PF_INET			SK_FAM_IP
+#define PF_INET6		SK_FAM_IP6
+#define PF_UNSPEC		SK_FAM_UNSPEC
+#define SOCK_STREAM		NU_TYPE_STREAM
+
+#define fd_set			struct nu_fd_set
+// Nucelus typedefs struct nu_fd_set -> FD_SET, which clashes with
+// the standard sockets FD_SET.
+#define in_addr_t		UINT32
+#define in_port_t		UINT16
+
+#define accept			NU_Accept
+#define bind			NU_Bind
+#define close			NU_Close_Socket
+#define connect			NU_Connect
+#define gethostbyname	NU_Get_Host_By_Name
+#define getsockopt		NU_Getsockopt
+#define listen			NU_Listen
+#define recv			NU_Recv
+#define send			NU_Send
+#define select			NU_Select
+#define setsockopt		NU_Setsockopt
+#define shutdown		NU_Shutdown
+#define socket			NU_Socket
+
+#define FD_ZERO			NU_FD_Init
+#define FD_ISSET		NU_FD_Check
+#define FD_SET			NU_FD_Set
+
+/* Nucleus NET has IPv6 support, but in a very hit-and-miss manner, for
+   example the EAI_xxx values aren't defined (so the autodetection in the
+   IPv6 section won't work), but then values like IPV6_V6ONLY are defined.
+   On the other hand standard functions like getaddrinfo() don't exist at
+   all, so for now we have to restrict ourselves to IPv4.  In order to
+   deal with the erratic presence of IPv6 values we undefine any conflicting
+   ones as required */
+
+#undef IPV6_V6ONLY
 
 /****************************************************************************
 *																			*
@@ -287,11 +348,13 @@
   #include <unistd.h>
 #endif /* Palm OS */
 
-/* AIX and SCO don't define sockaddr_storage in their IPv6 headers so we
-   define a placeholder equivalent here */
+/* AIX and SCO don't define sockaddr_storage in their IPv6 headers so if
+   we detect the use if IPv6 (via IPv6-only status codes) we define a 
+   placeholder equivalent here */
 
-#if defined( IPv6 ) && \
-	( ( defined( _AIX ) && OSVERSION <= 5 ) || defined( __SCO_VERSION__ ) )
+#if ( ( defined( _AIX ) && OSVERSION <= 5 ) || \
+	  defined( __SCO_VERSION__ ) ) && \
+	defined( EAI_BADFLAGS ) && defined( EAI_NONAME )
   struct sockaddr_storage {
 		union {
 			struct sockaddr_in6 bigSockaddrStruct;
@@ -316,15 +379,54 @@
 *																			*
 ****************************************************************************/
 
-#elif defined( __VXWORKS__ )
+#elif defined( __VxWorks__ )
 
-/* VxWorks includes a (somewhat minimal) BSD sockets implementation, if
-   you're using a newer, enhanced implementation or a third-party
-   alternative with more complete functionality (and less bugs), you can use
-   the generic Unix headers and defines further down */
+/* The VxWorks' netBufLib.h header defines its own clFree() that conflicts 
+   with our one.  To deal with this we either use the nonportable 
+   push_macro()/pop_macro() pragma if they're available or we re-include 
+   misc/debug.h after overriding the include-once mechanism by undefining 
+   _DEBUG_DEFINED and overriding the clAlloc()/clFree()-definition-once 
+   mechanism by undefining clAlloc().  
+   
+   gcc's support for pop_macro() is typically buggy, so if we don't get 
+   clFree() defined after we pop it we fall back to the re-include as well. 
+   This is why it's done as a #ifndef rather than a #else */
 
-#include <socket.h>
+#if defined( __GNUC__ ) || defined( _MSC_VER )
+  #pragma push_macro( "clFree" )
+#endif /* push_macro() support */
+#undef clFree
+
+#include <ioLib.h>
 #include <selectLib.h>
+#include <hostLib.h>
+#include <sockLib.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <netinet6/in6.h>
+#include <sys/socket.h>
+
+#undef clFree
+#if defined( __GNUC__ ) || defined( _MSC_VER )
+  #pragma pop_macro( "clFree" )
+#endif /* push_macro() support */
+#ifndef clFree				/* See comment above */
+  #undef _DEBUG_DEFINED		/* Override include-once */
+  #undef clAlloc			/* Override define-once */
+  #include "misc/debug.h"
+#endif /* push_macro() support */
+
+/* Although VxWorks defines AI_NUMERICSERV, any attempt to use it with 
+   getaddrinfo() produces an EAI_BADFLAGS error, so we no-op it out */
+
+#undef AI_NUMERICSERV
+#define AI_NUMERICSERV	0
+
+/* VxWorks doesn't have an h_errno and no-one seems to know what the 
+   substitute for it is, if any, so we no-op it out */
+
+#define h_errno			0
 
 /****************************************************************************
 *																			*
@@ -509,24 +611,6 @@
 *																			*
 ****************************************************************************/
 
-/* Now that we've included all of the networking headers, try and guess
-   whether this is an IPv6-enabled system.  We can detect this by the
-   existence of definitions for the EAI_xxx return values from
-   getaddrinfo().  Note that we can't safely detect it using the more
-   obvious AF_INET6 since many headers defined this in anticipation of IPv6
-   long before the remaining code support was present */
-
-#if defined( EAI_BADFLAGS ) && defined( EAI_NONAME )
-  #define IPv6
-#endif /* getaddrinfo() return values defined */
-
-/* BeOS with the BONE network stack has the necessary IPv6 defines but no
-   actual IPv6 support, so we disable it again */
-
-#if defined( __BEOS__ ) && defined( BONE_VERSION ) && defined( IPv6 )
-  #undef IPv6
-#endif /* BeOS with BONE */
-
 /* The size of a (v4) IP address and the number of IP addresses that we try
    to connect to for a given host, used if we're providing an emulated
    (IPv4-only) getaddrinfo() */
@@ -617,14 +701,6 @@
   #define ioctlsocket				ioctl
 #endif /* OS-specific portability defines */
 
-/* The generic sockaddr struct used to reserve storage for protocol-specific
-   sockaddr structs.  The IPv4 equivalent is given further down in the IPv6-
-   mapping definitions */
-
-#ifdef IPv6
-  #define SOCKADDR_STORAGE			struct sockaddr_storage
-#endif /* IPv6 */
-
 /* Many systems don't define the in_*_t's */
 
 #if defined( __APPLE__ ) || defined( __BEOS__ ) || \
@@ -659,10 +735,10 @@
    otherwise we use int where we know it's safe to do so, and failing that 
    we fall back to size_t */
 
-#if defined( socklen_t ) || defined( __socklen_t_defined )
+#if defined( socklen_t ) || defined( __socklen_t_defined ) || \
+	defined( _SOCKLEN_T )
   #define SIZE_TYPE					socklen_t
-#elif defined( __APPLE__ ) || defined( __BEOS__ ) || defined( _CRAY ) || \
-	  defined( __WINDOWS__ )
+#elif defined( __BEOS__ ) || defined( _CRAY ) || defined( __WINDOWS__ )
   #define SIZE_TYPE					int
 #else
   #define SIZE_TYPE					size_t
@@ -751,17 +827,36 @@
 
 /****************************************************************************
 *																			*
-*						 		Resolver Defines							*
+*						 		IPv6 Defines								*
 *																			*
 ****************************************************************************/
 
+/* Now that we've included all of the networking headers, try and guess
+   whether this is an IPv6-enabled system.  We can detect this by the
+   existence of definitions for the EAI_xxx return values from
+   getaddrinfo().  Note that we can't safely detect it using the more
+   obvious AF_INET6 since many headers defined this in anticipation of IPv6
+   long before the remaining code support was present */
+
+#if defined( EAI_BADFLAGS ) && defined( EAI_NONAME )
+  #define IPv6
+#endif /* getaddrinfo() return values defined */
+
 /* BeOS with the BONE network stack has just enough IPv6 defines present to
-   be awkward, so we temporarily re-enable IPv6 and then use a BONE-specific
-   subset of IPv6 defines further on */
+   be awkward, so we temporarily IPv6 and then use a BONE-specific subset of 
+   IPv6 defines further on */
 
 #if defined( __BEOS__ ) && defined( BONE_VERSION )
   #define IPv6
 #endif /* BeOS with BONE */
+
+/* The generic sockaddr struct used to reserve storage for protocol-specific
+   sockaddr structs.  The IPv4 equivalent is given below in the IPv6-
+   emulation definitions */
+
+#ifdef IPv6
+  #define SOCKADDR_STORAGE			struct sockaddr_storage
+#endif /* IPv6 */
 
 /* IPv6 emulation functions used to provide a single consistent interface */
 
@@ -805,7 +900,7 @@
   /* get/setsockopt() flags and values.  Again, we have to use slightly
      different values for Windows in some cases */
   #define IPPROTO_IPV6		41		/* IPv6 */
-  #ifdef __WINDOWS__
+  #if defined( __WINDOWS__ ) || defined( __VxWorks__ )
 	#define IPV6_V6ONLY		27		/* Force dual stack to use only IPv6 */
   #else
 	#define IPV6_V6ONLY		26		/* Force dual stack to use only IPv6 */
@@ -867,6 +962,12 @@
 							 char *service, SIZE_TYPE servicelen,
 							 int flags );
 #endif /* BeOS with BONE */
+
+/****************************************************************************
+*																			*
+*						 		Resolver Defines							*
+*																			*
+****************************************************************************/
 
 /* Values defined in some environments but not in others.  T_SRV and
    NS_SRVFIXEDSZ are used for DNS SRV lookups.  Newer versions of bind use a
@@ -946,8 +1047,9 @@
 ****************************************************************************/
 
 /* The traditional way to set a descriptor to nonblocking mode was an
-   ioctl with FIONBIO, however Posix prefers the O_NONBLOCK flag for fcntl
-   so we use this if it's available.
+   ioctl with FIONBIO, however Posix prefers the O_NONBLOCK flag for fcntl()
+   so we use this if it's available, with some exceptions for systems like
+   VxWorks where it's present but doesn't work as expected.
 
    Unfortunately if we haven't got the fcntl() interface available there's
    no way to determine whether a socket is non-blocking or not, which is
@@ -988,7 +1090,8 @@
    unsigned long, in most cases this is a 'void *' but under Windows it's
    an 'unsigned long *' so we use the most restrictive type */
 
-#if defined( F_GETFL ) && defined( F_SETFL ) && defined( O_NONBLOCK )
+#if defined( F_GETFL ) && defined( F_SETFL ) && defined( O_NONBLOCK ) && \
+	!defined( __VxWorks__ )
   #define getSocketNonblockingStatus( socket, value ) \
 			{ \
 			value = fcntl( socket, F_GETFL, 0 ); \
@@ -1026,7 +1129,9 @@
   #define getSocketNonblockingStatus( socket, value ) \
 			{ \
 			int nonBlock = FALSE; \
-			setsockopt( socket, SOL_SOCKET, SO_NONBLOCK, &nonBlock, sizeof( int ) ); \
+			value = getsockopt( socket, SOL_SOCKET, SO_NONBLOCK, &nonBlock, sizeof( int ) ); \
+			value = ( isSocketError( value ) || nonBlock ) ? \
+					TRUE : FALSE; \
 			}
   #define setSocketNonblocking( socket ) \
 			{ \
@@ -1038,9 +1143,20 @@
 			int nonBlock = FALSE; \
 			setsockopt( socket, SOL_SOCKET, SO_NONBLOCK, &nonBlock, sizeof( int ) ); \
 			}
+#elif defined( __Nucleus__ )
+  /* Nucleus doesn't provide a mechanism to check whether a socket is non-
+     blocking, however the only time that this capability is required is 
+	 when we're checking a user-provided socket.  These are created 
+	 blocking by default under Nucleus, so we just hardwire the check to say 
+	 that it's blocking */
+  #define getSocketNonblockingStatus( socket, value )	value = FALSE
+  #define setSocketNonblocking( socket ) \
+			NU_Fcntl( socket, NU_SETFLAG, NU_NO_BLOCK )
+  #define setSocketBlocking( socket ) \
+			NU_Fcntl( socket, NU_SETFLAG, NU_BLOCK )
 #elif defined( __SYMBIAN32__ )
   /* Symbian OS doesn't support nonblocking I/O */
-  #define getSocketNonblockingStatus( socket, value )	value = 0
+  #define getSocketNonblockingStatus( socket, value )	value = FALSE
   #define setSocketNonblocking( socket )
   #define setSocketBlocking( socket )
 #else

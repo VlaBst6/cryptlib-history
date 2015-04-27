@@ -34,7 +34,7 @@
 
 #ifdef USE_LDAP
 
-#if defined( _MSC_VER )
+#if defined( _MSC_VER ) || defined( __GNUC__ )
   #pragma message( "  Building with LDAP enabled." )
 #endif /* Warn with VC++ */
 
@@ -337,7 +337,9 @@ static void assignFieldName( const CRYPT_USER cryptOwner, char *buffer,
 
 static void getErrorInfo( KEYSET_INFO *keysetInfoPtr, int ldapStatus )
 	{
+#ifdef USE_ERRMSGS
 	ERROR_INFO *errorInfo = &keysetInfoPtr->errorInfo;
+#endif /* USE_ERRMSGS */
 #ifndef __WINDOWS__ 
 	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 #endif /* !__WINDOWS__ */
@@ -828,8 +830,17 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 								  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 								  &createInfo, OBJECT_TYPE_CERTIFICATE );
 		if( cryptStatusOK( status ) )
-			*iCryptHandle = createInfo.cryptHandle;
-
+			{
+			status = iCryptVerifyID( createInfo.cryptHandle, keyIDtype, 
+									 keyID, keyIDlength );
+			if( cryptStatusError( status ) )
+				{
+				krnlSendNotifier( createInfo.cryptHandle, 
+								  IMESSAGE_DECREFCOUNT );
+				}
+			else
+				*iCryptHandle = createInfo.cryptHandle;
+			}
 		ldap_value_free_len( valuePtrs );
 		}
 	else

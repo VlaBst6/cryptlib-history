@@ -205,6 +205,7 @@
 
 /* Global headers used in almost every module */
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -361,29 +362,35 @@ typedef struct {
 	CRYPT_FORMAT_TYPE formatType;	/* Object format type */
 	CRYPT_OBJECT_TYPE type;			/* Object type */
 	long size;						/* Object size */
+	VALUE( 0, 10 ) \
 	int version;					/* Object format version */
 
 	/* The encryption algorithm and mode */
 	CRYPT_ALGO_TYPE cryptAlgo;		/* The encryption algorithm */
 	CRYPT_MODE_TYPE cryptMode;		/* The encryption mode */
+	int cryptAlgoParam;				/* Optional algorithm parameter */
 
 	/* The key ID for public key objects */
 	BUFFER( CRYPT_MAX_HASHSIZE, keyIDlength ) \
 	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];/* PKC key ID */
+	VALUE( 0, CRYPT_MAX_HASHSIZE ) \
 	int keyIDlength;
 
 	/* The IV for conventionally encrypted data */
 	BUFFER( CRYPT_MAX_IVSIZE, ivLength ) \
 	BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];/* IV */
+	VALUE( 0, CRYPT_MAX_IVSIZE ) \
 	int ivLength;
 
 	/* The key derivation algorithm and iteration count for conventionally
 	   encrypted keys */
 	CRYPT_ALGO_TYPE keySetupAlgo;	/* Key setup algorithm */
+	int keySetupAlgoParam;			/* Optional parameter for key setup algo */
 	int keySetupIterations;			/* Key setup iteration count */
 	int keySize;					/* Key size (if not implicit) */
 	BUFFER( CRYPT_MAX_HASHSIZE, saltLength ) \
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];/* Key setup salt */
+	VALUE( 0, CRYPT_MAX_HASHSIZE ) \
 	int saltLength;
 
 	/* The hash algorithm for signatures */
@@ -391,10 +398,13 @@ typedef struct {
 	int hashAlgoParam;				/* Optional algorithm parameter */
 
 	/* The encoded parameter data for authenticated encryption, and the
-	   encryption and MAC algorithm parameter data within that */
+	   optional KDF and encryption and MAC algorithm parameter data within 
+	   that */
 	BUFFER( 128, authEncParamLength ) \
 	BYTE authEncParamData[ 128 + 8 ];
+	VALUE( 0, 128 ) \
 	int authEncParamLength;			/* AuthEnc parameter data */
+	int kdfParamStart, kdfParamLength;	/* Position of opt.KDF params */
 	int encParamStart, encParamLength;	/* Position of enc.parameters */
 	int macParamStart, macParamLength;	/* Position of MAC parameters */
 
@@ -456,9 +466,11 @@ typedef struct {
 typedef struct {
 	BUFFER( CRYPT_MAX_PKCSIZE, publicValueLen ) \
 	BYTE publicValue[ CRYPT_MAX_PKCSIZE + 8 ];
+	VALUE( 0, CRYPT_MAX_PKCSIZE ) \
 	int publicValueLen;				/* Public key value */
 	BUFFER( CRYPT_MAX_PKCSIZE, wrappedKeyLen ) \
 	BYTE wrappedKey[ CRYPT_MAX_PKCSIZE + 8 ];
+	VALUE( 0, CRYPT_MAX_PKCSIZE ) \
 	int wrappedKeyLen;				/* Wrapped key */
 	} KEYAGREE_PARAMS;
 
@@ -498,7 +510,7 @@ typedef struct {
    the fact that the default char type is signed.  To get around this the
    following macro declares a byte string as a set of unsigned bytes */
 
-#define MKDATA( x )					( ( unsigned char * ) ( x  ) )
+#define MKDATA( x )					( ( BYTE * ) ( x ) )
 
 /* Macro to round a value up to the nearest multiple of a second value,
    with the second value being a power of 2 */
@@ -509,16 +521,29 @@ typedef struct {
 /* A macro to clear sensitive data from memory.  This is somewhat easier to
    use than calling memset with the second parameter set to 0 all the time,
    and makes it obvious where sensitive data is being erased.  In addition
-   some systems, recognising the problem, have distinct memory zeroisation
-   support, so if available we use that */
+   some systems, recognising the problem of compilers removing what they see
+   as deas stores, have distinct memory zeroisation support, so if available 
+   we use that */
 
 #if defined( _MSC_VER ) && VC_GE_2005( _MSC_VER )
-  /* This isn't terribly spectacular, just a mapping to 
-     RtlSecureZeroMemory() which is implemented as inline code implementing 
-	 a loop on a pointer declared volatile, but there's an implied contract
-	 that future versions will always zeroise memory even in the face of
+  /* This is just a mapping to RtlSecureZeroMemory() (via WinBase.h) which 
+     is implemented as inline code implementing a loop on a pointer declared 
+	 volatile, but unlike the corresponding RtlZeroMemory() there's a 
+	 contract that this will always zeroise memory even in the face of 
 	 compiler changes that would otherwise optimise away the access */
   #define zeroise( memory, size )	SecureZeroMemory( memory, size )
+#elif defined( __STDC_LIB_EXT1__ )
+  /* C11 defines a function memset_s() that guarantees that it won't be
+	 optimised away, although this is quite well obfuscated in the spec,
+	 "the memory indicated by [the memset parameters] may be accessible in 
+	 the future and therefore must contain the values indicated by [the
+	 value to set]", hopefully the implementers will know that this equates
+	 to "the memset_s() call can't be optimised away" */
+  #define zeroise( memory, size )	memset_s( memory, size, 0, size )
+#elif defined( __OpenBSD__ )
+  /* The OpenBSD folks defined their own won't-be-optimised-away bzero()
+	 function */
+  #define zeroise( memory, size )	explicit_bzero( memory, size )
 #else
   #define zeroise( memory, size )	memset( memory, 0, size )
 #endif /* Systems with distinct zeroise functions */
@@ -573,9 +598,11 @@ typedef struct {
 #define isHashAlgo( algorithm ) \
 		( ( algorithm ) >= CRYPT_ALGO_FIRST_HASH && \
 		  ( algorithm ) <= CRYPT_ALGO_LAST_HASH )
-#define isHashExtAlgo( algorithm ) \
+#define isHashMacExtAlgo( algorithm ) \
 		( ( algorithm ) == CRYPT_ALGO_SHA2 || \
-		  ( algorithm ) == CRYPT_ALGO_SHAng )
+		  ( algorithm ) == CRYPT_ALGO_SHAng || \
+		  ( algorithm ) == CRYPT_ALGO_HMAC_SHA2 || \
+		  ( algorithm ) == CRYPT_ALGO_HMAC_SHAng )
 #define isMacAlgo( algorithm ) \
 		( ( algorithm ) >= CRYPT_ALGO_FIRST_MAC && \
 		  ( algorithm ) <= CRYPT_ALGO_LAST_MAC )
@@ -627,12 +654,14 @@ typedef struct {
    returned a certain level of fuzziness is permitted */
 
 #define isDataError( status ) \
-		( ( ( status ) >= CRYPT_ERROR_OVERFLOW && \
-			( status ) <= CRYPT_ERROR_SIGNATURE ) ) || \
-		  ( ( status ) == CRYPT_ERROR_NOTAVAIL || \
-		    ( status ) == CRYPT_ERROR_INCOMPLETE || \
-			( status ) == CRYPT_ERROR_COMPLETE || \
-			( status ) == CRYPT_ERROR_INVALID )
+		( ( status ) == CRYPT_ERROR_OVERFLOW || \
+		  ( status ) == CRYPT_ERROR_UNDERFLOW || \
+		  ( status ) == CRYPT_ERROR_BADDATA || \
+		  ( status ) == CRYPT_ERROR_SIGNATURE || \
+		  ( status ) == CRYPT_ERROR_NOTAVAIL || \
+		  ( status ) == CRYPT_ERROR_INCOMPLETE || \
+		  ( status ) == CRYPT_ERROR_COMPLETE || \
+		  ( status ) == CRYPT_ERROR_INVALID )
 
 /* A macro to check whether a public key is too short to be secure.  This
    is a bit more complex than just a range check because any length below 
@@ -777,13 +806,20 @@ typedef struct {
    being potentially converted to large signed integer values we perform a
    safe conversion by going via an intermediate unsigned value, which in
    the case of char -> int results in 0xFF turning into 0x000000FF rather
-   than 0xFFFFFFFF */
+   than 0xFFFFFFFF.
+   
+   For Visual Studio we explicitly mask some values to avoid runtime traps 
+   in debug builds */
 
 #define byteToInt( x )				( ( unsigned char ) ( x ) )
 #define intToLong( x )				( ( unsigned int ) ( x ) )
 
 #define sizeToInt( x )				( ( unsigned int ) ( x ) )
-#define intToByte( x )				( ( unsigned char ) ( x ) )
+#if defined( _MSC_VER ) && VC_GE_2010( _MSC_VER )
+  #define intToByte( x )			( ( unsigned char ) ( ( x ) & 0xFF ) )
+#else
+  #define intToByte( x )			( ( unsigned char ) ( x ) )
+#endif /* VS 2010 or newer */
 
 /* Clear/set object error information */
 
@@ -823,8 +859,10 @@ typedef struct {
 
 #if defined( INC_ALL )
   #include "debug.h"
+  #include "fault.h"
 #else
   #include "misc/debug.h"
+  #include "misc/fault.h"
 #endif /* Compiler-specific includes */
 
 #endif /* _CRYPT_DEFINED */

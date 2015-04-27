@@ -12,11 +12,11 @@
 
 # Make sure we've been given sufficient arguments.
 
-if [ "$1" = "" ] ; then
+if [ -z "$1" ] ; then
 	echo "$0: Missing as name." >&2 ;
 	exit 1 ;
 fi
-if [ "$2" = "" ] ; then
+if [ -z "$2" ] ; then
 	echo "$0: Missing object path." >&2 ;
 	exit 1 ;
 fi

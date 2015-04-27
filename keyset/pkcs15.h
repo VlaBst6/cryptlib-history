@@ -174,7 +174,6 @@ typedef enum {
    cryptlib, we extend the standard range with PKCS15-only types */
 
 #define CRYPT_KEYIDEX_ID				CRYPT_KEYID_LAST
-#define CRYPT_KEYIDEX_SUBJECTNAMEID		( CRYPT_KEYID_LAST + 1 )
 
 /* The minimum size of an object in a keyset, used for sanity-checking when
    reading a keyset */

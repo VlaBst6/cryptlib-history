@@ -394,7 +394,7 @@ static int decodeCertWrapper( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
 int getCertObjectInfo( INOUT STREAM *stream,
 					   OUT_LENGTH_SHORT_Z int *objectOffset, 
-					   OUT_LENGTH_Z int *objectLength, 
+					   OUT_DATALENGTH_Z int *objectLength, 
 					   OUT_ENUM_OPT( CRYPT_CERTTYPE ) \
 							CRYPT_CERTTYPE_TYPE *objectType,
 					   IN_ENUM( CRYPT_CERTTYPE ) \
@@ -426,7 +426,10 @@ int getCertObjectInfo( INOUT STREAM *stream,
 
 	/* Check whether we need to process the object wrapper using context-
 	   specific tagging rather than the usual SEQUENCE */
-	if( peekTag( stream ) == MAKE_CTAG( 0 ) || \
+	status = tag = peekTag( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( tag == MAKE_CTAG( 0 ) || \
 		formatHint == CRYPT_ICERTTYPE_CMS_CERTSET )
 		isContextTagged = TRUE;
 
@@ -481,19 +484,6 @@ int getCertObjectInfo( INOUT STREAM *stream,
 		{
 		switch( formatHint )
 			{
-			case CRYPT_ICERTTYPE_DATAONLY:
-				/* Standard certificate but created without creating a 
-				   context for the accompanying public key */
-				*objectType = CRYPT_CERTTYPE_CERTIFICATE;
-				break;
-
-			case CRYPT_ICERTTYPE_CTL:
-				/* Certificate chain used as a container for trusted 
-				   certificates, effectively a chain of 
-				   CRYPT_ICERTTYPE_DATAONLY certificates */
-				*objectType = CRYPT_CERTTYPE_CERTCHAIN;
-				break;
-
 			case CRYPT_ICERTTYPE_REVINFO:
 				/* Single CRL entry, treated as standard CRL with portions 
 				   missing */

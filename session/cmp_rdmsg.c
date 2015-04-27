@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Read CMP Message Types							*
-*						Copyright Peter Gutmann 1999-2009					*
+*						Copyright Peter Gutmann 1999-2011					*
 *																			*
 ****************************************************************************/
 
@@ -94,8 +94,8 @@ static int readEncryptedCert( INOUT STREAM *stream,
 							  IN_HANDLE const CRYPT_CONTEXT iImportContext,
 							  OUT_BUFFER( outDataMaxLength, *outDataLength ) \
 									void *outData, 
-							  IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
-							  OUT_LENGTH_Z int *outDataLength, 
+							  IN_DATALENGTH_MIN( 16 ) const int outDataMaxLength,
+							  OUT_DATALENGTH_Z int *outDataLength, 
 							  INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_CONTEXT iSessionKey;
@@ -190,10 +190,54 @@ static int readEncryptedCert( INOUT STREAM *stream,
 	}
 #endif /* 0 */
 
+/* Process a request that's (supposedly) been authorised by an RA rather 
+   than coming directly from a user */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+static BOOLEAN processRARequest( INOUT CMP_PROTOCOL_INFO *protocolInfo,
+								 IN_HANDLE const CRYPT_CERTIFICATE iCertRequest,
+								 IN_ENUM_OPT( CTAG_PB ) \
+									const CMP_MESSAGE_TYPE messageType,
+								 INOUT ERROR_INFO *errorInfo )
+	{
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	REQUIRES_B( isHandleRangeValid( iCertRequest ) );
+	REQUIRES_B( messageType >= CTAG_PB_IR && messageType < CTAG_PB_LAST );
+				/* CTAG_PB_IR == 0 so this is the same as _NONE */
+
+	/* If the user isn't an RA then this can't be an RA-authorised request */
+	if( !protocolInfo->userIsRA )
+		{
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, errorInfo, 
+				  "Request supposedly from an RA didn't come from an actual "
+				  "RA user" ) );
+		}
+
+	/* An RA-authorised request can only be a CR.  They can't be an IR 
+	   because they need to be signed, and they can't be a KUR or RR because 
+	   we assume that users will be updating and revoking their own 
+	   certificates, it doesn't make much sense to require an RA for this */
+	if( messageType != CTAG_PB_CR )
+		{
+		retExt( CRYPT_ERROR_INVALID,
+				( CRYPT_ERROR_INVALID, errorInfo, 
+				  "Request type %d supposedly from an RA is of the wrong "
+				  "type, should be %d", messageType, CTAG_PB_CR ) );
+		}
+
+	/* It's an RA-authorised request, mark the request as such */
+	return( krnlSendMessage( iCertRequest, IMESSAGE_SETATTRIBUTE, 
+							 MESSAGE_VALUE_TRUE, 
+							 CRYPT_IATTRIBUTE_REQFROMRA ) );
+	}
+
 /* Try and obtain more detailed information on why a certificate request
    wasn't compatible with stored PKI user information.  Note that the
    mapping table below is somewhat specific to the implementation of 
-   copyPkiUserToCertReq() in certs/comp_cert.c, we hardcode a few common 
+   copyPkiUserToCertReq() in certs/comp_pkiu.c, we hardcode a few common 
    cases here and use a generic error message for the rest */
 
 #ifdef USE_ERRMSGS
@@ -335,7 +379,7 @@ static int readRequestBody( INOUT STREAM *stream,
 								   ( messageType == CTAG_PB_RR ) ? \
 									CRYPT_CERTTYPE_REQUEST_REVOCATION : \
 									CRYPT_CERTTYPE_REQUEST_CERT,
-								   messageLength );
+								   messageLength, KEYMGMT_FLAG_NONE );
 	if( cryptStatusError( status ) )
 		{
 		protocolInfo->pkiFailInfo = CMPFAILINFO_BADCERTTEMPLATE;
@@ -390,22 +434,24 @@ static int readRequestBody( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 
-#if 0	/* 28/9/08 Should probably apply this filtering to all requests.  
-				   This is a bit tricky since it'll break RAs and in-house
-				   CAs and other trusted-source certificate issue operations
-				   where it's assumed that the data comes in pre-validated.  
-				   The following may need to be reset to its original 
-				   behaviour depending on what user reactions are... */
-	/* If it's not an ir which requires special-case processing because of a
-	   potentially absent DN, we're done */
-	if( messageType != CTAG_PB_IR )
-		return( CRYPT_OK );
-#else
 	/* Revocation requests don't contain any information so there's nothing
 	   further to check */
 	if( messageType == CTAG_PB_RR )
 		return( CRYPT_OK );
-#endif /* 0 */
+
+	/* Check whether this request is one that's been authorised by an RA
+	   rather than coming directly from a user */
+	status = krnlSendMessage( sessionInfoPtr->iCertRequest, 
+							  IMESSAGE_GETATTRIBUTE, &value, 
+							  CRYPT_CERTINFO_KEYFEATURES );
+	if( cryptStatusOK( status ) && ( value & KEYFEATURE_FLAG_RAISSUED ) )
+		{
+		status = processRARequest( protocolInfo, 
+								   sessionInfoPtr->iCertRequest, 
+								   messageType, SESSION_ERRINFO );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Make sure that the information in the request is consistent with the
 	   user information template.  If it's an ir then the subject may not 
@@ -523,7 +569,16 @@ static int readResponseBody( INOUT STREAM *stream,
 			{
 			ERROR_INFO errorInfo;
 
-			/* Certificate encrypted with CMS, unwrap it */
+			/* Certificate encrypted with CMS, unwrap it.  Note that this 
+			   relies on the fact that cryptlib generates the 
+			   subjectKeyIdentifier that's used to identify the decryption 
+			   key by hashing the subjectPublicKeyInfo, this is needed 
+			   because when the newly-issued certificate is received only 
+			   the keyID is available (since the certificate hasn't been 
+			   decrypted and read yet) while the returned certificate uses 
+			   the sKID to identify the decryption key.  If the keyID and
+			   sKID aren't the same then the envelope-unwrapping code will
+			   report a CRYPT_ERROR_WRONGKEY */
 			status = envelopeUnwrap( bodyInfoPtr, bodyLength,
 									 bodyInfoPtr, bodyLength, &bodyLength,
 									 sessionInfoPtr->privateKey, &errorInfo );
@@ -545,8 +600,8 @@ static int readResponseBody( INOUT STREAM *stream,
 					  "Unknown returned certificate encapsulation type %d",
 					  tag ) );
 		}
-	if( cryptStatusError( status ) )
-		return( status );
+	ENSURES( cryptStatusOK( status ) );
+		/* All error paths have already been checked above */
 
 	/* Import the certificate as a cryptlib object */
 	setMessageCreateObjectIndirectInfo( &createInfo, bodyInfoPtr, bodyLength,
@@ -723,12 +778,12 @@ static int readGenMsgBody( INOUT STREAM *stream,
 	/* It's a PKIBoot response with the InfoTypeAndValue handled as CMS
 	   content (see the comment for writeGenMsgResponseBody() in 
 	   cmp_wrmsg.c), import the certificate trust list.  Since this isn't a 
-	   true certificate chain and isn't used as such, we use data-only 
-	   certificates (specified using the special-case CRYPT_ICERTTYPE_CTL 
-	   type specifier) */
+	   true certificate chain and isn't used as such, we import it as 
+	   data-only certificates */
 	status = importCertFromStream( stream, &sessionInfoPtr->iCertResponse,
 								   DEFAULTUSER_OBJECT_HANDLE, 
-								   CRYPT_ICERTTYPE_CTL, messageLength );
+								   CRYPT_CERTTYPE_CERTCHAIN, messageLength,
+								   KEYMGMT_FLAG_DATAONLY_CERT );
 	if( cryptStatusError( status ) )
 		retExt( status, 
 				( status, SESSION_ERRINFO, "Invalid PKIBoot response" ) );

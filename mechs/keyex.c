@@ -21,6 +21,8 @@
   #include "mechs/mech.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_INT_CMS
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -31,7 +33,7 @@
 
 CHECK_RETVAL_ENUM( CRYPT_FORMAT ) STDC_NONNULL_ARG( ( 1 ) ) \
 static CRYPT_FORMAT_TYPE getFormatType( IN_BUFFER( dataLength ) const void *data, 
-										IN_LENGTH const int dataLength )
+										IN_DATALENGTH const int dataLength )
 	{
 	STREAM stream;
 	long value;
@@ -39,8 +41,8 @@ static CRYPT_FORMAT_TYPE getFormatType( IN_BUFFER( dataLength ) const void *data
 
 	assert( isReadPtr( data, dataLength ) );
 
-	REQUIRES( dataLength > MIN_CRYPT_OBJECTSIZE && \
-			  dataLength < MAX_INTLENGTH );
+	REQUIRES_EXT( dataLength > MIN_CRYPT_OBJECTSIZE && \
+				  dataLength < MAX_BUFFER_SIZE, CRYPT_FORMAT_NONE );
 
 	sMemConnect( &stream, data, min( 16, dataLength ) );
 
@@ -468,7 +470,7 @@ C_RET cryptExportKeyEx( C_OUT_OPT void C_PTR encryptedKey,
 	if( encryptedKey != NULL )
 		{
 		if( encryptedKeyMaxLength <= MIN_CRYPT_OBJECTSIZE || \
-			encryptedKeyMaxLength >= MAX_INTLENGTH )
+			encryptedKeyMaxLength >= MAX_BUFFER_SIZE )
 			return( CRYPT_ERROR_PARAM2 );
 		if( !isWritePtr( encryptedKey, encryptedKeyMaxLength ) )
 			return( CRYPT_ERROR_PARAM1 );
@@ -611,8 +613,8 @@ int iCryptImportKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength ) \
 						void *encryptedKey, 
-					 IN_LENGTH_Z const int encryptedKeyMaxLength,
-					 OUT_LENGTH_Z int *encryptedKeyLength,
+					 IN_DATALENGTH_Z const int encryptedKeyMaxLength,
+					 OUT_DATALENGTH_Z int *encryptedKeyLength,
 					 IN_ENUM( CRYPT_FORMAT ) const CRYPT_FORMAT_TYPE formatType,
 					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
 					 IN_HANDLE const CRYPT_CONTEXT iExportKey )
@@ -632,7 +634,7 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 
 	REQUIRES( ( encryptedKey == NULL && encryptedKeyMaxLength == 0 ) || \
 			  ( encryptedKeyMaxLength > MIN_CRYPT_OBJECTSIZE && \
-				encryptedKeyMaxLength < MAX_INTLENGTH ) );
+				encryptedKeyMaxLength < MAX_BUFFER_SIZE ) );
 	REQUIRES( formatType > CRYPT_FORMAT_NONE && \
 			  formatType < CRYPT_FORMAT_LAST );
 	REQUIRES( ( formatType == CRYPT_FORMAT_PGP && \
@@ -720,3 +722,48 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 
 	return( status );
 	}
+
+#else
+
+/****************************************************************************
+*																			*
+*						Stub Functions for non-CMS/PGP Use					*
+*																			*
+****************************************************************************/
+
+C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
+						C_IN int encryptedKeyLength,
+						C_IN CRYPT_CONTEXT importKey,
+						C_IN CRYPT_CONTEXT sessionKeyContext,
+						C_OUT CRYPT_CONTEXT C_PTR returnedContext )
+	{
+	return( CRYPT_ERROR_NOTAVAIL );
+	}
+
+C_RET cryptImportKey( C_IN void C_PTR encryptedKey,
+					  C_IN int encryptedKeyLength,
+					  C_IN CRYPT_CONTEXT importKey,
+					  C_IN CRYPT_CONTEXT sessionKeyContext )
+	{
+	return( CRYPT_ERROR_NOTAVAIL );
+	}
+
+C_RET cryptExportKeyEx( C_OUT_OPT void C_PTR encryptedKey,
+						C_IN int encryptedKeyMaxLength,
+						C_OUT int C_PTR encryptedKeyLength,
+						C_IN CRYPT_FORMAT_TYPE formatType,
+						C_IN CRYPT_HANDLE exportKey,
+						C_IN CRYPT_CONTEXT sessionKeyContext )
+	{
+	return( CRYPT_ERROR_NOTAVAIL );
+	}
+
+C_RET cryptExportKey( C_OUT_OPT void C_PTR encryptedKey,
+					  C_IN int encryptedKeyMaxLength,
+					  C_OUT int C_PTR encryptedKeyLength,
+					  C_IN CRYPT_HANDLE exportKey,
+					  C_IN CRYPT_CONTEXT sessionKeyContext )
+	{
+	return( CRYPT_ERROR_NOTAVAIL );
+	}
+#endif /* USE_INT_CMS */

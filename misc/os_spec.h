@@ -112,10 +112,11 @@
 #endif /* VMS */
 
 #if defined( __APPLE__ )
-  /* Apple provides an environment-specific file that gives you detailed
-	 information about the target enviroment */
+  /* Apple provides an environment-specific file that provides detailed
+	 information about the target enviroment, defining TARGET_OS_xxx to 1
+	 for a given target environment */
   #include <TargetConditionals.h>
-  #if defined( TARGET_OS_IPHONE ) || defined( TARGET_IPHONE_SIMULATOR )
+  #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 	#define __iOS__
   #endif /* iOS/iOS simulator */
 #endif /* __APPLE__ */
@@ -127,29 +128,40 @@
    under Windows it's already typedef'd which leads to error messages */
 
 #if defined( __WIN32__ ) && ( _MSC_VER == 1200 ) && defined( CROSSCOMPILE )
-  /* Embedded OS variant */
-//  #define __EmbOS__ 
-//  #define __FreeRTOS__
-//	#define __ITRON__
-//	#define __Nucleus__
-//	#define __RTEMS__
-//	#define __ThreadX__
-//	#define __TKernel__
-//  #define __UCOS__
+  /* Embedded OS variant.  Remember to change Project | Settings | C/C++ |
+	 Preprocessor | Additional include directories as per the code 
+	 comments */
+	#define __ARINC653__	/* Extra include: ./,./embedded/arinc653 */
+//	#define __CMSIS__		/* Extra include: ./,./embedded/cmsis */
+//  #define __EmbOS__		/* Extra include: ./,./embedded/embos */
+//  #define __FreeRTOS__	/* Extra include: ./,./embedded/freertos */
+//	#define __ITRON__		/* Extra include: ./,./embedded/itron */
+//	#define __Nucleus__		/* Extra include: ./,./embedded/nucleus */
+//	#define __RTEMS__		/* Extra include: ./,./embedded/rtems */
+//	#define __SMX__			/* Extra include: ./,./embedded/smx/xsmx,./embedded/smx/xfs */
+//	#define __ThreadX__		/* Extra include: ./,./embedded/threadx */
+//	#define __TKernel__		/* Extra include: ./,./embedded/tk */
+//  #define __UCOS__		/* Extra include: ./,./embedded/ucos */
+//	#define __VxWorks__		/* Extra include: ./,./embedded/vxworks/,./embedded/vxworks/wrn/coreip/ */
 
   /* Undo Windows defines */
   #undef __WINDOWS__
   #undef __WIN32__
-  #if !defined( __Nucleus__ ) && !defined( __UCOS__ )
+  #if !defined( __Nucleus__ ) && !defined( __SMX__ ) && !defined( __UCOS__ )
 	#define BOOLEAN			FNORDIAN
   #endif /* Systems that typedef BOOLEAN */
   #ifdef __Nucleus__
 	#undef FAR
   #endif /* Systems that define FAR */
 
+  /* Embedded SDK-specific additional defines */
+  #if defined( __VxWorks__ ) && !defined( _WRS_KERNEL )
+	#define _WRS_KERNEL		1
+  #endif /* SDK-specific defines */
+
   /* In addition '__i386__' (assuming gcc with an x86 target) needs to be 
      defined globally via Project Settings | C/C++ | Preprocessor.  This
-	 are already defined for the 'Crosscompile' build configuration */
+	 is already defined for the 'Crosscompile' build configuration */
 #endif /* Windows emulated cross-compile environment */
 
 #ifdef _SCCTK
@@ -175,7 +187,9 @@
 	Visual C++ 7.1 (VC++.NET/2003) _MSC_VER = 1310
 	Visual C++ 8.0 (VC2005) _MSC_VER = 1400 
 	Visual C++ 9.0 (VC2008) _MSC_VER = 1500
-	Visual C++ 10.0 (VC2010) _MSC_VER = 1600 */
+	Visual C++ 10.0 (VC2010) _MSC_VER = 1600 
+	Visual C++ 11.0 (VC2012) _MSC_VER = 1700
+	Visual C++ 12.0 (VC2013) _MSC_VER = 1800 */
 
 #ifdef _MSC_VER
   #define VC_16BIT( version )		( version <= 800 )
@@ -185,9 +199,11 @@
   #define VC_GE_2005( version )		( version >= 1400 )
   #define VC_GE_2008( version )		( version >= 1500 )
   #define VC_GE_2010( version )		( version >= 1600 )
+  #define VC_GE_2012( version )		( version >= 1700 )
+  #define VC_GE_2013( version )		( version >= 1800 )
 #else
   /* These aren't specifically required on non-VC++ systems, but some 
-     preprocessors get confused if they aren't defined since they're used */
+     preprocessors get confused if they aren't defined */
   #define VC_16BIT( version )		0
   #define VC_LE_VC6( version )		0
   #define VC_GE_2002( version )		0
@@ -195,6 +211,8 @@
   #define VC_GE_2005( version )		0
   #define VC_GE_2008( version )		0
   #define VC_GE_2010( version )		0
+  #define VC_GE_2012( version )		0
+  #define VC_GE_2013( version )		0
 #endif /* Visual C++ */
 
 /* If we're compiling under VC++ with the maximum level of warnings, turn
@@ -266,7 +284,7 @@
 	#pragma warning( disable: 6011 )/* Deferencing NULL pointer */
   #endif /* VC++ with source analysis enabled */
 
-  /* Windows DDK fre builds treat warnings as errors and the DDK headers
+  /* Windows DDK free builds treat warnings as errors and the DDK headers 
 	 have some problems so we have to disable additional warnings */
   #ifdef WIN_DDK
 	#pragma warning( disable: 4242 )/* MS-only bit field type used */
@@ -280,12 +298,20 @@
   #pragma warning( disable: 4100 )	/* Unreferenced parameter */
 #endif /* Visual C++ */
 
-/* Under VC++ a number of warnings are disabled by default, including some 
-   potentially useful ones, so we re-enable them.  The warnings are:
+/* Under VC++/VS a number of warnings are disabled by default, including 
+   some potentially useful ones, so we re-enable them.  The warnings are:
 
+	C4242 'identifier': conversion from 'type1' to 'type2', possible loss of 
+		  data.
+	C4255 'function': no function prototype given: converting '()' to 
+		  '(void)'.
 	C4287 'operator': unsigned/negative constant mismatch.
 	C4296 'operator': expression is always false.
+	C4302 'conversion' : truncation from 'type 1' to 'type 2'.
+	C4311 'variable' : pointer truncation from 'type' to 'type'.
 	C4431 missing type specifier - int assumed.
+	C4545 expression before comma evaluates to a function which is missing 
+		  an argument list.
 	C4546 function call before comma missing argument list.
 	C4547 'operator' : operator before comma has no effect; expected 
 		  operator with side-effect.
@@ -294,6 +320,7 @@
 	C4549 'operator' : operator before comma has no effect; did you intend 
 		  'operator'?
 	C4555 expression has no effect; expected expression with side-effect.
+	C4619 #pragma warning : there is no warning number 'number'.
 	C4668 'symbol' is not defined as a preprocessor macro, replacing with 
 		  '0' for 'directives'.  
 		  Note that enabling this check causes warnings in Windows header 
@@ -310,14 +337,20 @@
    presence of empty controlled statements, e.g. 'if( foo; )' */
 
 #if defined( _MSC_VER )
+  #pragma warning( 3: 4242 )
+  #pragma warning( 3: 4255 )
   #pragma warning( 3: 4287 )
+  #pragma warning( 3: 4302 )
+  #pragma warning( 3: 4311 )
   #pragma warning( 3: 4296 )
   #pragma warning( 3: 4431 )
+  #pragma warning( 3: 4545 )
   #pragma warning( 3: 4546 )
   #pragma warning( 3: 4547 )
   #pragma warning( 3: 4548 )
   #pragma warning( 3: 4549 )
   #pragma warning( 3: 4555 )
+  #pragma warning( 3: 4619 )
   #pragma warning( 3: 4668 )
   #pragma warning( 3: 4826 )
 #endif /* Visual C++ */
@@ -413,10 +446,8 @@
   #error Need to define a Symbian target architecture type, e.g. ARM or x86
 #endif /* __SYMBIAN32__ && !( __MARM__ || __EMU_SYMBIAN_OS__ ) */
 
-/* A few rare operations are word-size-dependant, which we detect via
-   limits.h */
+/* A few rare operations are word-size-dependant */
 
-#include <limits.h>
 #if INT_MAX <= 32768L
   #define SYSTEM_16BIT
 #elif ULONG_MAX > 0xFFFFFFFFUL
@@ -447,13 +478,22 @@ typedef unsigned char		BYTE;
 #if defined( __STDC_VERSION__ ) && ( __STDC_VERSION__ >= 199901L ) && 0
   #include <stdbool.h>
   typedef bool              BOOLEAN;
-#elif defined( __WIN32__ ) || defined( __WINCE__ ) 
+#elif defined( __WIN32__ ) || defined( __WINCE__ )
   /* VC++ typedefs BOOLEAN so we need to use the preprocessor to override it */
   #define BOOLEAN			int
-#elif defined( __UCOS__ )
-  /* uC/OS-II typedefs BOOLEAN and it's probably not worth changing so we 
-     leave it as is */
-  #define BOOLEAN			int
+#elif defined( __UCOS__ ) || defined( __SMX__ )
+  /* Some OSes typedef BOOLEAN themselves so we set it as a #define, which 
+	 means that we can then work around the typedef by undefining and
+	 redefining it around the include of the OS-specific headers:
+
+		#undef BOOLEAN
+		#include <smx.h>
+		#define BOOLEAN int */
+  #if defined( __SMX__ ) && !defined( _MSC_VER )
+	typedef int				BOOLEAN
+  #else
+	#define BOOLEAN			int
+  #endif /* OS-specific BOOLEAN juggling */
 #elif defined( __Nucleus__ )
   /* Nucleus defines BOOLEAN as 'unsigned char' so we override it to be an
      int */
@@ -490,6 +530,30 @@ typedef unsigned char		BYTE;
 #ifdef __ECOS__
   #include <pkgconf/system.h>
 #endif /* __ECOS__ */
+
+/* The VxWorks SDK defines the value 'SH' (to indicate the use of SuperH 
+   CPU family) in vxCpu.h which conflicts with the 'struct SH' in ssh.h. 
+   To fix this we undefine it, this shouldn't be a problem since the define 
+   SH32 is set to the same value as SH and presumably no-one will be using 
+   the basic 20-year-old SuperH any more.
+
+   VxWorks also uses some global symbols that clash with cryptlib's ones, 
+   to resolve this we redefine the cryptlib ones to have a 'cl_' prefix */
+
+#ifdef __VxWorks__
+  /* Correct the use of the VxWorks preprocessor define 'SH' overriding 
+     'struct SH' in ssh.h */
+  #if defined( SH )
+	#undef SH
+  #endif /* SH */
+
+  /* Correct clashing global symbols in VxWorks */
+  #define setSerialNumber		cl_setSerialNumber
+  #define inflate				cl_inflate
+  #define addAction				cl_addAction
+  #define inflate_copyright		cl_inflate_copyright
+  #define zlibVersion			cl_zlibVersion
+#endif /* __VxWorks__ */
 
 /* If we're using DOS or Windows as a cross-development platform, we need 
    the OS-specific values defined initially to get the types right but don't 
@@ -691,8 +755,8 @@ typedef unsigned char		BYTE;
   #elif defined( __sh__ )
 	#define verifyVAList( x ) TRUE
   #endif /* Architecture-specific scalar va_lists */
-#elif defined( __RVCT2_1__ )
-  /* The RealView compiler has the same issue */
+#elif defined( __RVCT2_1__ ) || defined( __IAR_SYSTEMS_ICC__ )
+  /* The RealView and IAR compilers have the same issue */
   #define verifyVAList( x ) TRUE
 #endif /* Nonstandard va_list types */
 #ifndef verifyVAList
@@ -733,6 +797,17 @@ typedef unsigned char		BYTE;
   #define cryptStatusOK( status ) \
 		  __builtin_expect( ( status ) == CRYPT_OK, 1 )
 #endif /* gcc 3.x and newer */
+
+/* Nucleus has it's own functions for allocating and freeing memory, so
+   we provide wrappers for them that override the default clAlloc()/clFree()
+   mappings */
+
+#ifdef __Nucleus__ 
+  #define clAlloc( string, size )		clAllocFn( size )
+  #define clFree( string, memblock )	clFreeFn( memblock )
+  void *clAllocFn( size_t size );
+  void clFreeFn( void *memblock );
+#endif /* __Nucleus__ */
 
 /****************************************************************************
 *																			*
@@ -985,7 +1060,8 @@ typedef unsigned char		BYTE;
 	 defines it in wchar.h but then defines it differently in stddef.h, and
 	 in any case has no wchar support present */
   #if !( defined( __APPLE__ ) || defined( __MVS__ ) || \
-		 defined( __OpenBSD__ ) || defined( __PALMOS__ ) )
+		 defined( __OpenBSD__ ) || defined( __PALMOS__ ) || \
+		 defined( __SMX__ ) )
 	typedef unsigned short int wchar_t;
   #endif /* __APPLE__ */
   #define WCSIZE	( sizeof( wchar_t ) )
@@ -1005,15 +1081,15 @@ typedef unsigned char		BYTE;
   #endif /* Compiler-specific checks */
 #endif /* > 16-bit OSes */
 
-
 /* The EOL convention used when outputting text.  Technically speaking 
-   Nucleus and XMK don't use any particular EOL convention, but since the 
-   typical development environment is debug output sent to a Windows 
+   Nucleus, SMX, and XMK don't use any particular EOL convention, but since 
+   the typical development environment is debug output sent to a Windows 
    terminal emulator, we use CRLF */
 
 #if defined( __MSDOS16__ ) || defined( __MSDOS32__ ) || \
 	defined( __Nucleus__ ) || defined( __OS2__ ) || \
-	defined( __SYMBIAN32__ ) || defined( __WINDOWS__ ) || defined( __XMK__ )
+	defined( __SMX__ ) || defined( __SYMBIAN32__ ) || \
+	defined( __WINDOWS__ ) || defined( __XMK__ )
   #define EOL		"\r\n"
   #define EOL_LEN	2
 #elif ( defined( __APPLE__ ) && !defined( __MAC__ ) ) || \
@@ -1190,11 +1266,11 @@ typedef unsigned char		BYTE;
 	#define strlcat_s( s1, s1max, s2 )	strncat_s( s1, s1max, s2, _TRUNCATE )
   #else
 	#define gmTime_s						gmtime_s
-  #endif /* VC++ 2005 */
+  #endif /* VC++ >= 2005 */
 #else
   /* String functions.  The OpenBSD strlcpy()/strlcat() functions with their
      truncation semantics are quite useful so we use these as well, 
-	 overlaying them with a macro that makes them match the TR 24731 look 
+	 overlaying them with a macro that make them match the TR 24731 look 
 	 and feel */
   #define strcpy_s( s1, s1max, s2 )		strcpy( s1, s2 )
   #if defined( __UNIX__ ) && \
@@ -1236,10 +1312,19 @@ typedef unsigned char		BYTE;
 
 	#define sprintf_s					snprintf
 	#define vsprintf_s					vsnprintf
-  #endif /* VC++ 6 or below */
+  #endif /* Compiler-specific safe printf() support */
 
-  /* Misc.functions */
-  #define gmTime_s( timer, result )		gmtime( timer )
+  /* Misc.functions.  gmtime() is an ugly non-thread-safe function that runs 
+     into the same problems as gethostbyname() (see the long comment in 
+	 io/tcp.h), to deal with this as best we can we map it to the reentrant 
+	 gmtime_r() if it's available.  In addition some OSes use TLS for the
+	 result value so it's handled automatically, see the comments in 
+	 io/tcp.h for more on this */
+  #if defined( USE_THREADS ) && defined( __GLIBC__ ) && ( __GLIBC__ >= 2 ) 
+	#define gmTime_s						gmtime_r
+  #else
+	#define gmTime_s( timer, result )		gmtime( timer )
+  #endif /* USE_THREADS and libraries that provide gmtime_r() */
 #endif /* TR 24731 safe stdlib extensions */
 
 /****************************************************************************

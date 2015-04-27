@@ -30,14 +30,6 @@
 
 #define BLOBHEADER_SIZE			8
 
-/* Occasionally we need to read things into host memory from a device in a
-   manner that can't be handled by a dynBuf since the data is coming from a
-   device rather than a cryptlib object.  The following value defines the 
-   maximum size of the on-stack buffer, if the data is larger than this we 
-   dynamically allocate the buffer (this almost never occurs) */
-
-#define MAX_BUFFER_SIZE			1024
-
 #ifdef USE_CRYPTOAPI
 
 #if defined( _MSC_VER )
@@ -2043,7 +2035,6 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 										pCertContext->pbCertEncoded, 
 										pCertContext->cbCertEncoded,
 										CRYPT_CERTTYPE_CERTIFICATE );
-	createInfo.arg1 = CRYPT_CERTTYPE_CERTIFICATE;
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
@@ -2101,7 +2092,6 @@ static int getNextItemFunction( DEVICE_INFO *deviceInfo,
 							pCertChainElement->pCertContext->pbCertEncoded, 
 							pCertChainElement->pCertContext->cbCertEncoded,
 							CRYPT_CERTTYPE_CERTIFICATE );
-	createInfo.arg1 = CRYPT_CERTTYPE_CERTIFICATE;
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
@@ -2168,7 +2158,7 @@ static int rsaSetKeyInfo( CRYPTOAPI_INFO *cryptoapiInfo,
 	   all we're doing here is sending in encoded public key data for use by 
 	   objects such as certificates */
 	status = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 2,
-								 &keyDataSize, CRYPT_ALGO_RSA, 
+								 &keyDataSize, CRYPT_ALGO_RSA, 0,
 								 n, nLen, e, eLen, NULL, 0, NULL, 0 );
 	if( cryptStatusOK( status ) )
 		{
@@ -2475,7 +2465,7 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	{
 	BYTE tempBuffer[ CRYPT_MAX_PKCSIZE + 8 ], *tempPtr, *bufPtr = buffer;
-	DWORD resultLength = length;
+	DWORD resultLength;
 	int i;
 
 	/* Change the data into the little-endian order required by CryptoAPI, 
@@ -2526,12 +2516,12 @@ static int dsaSetKeyInfo( DEVICE_INFO *deviceInfo, CONTEXT_INFO *contextInfoPtr,
 	   in the middle of processing a message that does this on completion, 
 	   all we're doing here is sending in encoded public key data for use by 
 	   objects such as certificates */
-	cryptStatus = keyDataSize = writeFlatPublicKey( NULL, 0, CRYPT_ALGO_DSA, 
+	cryptStatus = keyDataSize = writeFlatPublicKey( NULL, 0, CRYPT_ALGO_DSA, 0,
 													p, pLen, q, qLen, 
 													g, gLen, y, yLen );
 	if( !cryptStatusError( cryptStatus ) )
 		cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 2,
-										  CRYPT_ALGO_DSA, p, pLen, q, qLen, 
+										  CRYPT_ALGO_DSA, 0, p, pLen, q, qLen, 
 										  g, gLen, y, yLen );
 	if( !cryptStatusError( cryptStatus ) )
 		{
@@ -3427,9 +3417,7 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 									   &mechanismInfo[ i ], NULL );
 		if( newCapability == NULL )
 			break;
-		REQUIRES( sanityCheckCapability( newCapability, 
-								isPkcAlgo( newCapability->cryptAlgo ) ? \
-								TRUE : FALSE ) );
+		REQUIRES( sanityCheckCapability( newCapability ) );
 		if( ( newCapabilityList = \
 						clAlloc( "getCapabilities", \
 								 sizeof( CAPABILITY_INFO_LIST ) ) ) == NULL )

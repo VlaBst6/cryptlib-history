@@ -254,19 +254,19 @@ static int SOCKET_API my_getaddrinfo( IN_STRING const char *nodename,
 	static_assert( sizeof( in_addr_t ) == IP_ADDR_SIZE, \
 				   "in_addr_t size" );
 
-	REQUIRES( nodename != NULL || ( hints->ai_flags & AI_PASSIVE ) );
-	REQUIRES( servname != NULL );
-
-	/* Clear return value */
-	*res = NULL;
+	ANALYSER_HINT_STRING( nodename );
+	ANALYSER_HINT_STRING( servname );
 
 	/* Perform basic error checking.  Since this is supposed to be an 
 	   emulation of a (normally) built-in function we don't perform any 
 	   REQUIRES()-style checking but only apply the basic checks that the 
 	   normal built-in form does */
-	if( ( nodename == NULL && !( hints->ai_flags & AI_PASSIVE ) ) || \
-		servname == NULL || hints == NULL || res == NULL )
+	if( servname == NULL || hints == NULL || res == NULL || \
+		( nodename == NULL && !( hints->ai_flags & AI_PASSIVE ) ) )
 		return( -1 );
+
+	/* Clear return value */
+	*res = NULL;
 
 	/* Convert the text-string port number into a numeric value */
 	status = strGetNumeric( servname, strlen( servname ), &port, 1, 65535 );
@@ -401,6 +401,47 @@ static int SOCKET_API my_getnameinfo( IN_BUFFER( salen ) \
 	}
 #endif /* !IPv6 || __WINDOWS__ */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int getAddrInfoError( INOUT NET_STREAM_INFO *netStream, 
+							 const int errorCode,
+							 IN_ERROR const int status )
+	{
+#ifdef USE_ERRMSGS
+  #ifdef __WINDOWS__
+	BYTE errorStringBuffer[ 1024 + 8 ];
+	const char *errorString = errorStringBuffer;
+	int errorStringLen;
+  #else
+	const char *errorString = gai_strerror( errorCode );
+	const int errorStringLen = strlen( errorString );
+  #endif /* __WINDOWS__ */
+
+	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
+
+	REQUIRES( cryptStatusError( status ) );
+
+	/* Get the text string describing the error that occurred */
+  #ifdef __WINDOWS__
+	errorStringLen = FormatMessageA( FORMAT_MESSAGE_FROM_SYSTEM | \
+									 FORMAT_MESSAGE_IGNORE_INSERTS | \
+									 FORMAT_MESSAGE_MAX_WIDTH_MASK, NULL,
+									 errorCode,
+									 MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
+									 errorStringBuffer, 1024, NULL );
+	if( errorStringLen <= 0 )
+		{
+		memcpy( errorStringBuffer, "<<<Unknown>>>", 13 );
+		errorStringLen = 13;
+		}
+  #endif /* __WINDOWS__ */
+	setErrorString( NETSTREAM_ERRINFO, errorString, errorStringLen );
+#endif /* USE_ERRMSGS */
+
+	/* Make the error status fatal and exit */
+	netStream->persistentStatus = status;
+	return( status );
+	}
+
 /****************************************************************************
 *																			*
 *						 			DNS Interface							*
@@ -418,6 +459,7 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 	{
 	struct addrinfo hints;
 	char nameBuffer[ MAX_DNS_SIZE + 8 ], portBuffer[ 16 + 8 ];
+	int errorCode;
 
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 	assert( isWritePtr( addrInfoPtrPtr, sizeof( struct addrinfo * ) ) );
@@ -547,7 +589,8 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 		}
 #endif /* 1 */
 	hints.ai_socktype = SOCK_STREAM;
-	if( getaddrinfo( name, portBuffer, &hints, addrInfoPtrPtr ) )
+	errorCode = getaddrinfo( name, portBuffer, &hints, addrInfoPtrPtr );
+	if( errorCode != 0 )
 		{
 #if 0
 		if( !forceIPv4 )
@@ -560,7 +603,8 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 		if( getaddrinfo( name, portBuffer, &hints, addrInfoPtrPtr ) )
 			return( getHostError( netStream, CRYPT_ERROR_OPEN ) );
 #else
-		return( getHostError( netStream, CRYPT_ERROR_OPEN ) );
+		return( getAddrInfoError( netStream, errorCode, 
+								  CRYPT_ERROR_OPEN ) );
 #endif /* 0 */
 		}
 	return( CRYPT_OK );

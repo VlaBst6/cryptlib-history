@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib De-enveloping Routines						*
-*					 Copyright Peter Gutmann 1996-2009						*
+*					 Copyright Peter Gutmann 1996-2013						*
 *																			*
 ****************************************************************************/
 
@@ -85,7 +85,7 @@ static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 		envelopeInfoPtr->bufPos < 0 || \
 		envelopeInfoPtr->bufPos > envelopeInfoPtr->bufSize || \
 		envelopeInfoPtr->bufSize < MIN_BUFFER_SIZE || \
-		envelopeInfoPtr->bufSize >= MAX_INTLENGTH )
+		envelopeInfoPtr->bufSize >= MAX_BUFFER_SIZE )
 		return( FALSE );
 
 	return( TRUE );
@@ -116,8 +116,8 @@ static int initExternalContentInfo( CONTENT_LIST *contentListItem,
 
 	contentListItem->envInfo = CRYPT_ENVINFO_SESSIONKEY;
 
-	/* If it's authenticated encrypted data, remember the encryption and MAC 
-	   algorithm parameters */
+	/* If it's authenticated encrypted data, remember the optional KDF and 
+	   encryption and MAC algorithm parameters */
 	if( contentType == CONTENT_AUTHENC )
 		{
 		CONTENT_AUTHENC_INFO *authEncInfo = &contentListItem->clAuthEncInfo;
@@ -128,6 +128,12 @@ static int initExternalContentInfo( CONTENT_LIST *contentListItem,
 		memcpy( authEncInfo->authEncParamData, queryInfo->authEncParamData,
 				queryInfo->authEncParamLength );
 		authEncInfo->authEncParamLength = queryInfo->authEncParamLength;
+		if( queryInfo->kdfParamLength > 0 )
+			{
+			authEncInfo->kdfData = authEncInfo->authEncParamData + \
+								   queryInfo->kdfParamStart;
+			authEncInfo->kdfDataLength = queryInfo->kdfParamLength;
+			}
 		authEncInfo->encParamData = authEncInfo->authEncParamData + \
 									queryInfo->encParamStart;
 		authEncInfo->encParamDataLength = queryInfo->encParamLength;
@@ -586,7 +592,7 @@ static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 								  &hashAlgo, CRYPT_CTXINFO_ALGO );
-	if( cryptStatusOK( status ) && isHashExtAlgo( hashAlgo ) )
+	if( cryptStatusOK( status ) && isHashMacExtAlgo( hashAlgo ) )
 		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 								  &hashAlgoParam, CRYPT_CTXINFO_BLOCKSIZE );
 	if( cryptStatusError( status ) )
@@ -604,7 +610,7 @@ static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		status = krnlSendMessage( actionListPtr->iCryptHandle,
 								  IMESSAGE_GETATTRIBUTE, &actionHashAlgo, 
 								  CRYPT_CTXINFO_ALGO );
-		if( cryptStatusOK( status ) && isHashExtAlgo( actionHashAlgo ) )
+		if( cryptStatusOK( status ) && isHashMacExtAlgo( actionHashAlgo ) )
 			status = krnlSendMessage( actionListPtr->iCryptHandle, 
 									  IMESSAGE_GETATTRIBUTE, &actionHashAlgoParam, 
 									  CRYPT_CTXINFO_BLOCKSIZE );
@@ -679,6 +685,29 @@ static int processPayloadEOCs( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	return( CRYPT_OK );
 	}
 
+/* Check for a possible soft error when reading data.  This is necessary 
+   because if we're performing a standard data push then the caller expects 
+   to get a CRYPT_OK status with a bytes-copied count, but if they've got as 
+   far as the trailer data then they'll get a CRYPT_ERROR_UNDERFLOW unless 
+   we special-case the handling of the return status.  This is complicated 
+   by the fact that we have to carefully distinguish a CRYPT_ERROR_UNDERFLOW 
+   due to running out of input from a CRYPT_ERROR_UNDERFLOW incurred for any 
+   other reason such as parsing the input data */
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkSoftError( IN_ERROR const int status, 
+							   const BOOLEAN isFlush )
+	{
+	REQUIRES_B( cryptStatusError( status ) );
+
+	/* If it's not a flush and we've run out of data, report it as a soft 
+	   error */
+	if( !isFlush && status == CRYPT_ERROR_UNDERFLOW )
+		return( TRUE );
+		
+	return( FALSE );
+	}
+
 /* Complete processing of the authenticated payload for hashed, MACd, 
    signed, and authenticated encrypted data */
 
@@ -711,10 +740,11 @@ static int completePayloadProcessing( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 /* Process the signed data trailer */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int processSignedTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
 								 INOUT STREAM *stream, 
-								 INOUT_ENUM( DEENV_STATE ) DEENV_STATE *state )
+								 INOUT_ENUM( DEENV_STATE ) DEENV_STATE *state,
+								 const BOOLEAN isFlush )
 	{
 	DEENV_STATE newState;
 	int tag, status;
@@ -726,12 +756,18 @@ static int processSignedTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* Read the SignedData EOC's if necessary */
 	status = processPayloadEOCs( envelopeInfoPtr, stream );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		return( checkSoftError( status, isFlush ) ? \
+				OK_SPECIAL : status );
+		}
 
 	/* Check whether there's a certificate chain to follow */
-	tag = peekTag( stream );
-	if( cryptStatusError( tag ) )
-		return( tag );
+	status = tag = peekTag( stream );
+	if( cryptStatusError( status ) )
+		{
+		return( checkSoftError( status, isFlush ) ? \
+				OK_SPECIAL : status );
+		}
 	newState = ( tag == MAKE_CTAG( 0 ) ) ? \
 			   DEENVSTATE_CERTSET : DEENVSTATE_SET_SIG;
 
@@ -756,7 +792,8 @@ static int processSignedTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int processMacTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
 							  INOUT STREAM *stream, 
-							  OUT_BOOL BOOLEAN *failedMAC )
+							  OUT_BOOL BOOLEAN *failedMAC,
+							  const BOOLEAN isFlush )
 	{
 	ACTION_LIST *actionListPtr;
 	MESSAGE_DATA msgData;
@@ -773,13 +810,19 @@ static int processMacTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* Read the AuthenticatedData EOCs if necessary */
 	status = processPayloadEOCs( envelopeInfoPtr, stream );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		return( checkSoftError( status, isFlush ) ? \
+				OK_SPECIAL : status );
+		}
 
 	/* Read the MAC value that follows the payload */
 	status = readOctetString( stream, hash, &hashSize, 16, 
 							  CRYPT_MAX_HASHSIZE );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		return( checkSoftError( status, isFlush ) ? \
+				OK_SPECIAL : status );
+		}
 
 	/* Complete the payload processing and compare the read MAC value with 
 	   the calculated one */
@@ -814,7 +857,8 @@ static int processMacTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int processEOCTrailer( const ENVELOPE_INFO *envelopeInfoPtr,
-							  INOUT STREAM *stream )
+							  INOUT STREAM *stream,
+							  const BOOLEAN isFlush )
 	{
 	int noEOCs, i;
 
@@ -865,7 +909,10 @@ static int processEOCTrailer( const ENVELOPE_INFO *envelopeInfoPtr,
 		{
 		const int value = checkEOC( stream );
 		if( cryptStatusError( value ) )
-			return( value );
+			{
+			return( checkSoftError( value, isFlush ) ? \
+					OK_SPECIAL : value );
+			}
 		if( value == FALSE )
 			return( CRYPT_ERROR_BADDATA );
 		}
@@ -1183,6 +1230,15 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 														  &stream );
 			if( cryptStatusError( status ) )
 				{
+				/* If we get a CRYPT_ERROR_SIGNATURE at this point then it's
+				   because we're using authenticated encryption and data
+				   corruption was detected via a mechanism like a block
+				   padding check failure long before we get to the MAC 
+				   verification stage, in which case we pass the error on up
+				   unaltered */
+				if( status == CRYPT_ERROR_SIGNATURE )
+					break;
+
 				setErrorString( ENVELOPE_ERRINFO, 
 								"Couldn't synchronise envelope state prior "
 								"to data payload processing", 68 );
@@ -1206,13 +1262,13 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		}
 	envelopeInfoPtr->deenvState = state;
 
-	ENSURES( streamPos >= 0 && streamPos < MAX_INTLENGTH && \
+	ENSURES( streamPos >= 0 && streamPos < MAX_BUFFER_SIZE && \
 			 envelopeInfoPtr->bufPos - streamPos >= 0 );
 
 	/* Consume the input that we've processed so far by moving everything 
 	   past the current position down to the start of the envelope buffer */
 	remainder = envelopeInfoPtr->bufPos - streamPos;
-	REQUIRES( remainder >= 0 && remainder < MAX_INTLENGTH && \
+	REQUIRES( remainder >= 0 && remainder < MAX_BUFFER_SIZE && \
 			  streamPos + remainder <= envelopeInfoPtr->bufSize );
 	if( remainder > 0 && streamPos > 0 )
 		{
@@ -1262,7 +1318,10 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* If there's not enough data left in the stream to do anything, don't 
 	   try and go any further */
 	if( envelopeInfoPtr->bufPos - envelopeInfoPtr->dataLeft < 2 )
-		return( CRYPT_ERROR_UNDERFLOW );
+		{
+		return( checkSoftError( CRYPT_ERROR_UNDERFLOW, isFlush ) ? \
+				OK_SPECIAL : CRYPT_ERROR_UNDERFLOW );
+		}
 
 	/* Start reading the trailer data from the end of the payload */
 	sMemConnect( &stream, envelopeInfoPtr->buffer + envelopeInfoPtr->dataLeft,
@@ -1276,7 +1335,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			{
 			case ACTION_SIGN:
 				status = processSignedTrailer( envelopeInfoPtr, &stream, 
-											   &state );
+											   &state, isFlush );
 				break;
 
 			case ACTION_CRYPT:
@@ -1309,7 +1368,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				   further as we could for a pure MAC failure with the data-
 				   processing state still OK */
 				status = processMacTrailer( envelopeInfoPtr, &stream, 
-											&failedMAC );
+											&failedMAC, isFlush );
 				if( cryptStatusError( status ) )
 					{
 					if( isFlush || status == CRYPT_ERROR_BADDATA )
@@ -1331,6 +1390,12 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
+			if( status == OK_SPECIAL )
+				{
+				/* If we got an explicit soft-fail error status, let the 
+				   caller know */
+				return( status );
+				}
 			retExt( status,
 					( status, ENVELOPE_ERRINFO,
 					  "Invalid CMS signed/MACd data trailer" ) );
@@ -1361,9 +1426,20 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			status = getStreamObjectLength( &stream, &certSetLength );
 			if( cryptStatusError( status ) )
 				{
+				if( checkSoftError( status, isFlush ) )
+					{
+					status = OK_SPECIAL;
+					break;
+					}
 				setErrorString( ENVELOPE_ERRINFO, 
 								"Invalid signing certificate chain header", 
 								40 );
+				break;
+				}
+			if( sMemDataLeft( &stream ) < certSetLength && \
+				checkSoftError( CRYPT_ERROR_UNDERFLOW, isFlush ) )
+				{
+				status = OK_SPECIAL;
 				break;
 				}
 			if( envelopeInfoPtr->auxBuffer == NULL )
@@ -1401,6 +1477,11 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			status = readSetI( &stream, &setLength );
 			if( cryptStatusError( status ) )
 				{
+				if( checkSoftError( status, isFlush ) )
+					{
+					status = OK_SPECIAL;
+					break;
+					}
 				setErrorString( ENVELOPE_ERRINFO, 
 								"Invalid SET OF Signature header", 31 );
 				break;
@@ -1419,6 +1500,17 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		if( state == DEENVSTATE_SIG )
 			{
 			int contentItemLength;
+
+			/* If it's a standard data push, make sure that there's enough 
+			   data left to continue.  Checking at this point means that we 
+			   can provide special-case soft-error handling before we try 
+			   and read the signature data in addContentListItem() */
+			if( sMemDataLeft( &stream ) < envelopeInfoPtr->hdrSetLength && \
+				checkSoftError( CRYPT_ERROR_UNDERFLOW, isFlush ) )
+				{
+				status = OK_SPECIAL;
+				break;
+				}
 
 			/* Add the object to the content information list */
 			status = addContentListItem( envelopeInfoPtr, &stream, NULL,
@@ -1467,9 +1559,17 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		/* Handle end-of-contents octets */
 		if( state == DEENVSTATE_EOC )
 			{
-			status = processEOCTrailer( envelopeInfoPtr, &stream );
+			status = processEOCTrailer( envelopeInfoPtr, &stream, isFlush );
 			if( cryptStatusError( status ) )
 				{
+				if( status == OK_SPECIAL )
+					{
+					/* If we got an explicit soft-fail error status then we 
+					   treat it as a standard data push with status == 
+					   CRYPT_OK and the byte count indicating how much data 
+					   was copied in */
+					break;
+					}
 				setErrorString( ENVELOPE_ERRINFO, 
 								"Invalid CMS EOC trailer", 23 );
 				break;
@@ -1493,7 +1593,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		return( CRYPT_ERROR_BADDATA );
 		}
 	envelopeInfoPtr->deenvState = state;
-	ENSURES( streamPos >= 0 && streamPos < MAX_INTLENGTH );
+	ENSURES( streamPos >= 0 && streamPos < MAX_BUFFER_SIZE );
 
 	/* Consume the input that we've processed so far by moving everything 
 	   past the current position down to the start of the memory buffer:
@@ -1509,7 +1609,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 					streamPos */
 	remainder = envelopeInfoPtr->bufPos - \
 				( envelopeInfoPtr->dataLeft + streamPos );
-	REQUIRES( remainder >= 0 && remainder < MAX_INTLENGTH && \
+	REQUIRES( remainder >= 0 && remainder < MAX_BUFFER_SIZE && \
 			  envelopeInfoPtr->dataLeft + streamPos + \
 					remainder <= envelopeInfoPtr->bufPos );
 	if( remainder > 0 && streamPos > 0 )
@@ -1528,17 +1628,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		return( CRYPT_ERROR_SIGNATURE );
 		}
 	if( cryptStatusError( status ) )
-		{
-		/* If we got an underflow error but there's payload data left to be 
-		   copied out, convert the status to OK since the caller can still
-		   continue before they need to copy in more data.  Since there's
-		   more data left to process we return OK_SPECIAL to tell the 
-		   calling function not to perform any cleanup */
-		if( status == CRYPT_ERROR_UNDERFLOW && envelopeInfoPtr->dataLeft > 0 )
-			return( OK_SPECIAL );
-
 		return( status );
-		}
 
 	/* If all went OK but we're still not out of the header information, 
 	   return an underflow error */

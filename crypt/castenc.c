@@ -66,7 +66,16 @@
   #include "crypt/castlcl.h"
 #endif /* Compiler-specific includes */
 
-#ifndef USE_ASM
+#ifdef USE_CAST
+
+#ifdef USE_ASM
+
+#if defined( _MSC_VER )	
+  /* Pull in the CAST asm code packaged into a .lib - pcg */
+  #pragma comment( lib, "crypt/c-win32.lib" )
+#endif /* _MSC_VER */
+
+#else
 
 void CAST_encrypt(CAST_LONG *data, CAST_KEY *key)
 	{
@@ -214,3 +223,4 @@ void CAST_cbc_encrypt(const unsigned char *in, unsigned char *out, long length,
 	tin[0]=tin[1]=0;
 	}
 #endif /* USE_ASM */
+#endif /* USE_CAST */

@@ -66,7 +66,16 @@
   #include "crypt/rc5locl.h"
 #endif /* Compiler-specific includes */
 
-#ifndef USE_ASM
+#ifdef USE_RC5
+
+#ifdef USE_ASM
+
+#if defined( _MSC_VER )	
+  /* Pull in the RC5 asm code packaged into a .lib - pcg */
+  #pragma comment( lib, "crypt/r5-win32.lib" )
+#endif /* VC++ */
+
+#else
 
 void RC5_32_cbc_encrypt(const unsigned char *in, unsigned char *out,
 			long length, RC5_32_KEY *ks, unsigned char *iv,
@@ -221,3 +230,4 @@ void RC5_32_decrypt(unsigned long *d, RC5_32_KEY *key)
 	d[1]=b-s[1];
 	}
 #endif /* USE_ASM */
+#endif /* USE_RC5 */

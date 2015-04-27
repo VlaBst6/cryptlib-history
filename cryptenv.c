@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Enveloping Routines						*
-*					  Copyright Peter Gutmann 1996-2011						*
+*					  Copyright Peter Gutmann 1996-2012						*
 *																			*
 ****************************************************************************/
 
@@ -44,8 +44,8 @@
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int envelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
 						 IN_BUFFER_OPT( length ) const void *buffer,
-						 IN_LENGTH_Z const int length, 
-						 OUT_LENGTH_Z int *bytesCopied )
+						 IN_DATALENGTH_Z const int length, 
+						 OUT_DATALENGTH_Z int *bytesCopied )
 	{
 	int status;
 
@@ -55,7 +55,7 @@ static int envelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( bytesCopied, sizeof( int ) ) );
 
 	REQUIRES( ( buffer == NULL && length == 0 ) || \
-			  ( buffer != NULL && length > 0 && length < MAX_INTLENGTH ) );
+			  ( buffer != NULL && length > 0 && length < MAX_BUFFER_SIZE ) );
 
 	/* Clear return value */
 	*bytesCopied = 0;
@@ -150,8 +150,8 @@ static int envelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
 						   IN_BUFFER_OPT( length ) const void *buffer,
-						   IN_LENGTH_Z const int length, 
-						   OUT_LENGTH_Z int *bytesCopied )
+						   IN_DATALENGTH const int length, 
+						   OUT_DATALENGTH_Z int *bytesCopied )
 	{
 	BYTE *bufPtr = ( BYTE * ) buffer;
 	int bytesIn = length, status = CRYPT_OK;
@@ -162,7 +162,7 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( bytesCopied, sizeof( int ) ) );
 
 	REQUIRES( ( buffer == NULL && length == 0 ) || \
-			  ( buffer != NULL && length > 0 && length < MAX_INTLENGTH ) );
+			  ( buffer != NULL && length > 0 && length < MAX_BUFFER_SIZE ) );
 
 	/* Clear return value */
 	*bytesCopied = 0;
@@ -183,10 +183,10 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				return( CRYPT_ERROR_MEMORY );
 			memset( envelopeInfoPtr->buffer, 0, envelopeInfoPtr->bufSize );
 
-#ifdef USE_PGP
 			/* Try and determine what the data format being used is.  If it 
 			   looks like PGP data, try and process it as such, otherwise 
 			   default to PKCS #7/CMS/S/MIME */
+#ifdef USE_PGP
 			if( length > 0 && ( bufPtr[ 0 ] & 0x80 ) )
 				{
 				/* When we initially created the envelope we defaulted to CMS
@@ -195,7 +195,18 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				envelopeInfoPtr->type = CRYPT_FORMAT_PGP;
 				initPGPDeenveloping( envelopeInfoPtr );
 				}
+			else
 #endif /* USE_PGP */
+				{
+				/* The distinction between CRYPT_FORMAT_CRYPTLIB, 
+				   CRYPT_FORMAT_PKCS7/CRYPT_FORMAT_CMS, and 
+				   CRYPT_FORMAT_SMIME is only necessary when enveloping
+				   because it affects the enveloping semantics (for
+				   example whether we use issuerAndSerialNumber or
+				   keyIdentifier to identify keys), so we identify all
+				   PKCS #7/CMS/whatever envelopes as CRYPT_FORMAT_CMS */
+				envelopeInfoPtr->type = CRYPT_FORMAT_CMS;
+				}
 			}
 
 		/* Since we're processing out-of-band information, just copy it in
@@ -348,13 +359,19 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				}
 			}
 
-		/* Process the postamble.  During this processing we can encounter 
-		   two special types of recoverable error, CRYPT_ERROR_UNDERFLOW (we 
-		   need more data to continue) or OK_SPECIAL (we processed all of 
-		   the data but there's out-of-band information still to go), if 
-		   it's one of these then we don't treat it as a standard error */
+		/* Process the postamble.  Note that we need to check the caller-
+		   supplied length value rather than the local bytesIn value to 
+		   determine whether this is a flush, since bytesIn is adjusted as 
+		   data is consumed and may have reached zero by the time we get 
+		   here.
+		
+		   During this processing we can encounter two special types of 
+		   recoverable error, CRYPT_ERROR_UNDERFLOW (we need more data to 
+		   continue) or OK_SPECIAL (we processed all of the data but there's 
+		   out-of-band information still to go).  If it's one of these then 
+		   we don't treat it as a standard error */
 		status = envelopeInfoPtr->processPostambleFunction( envelopeInfoPtr,
-										( bytesIn <= 0 ) ? TRUE : FALSE );
+										( length <= 0 ) ? TRUE : FALSE );
 		if( cryptStatusError( status ) && status != OK_SPECIAL )
 			{
 			if( !isRecoverableError( status ) )
@@ -451,8 +468,8 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int envelopePop( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
 						OUT_BUFFER( length, *bytesCopied ) void *buffer,
-						IN_LENGTH const int length, 
-						OUT_LENGTH_Z int *bytesCopied )
+						IN_DATALENGTH const int length, 
+						OUT_DATALENGTH_Z int *bytesCopied )
 	{
 	int status;
 
@@ -460,7 +477,7 @@ static int envelopePop( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( buffer, length ) );
 	assert( isWritePtr( bytesCopied, sizeof( int ) ) );
 
-	REQUIRES( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES( length > 0 && length < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	*bytesCopied = 0;
@@ -510,8 +527,8 @@ static int envelopePop( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int deenvelopePop( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
 						  OUT_BUFFER( length, *bytesCopied ) void *buffer,
-						  IN_LENGTH const int length, 
-						  OUT_LENGTH_Z int *bytesCopied )
+						  IN_DATALENGTH const int length, 
+						  OUT_DATALENGTH_Z int *bytesCopied )
 	{
 	int status;
 
@@ -519,7 +536,7 @@ static int deenvelopePop( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( buffer, length ) );
 	assert( isWritePtr( bytesCopied, sizeof( int ) ) );
 
-	REQUIRES( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES( length > 0 && length < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	*bytesCopied = 0;
@@ -757,7 +774,7 @@ static int envelopeMessageFunction( INOUT TYPECAST( ENVELOPE_INFO * ) \
 
 		REQUIRES( ( msgData->data == NULL && msgData->length == 0 ) || \
 				  ( msgData->data != NULL && \
-				    msgData->length > 0 && msgData->length < MAX_INTLENGTH ) );
+				    msgData->length > 0 && msgData->length < MAX_BUFFER_SIZE ) );
 
 		/* Unless we're told otherwise, we've copied zero bytes */
 		msgData->length = 0;
@@ -843,7 +860,7 @@ static int envelopeMessageFunction( INOUT TYPECAST( ENVELOPE_INFO * ) \
 
 		assert( isWritePtr( msgData->data, msgData->length ) );
 
-		REQUIRES( msgData->length > 0 && msgData->length < MAX_INTLENGTH );
+		REQUIRES( msgData->length > 0 && msgData->length < MAX_BUFFER_SIZE );
 
 		/* Unless we're told otherwise, we've copied zero bytes */
 		msgData->length = 0;

@@ -59,7 +59,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:windows /dll /machine:I386
-# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /machine:I386 /out:".\binaries32_vc6/cl32.dll"
+# ADD LINK32 kernel32.lib user32.lib advapi32.lib netapi32.lib /nologo /subsystem:windows /dll /pdb:none /machine:I386 /out:".\binaries32_vc6/cl32.dll"
 
 !ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
 
@@ -78,7 +78,7 @@ F90=fl32.exe
 # ADD BASE F90 /I "Debug/"
 # ADD F90 /I "Debug/"
 # ADD BASE CPP /nologo /MTd /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /YX /c
-# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /FD /c
+# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /D "CONFIG_FUZZ_INJECT" /FD /c
 # SUBTRACT CPP /Fr /YX /Yc /Yu
 # ADD BASE MTL /nologo /D "_DEBUG" /win32
 # ADD MTL /nologo /D "_DEBUG" /win32
@@ -90,7 +90,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:windows /dll /debug /machine:I386
-# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries32_vc6/cl32.dll"
+# ADD LINK32 kernel32.lib user32.lib advapi32.lib netapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries32_vc6/cl32.dll"
 
 !ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
 
@@ -136,8 +136,8 @@ LINK32=link.exe
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 1
-# PROP Output_Dir "Crosscompile"
-# PROP Intermediate_Dir "Crosscompile"
+# PROP Output_Dir "binaries_crosscompile"
+# PROP Intermediate_Dir "binaries_crosscompile"
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 F90=fl32.exe
@@ -145,7 +145,7 @@ F90=fl32.exe
 # ADD F90 /I "Debug/"
 # ADD BASE CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /D "NO_ASM" /FD /c
 # SUBTRACT BASE CPP /Fr /YX
-# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /I ".\docs\\" /D "__i386__" /D "NO_ASM" /D "CROSSCOMPILE" /FD /c
+# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I "./" /I "./embedded/arinc653" /D "__i386__" /D "NO_ASM" /D "CROSSCOMPILE" /D "CONFIG_RANDSEED" /FD /c
 # SUBTRACT CPP /Fr /YX
 # ADD BASE MTL /nologo /D "_DEBUG" /win32
 # SUBTRACT BASE MTL /mktyplib203
@@ -184,10 +184,6 @@ SOURCE=.\bn\bn_asm.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\bn\bn_ctx.c
-# End Source File
-# Begin Source File
-
 SOURCE=.\bn\bn_div.c
 # End Source File
 # Begin Source File
@@ -201,10 +197,6 @@ SOURCE=.\bn\bn_exp2.c
 # Begin Source File
 
 SOURCE=.\bn\bn_gcd.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\bn\bn_lib.c
 # End Source File
 # Begin Source File
 
@@ -341,6 +333,10 @@ SOURCE=.\cert\comp_gets.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\cert\comp_pkiu.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\cert\comp_set.c
 # End Source File
 # Begin Source File
@@ -426,6 +422,10 @@ SOURCE=.\context\ctx_attr.c
 # Begin Source File
 
 SOURCE=.\context\ctx_bf.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\context\ctx_bn.c
 # End Source File
 # Begin Source File
 
@@ -521,7 +521,11 @@ SOURCE=.\context\key_id.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\context\key_rd.c
+SOURCE=.\context\key_rdpri.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\context\key_rdpub.c
 # End Source File
 # Begin Source File
 
@@ -677,27 +681,6 @@ SOURCE=.\crypt\sha2.c
 # End Source File
 # Begin Source File
 
-SOURCE=".\crypt\s1-win32.obj"
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Crosscompile"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
-# End Source File
-# Begin Source File
-
 SOURCE=".\crypt\d-win32.obj"
 
 !IF  "$(CFG)" == "Crypt32 - Win32 Release"
@@ -719,133 +702,7 @@ SOURCE=".\crypt\d-win32.obj"
 # End Source File
 # Begin Source File
 
-SOURCE=".\crypt\m5-win32.obj"
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Crosscompile"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
-# End Source File
-# Begin Source File
-
-SOURCE=".\crypt\r4-win32.obj"
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Crosscompile"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
-# End Source File
-# Begin Source File
-
-SOURCE=".\crypt\r5-win32.obj"
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Crosscompile"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
-# End Source File
-# Begin Source File
-
-SOURCE=".\crypt\rm-win32.obj"
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Crosscompile"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
-# End Source File
-# Begin Source File
-
-SOURCE=".\crypt\b-win32.obj"
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Crosscompile"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
-# End Source File
-# Begin Source File
-
-SOURCE=.\crypt\aescrypt2.obj
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Crosscompile"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
-# End Source File
-# Begin Source File
-
-SOURCE=".\crypt\c-win32.obj"
+SOURCE=.\crypt\aescryptx86.obj
 # End Source File
 # End Group
 # Begin Group "Devices"
@@ -1438,6 +1295,10 @@ SOURCE=.\session\sess_rw.c
 
 SOURCE=.\session\session.c
 # End Source File
+# Begin Source File
+
+SOURCE=.\session\sshl_dh.c
+# End Source File
 # End Group
 # Begin Group "Sessions - SSH"
 
@@ -1445,10 +1306,6 @@ SOURCE=.\session\session.c
 # Begin Source File
 
 SOURCE=.\session\ssh.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\session\ssh1.c
 # End Source File
 # Begin Source File
 
@@ -1743,7 +1600,7 @@ SOURCE=.\device\hardware.h
 SOURCE=.\device\pkcs11_api.h
 # End Source File
 # End Group
-# Begin Group "Encode/Decode - Folder"
+# Begin Group "Encode/Decode - Headers"
 
 # PROP Default_Filter ""
 # Begin Source File
@@ -1839,6 +1696,38 @@ SOURCE=.\keyset\pkcs12.h
 SOURCE=.\keyset\pkcs15.h
 # End Source File
 # End Group
+# Begin Group "Misc - Headers"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\misc\analyse.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\config.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\consts.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\debug.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\fault.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\int_api.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\os_spec.h
+# End Source File
+# End Group
 # Begin Group "Sessions - Headers"
 
 # PROP Default_Filter ""
@@ -1877,18 +1766,6 @@ SOURCE=.\session\ssl.h
 # End Group
 # Begin Source File
 
-SOURCE=.\misc\analyse.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\config.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\consts.h
-# End Source File
-# Begin Source File
-
 SOURCE=.\context\context.h
 # End Source File
 # Begin Source File
@@ -1901,23 +1778,11 @@ SOURCE=.\cryptlib.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\misc\debug.h
-# End Source File
-# Begin Source File
-
 SOURCE=.\envelope\envelope.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\misc\int_api.h
-# End Source File
-# Begin Source File
-
 SOURCE=.\mechs\mech.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\os_spec.h
 # End Source File
 # Begin Source File
 

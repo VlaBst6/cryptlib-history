@@ -38,7 +38,7 @@
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int calculatePubkeyStorage( const PKCS15_INFO *pkcs15infoPtr,
-								   OUT_PTR void **newPubKeyDataPtr, 
+								   INOUT_PTR void **newPubKeyDataPtr, 
 								   OUT_LENGTH_SHORT_Z int *newPubKeyDataSize, 
 								   IN_LENGTH_SHORT const int pubKeySize,
 								   IN_LENGTH_SHORT const int pubKeyAttributeSize,
@@ -62,7 +62,8 @@ static int calculatePubkeyStorage( const PKCS15_INFO *pkcs15infoPtr,
 								sizeofObject( \
 									sizeofObject( pubKeySize ) + \
 									extraDataSize ) ) );
-	ENSURES( *newPubKeyDataSize > 0 && *newPubKeyDataSize < MAX_INTLENGTH );
+	ENSURES( *newPubKeyDataSize > 0 && \
+			 *newPubKeyDataSize < MAX_BUFFER_SIZE );
 
 	/* If the new data will fit into the existing storage, we're done */
 	if( *newPubKeyDataSize <= pkcs15infoPtr->pubKeyDataSize )
@@ -79,7 +80,7 @@ static int calculatePubkeyStorage( const PKCS15_INFO *pkcs15infoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int calculateCertStorage( const PKCS15_INFO *pkcs15infoPtr,
-								 OUT_PTR void **newCertDataPtr, 
+								 INOUT_PTR void **newCertDataPtr,
 								 OUT_LENGTH_SHORT_Z int *newCertDataSize,
 								 IN_LENGTH_SHORT const int certAttributeSize,
 								 IN_LENGTH_SHORT const int certSize )
@@ -105,7 +106,7 @@ static int calculateCertStorage( const PKCS15_INFO *pkcs15infoPtr,
 									 sizeofObject( \
 									   sizeofObject( certSize ) ) );
 #endif /* USE_PKCS15V12_FORM */
-	ENSURES( *newCertDataSize > 0 && *newCertDataSize < MAX_INTLENGTH );
+	ENSURES( *newCertDataSize > 0 && *newCertDataSize < MAX_BUFFER_SIZE );
 
 	/* If the new data will fit into the existing storage, we're done */
 	if( *newCertDataSize <= pkcs15infoPtr->certDataSize )

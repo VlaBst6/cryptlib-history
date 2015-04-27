@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Internal API							*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2012					*
 *																			*
 ****************************************************************************/
 
@@ -167,7 +167,7 @@ BOOLEAN algoAvailable( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
 /* For a given algorithm pair, check whether the first is stronger than the
    second.  For hashes the order is:
 
-	SHA2 > RIPEMD160 > SHA-1 > all others */
+	SNAng > SHA2 > RIPEMD160 > SHA-1 > all others */
 
 CHECK_RETVAL_BOOL \
 BOOLEAN isStrongerHash( IN_ALGO const CRYPT_ALGO_TYPE algorithm1,
@@ -296,27 +296,28 @@ int mapValue( IN_INT_SHORT_Z const int srcValue,
 *																			*
 ****************************************************************************/
 
-/* Calculate a 16-bit Fletcher-like checksum of a block of data.  This isn't
-   quite a pure Fletcher checksum because we don't bother keeping the
-   accumulators at 8 bits and also don't need to set the initial value to
-   nonzero since we'll never see a sequence of zero bytes.  This isn't a big
-   deal since all we need is consistent results for identical data, the 
-   value itself is never communicated externally.  In addition we don't 
-   bother with masking to 16 bits during the calculation process (although 
-   we mask at the end to avoid potential problems with sign bits) since it's 
-   not being used as a true checksum */
+/* Calculate a 16-bit Fletcher-like checksum for a block of data.  This 
+   isn't quite a pure Fletcher checksum, this isn't a big deal since all we 
+   need is consistent results for identical data, the value itself is never 
+   communicated externally.  In cases where it's used in critical checks 
+   it's merely used as a quick pre-check for a full hash-based check, so it 
+   doesn't have to be perfect.  In addition it's not in any way 
+   cryptographically secure for the same reason, there's no particular need 
+   for it to be secure.  If there's a requirement for at least some sort of 
+   unpredictability then something like Pearson hashing could be substituted  
+   transparently */
 
 RETVAL_RANGE( MAX_ERROR, 0xFFFF ) STDC_NONNULL_ARG( ( 1 ) ) \
 int checksumData( IN_BUFFER( dataLength ) const void *data, 
-				  IN_LENGTH const int dataLength )
+				  IN_DATALENGTH const int dataLength )
 	{
 	const BYTE *dataPtr = data;
-	int sum1 = 0, sum2 = 0, i;
+	int sum1 = 1, sum2 = 0, i;
 
 	assert( isReadPtr( data, dataLength ) );
 
 	REQUIRES( data != NULL );
-	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH )
+	REQUIRES( dataLength > 0 && dataLength < MAX_BUFFER_SIZE )
 
 	for( i = 0; i < dataLength; i++ )
 		{
@@ -324,7 +325,11 @@ int checksumData( IN_BUFFER( dataLength ) const void *data,
 		sum2 += sum1;
 		}
 
-	return( sum2 & 0xFFFF );
+#if defined( SYSTEM_16BIT )
+	return( sum2 & 0x7FFF );
+#else
+	return( ( ( sum2 & 0x7FFF ) << 16 ) | ( sum1 & 0xFFFF ) );
+#endif /* 16- vs. 32-bit systems */
 	}
 
 /* Calculate the hash of a block of data.  We use SHA-1 because it's the 
@@ -336,7 +341,7 @@ STDC_NONNULL_ARG( ( 1, 3 ) ) \
 void hashData( OUT_BUFFER_FIXED( hashMaxLength ) BYTE *hash, 
 			   IN_LENGTH_HASH const int hashMaxLength, 
 			   IN_BUFFER( dataLength ) const void *data, 
-			   IN_LENGTH const int dataLength )
+			   IN_DATALENGTH const int dataLength )
 	{
 	static HASHFUNCTION_ATOMIC hashFunctionAtomic = NULL;
 	static int hashSize;
@@ -346,7 +351,7 @@ void hashData( OUT_BUFFER_FIXED( hashMaxLength ) BYTE *hash,
 	assert( hashMaxLength >= 16 && \
 			hashMaxLength <= CRYPT_MAX_HASHSIZE );
 	assert( isReadPtr( data, dataLength ) );
-	assert( dataLength > 0 && dataLength < MAX_INTLENGTH );
+	assert( dataLength > 0 && dataLength < MAX_BUFFER_SIZE );
 
 	/* Get the hash algorithm information if necessary */
 	if( hashFunctionAtomic == NULL )
@@ -363,7 +368,7 @@ void hashData( OUT_BUFFER_FIXED( hashMaxLength ) BYTE *hash,
 	   ensure that we never get a false-positive match but since this is a 
 	   should-never-occur condition anyway it's not certain whether forcing 
 	   a match or forcing a non-match is the preferred behaviour */
-	if( data == NULL || dataLength <= 0 || dataLength >= MAX_INTLENGTH || \
+	if( data == NULL || dataLength <= 0 || dataLength >= MAX_BUFFER_SIZE || \
 		hashMaxLength < 16 || hashMaxLength > hashSize || \
 		hashMaxLength > CRYPT_MAX_HASHSIZE || hashFunctionAtomic == NULL )
 		{
@@ -531,7 +536,7 @@ int exportCertToStream( INOUT TYPECAST( STREAM * ) void *streamPtr,
 			return( status );
 		}
 
-	/* Export the cert directly into the stream buffer */
+	/* Export the certificate directly into the stream buffer */
 	setMessageData( &msgData, dataPtr, length );
 	status = krnlSendMessage( cryptCertificate, IMESSAGE_CRT_EXPORT,
 							  &msgData, certFormatType );
@@ -547,7 +552,8 @@ int importCertFromStream( INOUT void *streamPtr,
 						  IN_ENUM( CRYPT_CERTTYPE ) \
 							const CRYPT_CERTTYPE_TYPE certType, 
 						  IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
-							const int certDataLength )
+							const int certDataLength,
+						  IN_FLAGS( KEYMGMT ) const int options )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	STREAM *stream = streamPtr;
@@ -564,6 +570,8 @@ int importCertFromStream( INOUT void *streamPtr,
 			  certType < CRYPT_CERTTYPE_LAST );
 	REQUIRES( certDataLength >= MIN_CRYPT_OBJECTSIZE && \
 			  certDataLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX && \
+			  ( options & ~KEYMGMT_FLAG_DATAONLY_CERT ) == 0 );
 
 	/* Clear return value */
 	*cryptCertificate = CRYPT_ERROR;
@@ -575,9 +583,11 @@ int importCertFromStream( INOUT void *streamPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Import the cert directly from the stream buffer */
-	setMessageCreateObjectIndirectInfo( &createInfo, dataPtr, 
-										certDataLength, certType );
+	/* Import the certificate directly from the stream buffer */
+	setMessageCreateObjectIndirectInfoEx( &createInfo, dataPtr, 
+						certDataLength, certType,
+						( options & KEYMGMT_FLAG_DATAONLY_CERT ) ? \
+							KEYMGMT_FLAG_DATAONLY_CERT : KEYMGMT_FLAG_NONE );
 	createInfo.cryptOwner = iCryptOwner;
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
@@ -593,6 +603,8 @@ int importCertFromStream( INOUT void *streamPtr,
 *							Public-key Import Routines						*
 *																			*
 ****************************************************************************/
+
+#ifdef USE_INT_ASN1
 
 /* Read a public key from an X.509 SubjectPublicKeyInfo record, creating the
    context necessary to contain it in the process.  This is used by a variety
@@ -755,12 +767,15 @@ int iCryptReadSubjectPublicKey( INOUT TYPECAST( STREAM * ) void *streamPtr,
 								 NULL, MESSAGE_CHECK_PKC_PRIVATE ) ) );
 	return( CRYPT_OK );
 	}
+#endif /* USE_INT_ASN1 */
 
 /****************************************************************************
 *																			*
 *							Safe Text-line Read Functions					*
 *																			*
 ****************************************************************************/
+
+#if defined( USE_HTTP ) || defined( USE_BASE64 ) || defined( USE_SSH )
 
 /* Read a line of text data ending in an EOL.  If we get more data than will 
    fit into the read buffer we discard it until we find an EOL.  As a 
@@ -880,7 +895,7 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 			{
 			/* If we've run off into the weeds (for example we're reading 
 			   binary data following the text header), bail out */
-			if( ch <= 0 || ch > 0x7F || !isPrint( ch ) )
+			if( !isValidTextChar( ch ) )
 				{
 				ERROR_INFO errorInfo;
 
@@ -910,7 +925,7 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 			}
 
 		/* Process any remaining chars */
-		if( ch <= 0 || ch > 0x7F || !isPrint( ch ) )
+		if( !isValidTextChar( ch ) )
 			{
 			ERROR_INFO errorInfo;
 
@@ -955,3 +970,4 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_HTTP || USE_BASE64 || USE_SSH */

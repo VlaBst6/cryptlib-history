@@ -66,21 +66,21 @@ static BOOLEAN checkLowlevelInfo( const CRYPT_DEVICE cryptDevice,
 		return( FALSE );
 		}
 #ifdef UNICODE_STRINGS
-	printf( "cryptQueryCapability() reports availability of %S algorithm "
-			"with\n  block size %d bits", cryptQueryInfo.algoName,
-			cryptQueryInfo.blockSize << 3 );
+	fprintf( outputStream, "cryptQueryCapability() reports availability of "
+			 "%S algorithm with\n  block size %d bits", 
+			 cryptQueryInfo.algoName, cryptQueryInfo.blockSize << 3 );
 #else
-	printf( "cryptQueryCapability() reports availability of %s algorithm "
-			"with\n  block size %d bits", cryptQueryInfo.algoName,
-			cryptQueryInfo.blockSize << 3 );
+	fprintf( outputStream, "cryptQueryCapability() reports availability of "
+			 "%s algorithm with\n  block size %d bits", 
+			 cryptQueryInfo.algoName, cryptQueryInfo.blockSize << 3 );
 #endif /* UNICODE_STRINGS */
 	if( cryptAlgo < CRYPT_ALGO_FIRST_HASH || cryptAlgo > CRYPT_ALGO_LAST_HASH )
 		{
-		printf( ", keysize %d-%d bits (recommended = %d bits)",
+		fprintf( outputStream, ", keysize %d-%d bits (recommended = %d bits)",
 				cryptQueryInfo.minKeySize << 3,
 				cryptQueryInfo.maxKeySize << 3, cryptQueryInfo.keySize << 3 );
 		}
-	puts( "." );
+	fputs( ".\n", outputStream );
 
 	return( TRUE );
 	}
@@ -168,8 +168,9 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 		status = cryptCreateContext( cryptContext, CRYPT_UNUSED, cryptAlgo );
 	if( cryptStatusError( status ) )
 		{
-		printf( "crypt%sCreateContext() failed with error code %d, "
-				"line %d.\n", isDevice ? "Device" : "", status, __LINE__ );
+		fprintf( outputStream, "crypt%sCreateContext() failed with error "
+				 "code %d, line %d.\n", isDevice ? "Device" : "", status, 
+				 __LINE__ );
 		return( FALSE );
 		}
 	if( cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
@@ -223,9 +224,9 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 										   cryptAlgo );
 	if( cryptStatusError( status ) )
 		{
-		printf( "crypt%sCreateContext() failed with error code %d, "
-				"line %d.\n", ( cryptDevice != CRYPT_UNUSED ) ? \
-							  "Device" : "", status, __LINE__ );
+		fprintf( outputStream, "crypt%sCreateContext() failed with error "
+				 "code %d, line %d.\n", ( cryptDevice != CRYPT_UNUSED ) ? \
+										"Device" : "", status, __LINE__ );
 		return( FALSE );
 		}
 	if( cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
@@ -234,7 +235,7 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 									cryptMode );
 		if( cryptStatusError( status ) )
 			{
-			cryptDestroyContext( *cryptContext );
+			cryptDestroyContext( *decryptContext );
 			if( status == CRYPT_ERROR_NOTAVAIL )
 				{
 				/* This mode isn't available, return a special-case value to
@@ -693,7 +694,8 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 				break;
 
 			case CRYPT_ALGO_ECDSA:
-				status = loadECDSAContexts( &cryptContext, &decryptContext );
+				status = loadECDSAContexts( cryptDevice, &cryptContext, 
+											&decryptContext );
 				break;
 
 #ifdef TEST_DH
@@ -850,18 +852,18 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 	   were tested */
 	if( cryptAlgo < CRYPT_ALGO_LAST_CONVENTIONAL )
 		{
-		printf( "  Encryption modes tested:" );
+		fprintf( outputStream, "  Encryption modes tested:" );
 		if( modesTested[ CRYPT_MODE_ECB ] )
-			printf( " ECB" );
+			fprintf( outputStream, " ECB" );
 		if( modesTested[ CRYPT_MODE_CBC ] )
-			printf( " CBC" );
+			fprintf( outputStream, " CBC" );
 		if( modesTested[ CRYPT_MODE_CFB ] )
-			printf( " CFB" );
+			fprintf( outputStream, " CFB" );
 		if( modesTested[ CRYPT_MODE_OFB ] )
-			printf( " OFB" );
+			fprintf( outputStream, " OFB" );
 		if( modesTested[ CRYPT_MODE_GCM ] )
-			printf( " GCM" );
-		puts( "." );
+			fprintf( outputStream, " GCM" );
+		fputs( ".\n", outputStream );
 		}
 
 	/* Make sure that at least one of the algorithm's modes was tested */
@@ -883,7 +885,8 @@ int testRSAMinimalKey( void )
 	BYTE buffer[ TESTBUFFER_SIZE ], testBuffer[ TESTBUFFER_SIZE ];
 	int status;
 
-	puts( "Testing ability to recover CRT components for RSA private key..." );
+	fputs( "Testing ability to recover CRT components for RSA private "
+		   "key...\n", outputStream );
 
 	/* Load the RSA contexts from the minimal (non-CRT) RSA key */
 	status = loadRSAContextsEx( CRYPT_UNUSED, &cryptContext, &decryptContext,
@@ -904,7 +907,7 @@ int testRSAMinimalKey( void )
 	/* Clean up */
 	destroyContexts( CRYPT_UNUSED, cryptContext, decryptContext );
 
-	puts( "RSA CRT component recovery test succeeded." );
+	fputs( "RSA CRT component recovery test succeeded.\n", outputStream );
 	return( TRUE );
 	}
 

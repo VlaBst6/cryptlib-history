@@ -224,6 +224,9 @@ typedef struct {
 	BUFFER( 128, authEncParamLength ) \
 	BYTE authEncParamData[ 128 + 8 ];
 	int authEncParamLength;			/* AuthEnc parameter data */
+	BUFFER_FIXED( kdfDataLength ) \
+	void *kdfData;
+	int kdfDataLength;				/* Opt.KDF algorithm params */
 	BUFFER_FIXED( encParamDataLength ) \
 	void *encParamData;
 	int encParamDataLength;			/* Encryption algorithm params */
@@ -505,10 +508,15 @@ typedef enum {
 #define ENVCOPY_FLAG_NONE		0x00	/* No special action */
 #define ENVCOPY_FLAG_OOBDATA	0x01	/* Data is OOB rather than payload data */
 
-/* The size of the buffer used to handle read-ahead into out-of-band data at 
-   the start of the payload */
+/* The size of the buffers used to handle read-ahead into out-of-band data 
+   at  the start of the payload, and to buffer leftover bytes when the data 
+   that we're given is split exactly over a header (OCTET STRING + length
+   for CMS, partial length for PGP) that we can't leave with the payload 
+   data but have to store until we get fed the rest of the header.  See
+   the longer comments where the variables are declared for details */
 
 #define OOB_BUFFER_SIZE			8
+#define PARTIAL_BUFFER_SIZE		16
 
 /* The structure that stores the information on an envelope */
 
@@ -638,20 +646,63 @@ typedef struct EI {
 #endif /* USE_PGP */
 	long hdrSetLength;				/* Remaining bytes in SET OF EKeyInfo */
 
+	/* When we pushe data into an envelope it may end up breaking the push 
+	   over an intermediate header.  This occurs if we're pushing indefinite-
+	   length data and stop halfway through a tag, either an EOC or an OCTET 
+	   STRING segment (or its PGP equivalent):
+
+		+-------+-----------+-----+---------+
+		| Header|	Body	|00 00| Trailer |
+		+-------+-----------+-----+---------+
+							   ^	
+							   |
+							 bufPos
+							   +-------+
+									   v
+		+-------+--------+----------+--------+----------+-----+---------+
+		| Header|04 xx xx|	Body	|04 xx xx|	Body	|00 00|	Trailer |
+		+-------+--------+----------+--------+----------+-----+---------+
+
+	   In this case we can't decode the intermediate header and have to
+	   buffer the data somewhere until the next push.  We can't report the
+	   remainder to the caller as un-consumed data because this may be an
+	   implicit push, for example when we add a keying resource to an 
+	   encrypted envelope, which continues processing with previously-pushed 
+	   data when it initialises the cryptovariables from the data.  In this
+	   case since no data is being pushed, there's no way to report that 
+	   some of the data was unconsumed.
+	   
+	   Because of this we have to buffer any partial information until the
+	   next data push.  This can only occur when we break across a partial
+	   header, so the amount of data to be buffered is minimal.
+	   
+	   (It also occurs extremely rarely since it requires indefinite-length 
+	   data and there's usually only a single byte location where this can 
+	   occur, this situation almost never occurs) */
+	BUFFER( PARTIAL_BUFFER_SIZE, partialBufPos ) \
+	BYTE partialBuffer[ PARTIAL_BUFFER_SIZE + 8 ];	/* Buffered partial header data */
+	int partialBufPos;
+
 	/* Some data formats place out-of-band data at the start of the payload
-	   rather than putting it in the header, the data-left variable keeps
-	   track of how many bytes of data still need to be removed before we
-	   can return actual payload data to the caller.  In some cases the 
-	   amount of data can't be specified as a simple byte count but involves 
-	   format-specific events (e.g. the presence of a flag or data count in 
-	   the OOB data that indicates that there's more data present), the 
-	   event-count variable records how many of these events still need to 
-	   be handled before we can return data to the caller.  Finally, some 
-	   content types (e.g. compressed data) don't allow lookahead reads, 
-	   which are necessary in some cases to determine how the payload needs 
-	   to be handled.  To handle this we have to remember the returned OOB 
-	   data (if it's read via a lookahead read) so that we can reinsert it 
-	   into the output stream on the next read call */
+	   rather than putting it in the header, so we need to be able to peek
+	   ahead into the processed (e.g. decrypted) data via a lookahead read 
+	   in order to determine what to do next.  The out-of-band (OOB) buffer 
+	   and associated variables take care of this.
+	   
+	   The OOB data-left variable keeps track of how many bytes of data 
+	   still need to be removed before we can return actual payload data to 
+	   the caller.  In some cases the amount of data can't be specified as a 
+	   simple byte count but involves format-specific events (e.g. the 
+	   presence of a flag or data count in the OOB data that indicates that 
+	   there's more data present), the OOB event-count variable records how 
+	   many of these events still need to be handled before we can return 
+	   data to the caller.
+	   
+	   Finally, some content types (e.g. compressed data) don't allow 
+	   lookahead reads, which are necessary in some cases to determine how 
+	   the payload needs to be handled.  To handle this we have to remember 
+	   the returned OOB data (if it's read via a lookahead read) so that we 
+	   can reinsert it into the output stream on the next read call */
 	int oobDataLeft;				/* Remaining out-of-band data in payload */
 	int oobEventCount;				/* No.events left to process */
 	BUFFER( OOB_BUFFER_SIZE, oobBufPos ) \
@@ -743,17 +794,17 @@ typedef struct EI {
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *copyToEnvelopeFunction )( INOUT struct EI *envelopeInfoPtr, 
 									 IN_BUFFER_OPT( length ) const BYTE *buffer, 
-									 IN_LENGTH_Z const int length );
+									 IN_DATALENGTH_Z const int length );
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *copyFromEnvelopeFunction )( INOUT struct EI *envelopeInfoPtr, 
 									   OUT_BUFFER( maxLength, length ) BYTE *buffer, 
-									   IN_LENGTH const int maxLength, 
-									   OUT_LENGTH_Z int *length, 
+									   IN_DATALENGTH const int maxLength, 
+									   OUT_DATALENGTH_Z int *length, 
 									   IN_FLAGS( ENVCOPY ) const int flags );
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *processExtraData )( INOUT struct EI *envelopeInfoPtr, 
 							   IN_BUFFER( length ) const void *buffer, 
-							   IN_LENGTH const int length );
+							   IN_DATALENGTH const int length );
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *syncDeenvelopeData )( INOUT struct EI *envelopeInfoPtr, 
 								 INOUT STREAM *stream );
@@ -854,8 +905,9 @@ BOOLEAN checkActions( INOUT ENVELOPE_INFO *envelopeInfoPtr );
 CHECK_RETVAL_BOOL \
 BOOLEAN moreContentItemsPossible( IN_OPT const CONTENT_LIST *contentListPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int createContentListItem( OUT_PTR CONTENT_LIST **newContentListItemPtrPtr,
-						   INOUT MEMPOOL_STATE memPoolState, 
+int createContentListItem( OUT_BUFFER_ALLOC_OPT( sizeof( CONTENT_LIST ) ) \
+								CONTENT_LIST **newContentListItemPtrPtr,
+						   INOUT MEMPOOL_STATE memPoolState,
 						   IN_ENUM( CONTENT ) const CONTENT_TYPE type,
 						   IN_ENUM( CRYPT_FORMAT ) \
 								const CRYPT_FORMAT_TYPE formatType,

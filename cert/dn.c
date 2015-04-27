@@ -34,7 +34,7 @@
    works because the certificate component values don't start until x000 */
 
 static const DN_COMPONENT_INFO FAR_BSS certInfoOIDs[] = {
-	/* Useful components */
+	/* Useful components, identified by attribute */
 	{ CRYPT_CERTINFO_COMMONNAME, MKDNOID( "\x55\x04\x03" ), 
 	  "cn", 2, "oid.2.5.4.3", 11, CRYPT_MAX_TEXTSIZE, FALSE, TRUE },
 	{ CRYPT_CERTINFO_COUNTRYNAME, MKDNOID( "\x55\x04\x06" ), 
@@ -48,7 +48,7 @@ static const DN_COMPONENT_INFO FAR_BSS certInfoOIDs[] = {
 	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, MKDNOID( "\x55\x04\x0B" ), 
 	  "ou", 2, "oid.2.5.4.11", 12, CRYPT_MAX_TEXTSIZE, FALSE, TRUE },
 
-	/* Non-useful components */
+	/* Non-useful components, identified by index value */
 	{ 1, MKDNOID( "\x55\x04\x01" ),		/* aliasObjectName (2 5 4 1) */
 	  "oid.2.5.4.1", 11, NULL, 0, CRYPT_MAX_TEXTSIZE, FALSE, FALSE },
 	{ 2, MKDNOID( "\x55\x04\x02" ),		/* knowledgeInformation (2 5 4 2) */
@@ -486,8 +486,7 @@ static int findDNInsertPoint( const DN_COMPONENT *listHeadPtr,
 	const DN_COMPONENT *insertPoint, *prevElement = NULL;
 	int newValueSortOrder, iterationCount;
 
-	assert( listHeadPtr == NULL || \
-			isReadPtr( listHeadPtr, sizeof( DN_COMPONENT ) ) );
+	assert( isReadPtr( listHeadPtr, sizeof( DN_COMPONENT ) ) );
 	assert( isWritePtr( insertPointPtrPtr, sizeof( DN_COMPONENT * ) ) );
 	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
 
@@ -716,7 +715,7 @@ int insertDNComponent( INOUT_PTR DN_PTR **dnComponentListPtrPtr,
 	   about here is the validity so we ignore the returned encoding
 	   information */
 	status = getAsn1StringInfo( value, valueLength, &valueStringType, 
-								&dummy1, &dummy2 );
+								&dummy1, &dummy2, TRUE );
 	if( cryptStatusError( status ) )
 		{
 		*errorType = CRYPT_ERRTYPE_ATTR_VALUE;

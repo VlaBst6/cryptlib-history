@@ -403,8 +403,12 @@ typedef struct {
 	int altMacKeySize;						/* Alt.MAC key for revocations */
 	BOOLEAN useMACsend, useMACreceive;		/* Use MAC to verify integrity */
 
+	/* Whether the certificate issue is being authorised by an RA user 
+	   rather than a standard user */
+	BOOLEAN userIsRA;
+
 	/* Other protocol information.  CMP uses an extremely clunky 
-	   confirmation mechanism in which a certificate conf uses as hash 
+	   confirmation mechanism in which a certificate conf uses as its hash 
 	   algorithm the algorithm that was used in a previous message by the CA 
 	   to sign the certificate, which means implementations will break each 
 	   time a new certificate format or CA hash algorithm is added since the 
@@ -516,11 +520,11 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int checkMessageMAC( INOUT STREAM *stream, 
 					 INOUT CMP_PROTOCOL_INFO *protocolInfo,
 					 IN_BUFFER( messageLength ) const void *message,
-					 IN_LENGTH const int messageLength );
+					 IN_DATALENGTH const int messageLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int checkMessageSignature( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 						   IN_BUFFER( messageLength ) const void *message,
-						   IN_LENGTH const int messageLength,
+						   IN_DATALENGTH const int messageLength,
 						   IN_BUFFER( signatureLength ) const void *signature,
 						   IN_LENGTH_SHORT const int signatureLength,
 						   IN_HANDLE const CRYPT_HANDLE iAuthContext );

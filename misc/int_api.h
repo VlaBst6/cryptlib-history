@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Internal API Header File 					*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2012					*
 *																			*
 ****************************************************************************/
 
@@ -93,6 +93,8 @@ int mapValue( IN_INT_SHORT_Z const int srcValue,
    STREAM * but this header gets included long before the stream header does
    so the STREAM structure isn't visible at this point */
 
+#if defined( USE_HTTP ) || defined( USE_BASE64 ) || defined( USE_SSH )
+
 typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 		int ( *READCHARFUNCTION )( INOUT void *streamPtr );
 
@@ -104,15 +106,17 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 				  IN_LENGTH_SHORT_MIN( 16 ) const int lineBufferMaxLen, 
 				  OUT_LENGTH_SHORT_Z int *lineBufferSize, 
 				  OUT_OPT_BOOL BOOLEAN *localError );
+#endif /* USE_HTTP || USE_BASE64 || USE_SSH */
 
 /* Get OS-specific values */
 
 #if defined( __WIN32__ ) || defined( __WINCE__ )
 typedef enum { 
 	SYSVAR_NONE,			/* No system variable */
+#if VC_LT_2005( _MSC_VER )
 	SYSVAR_OSMAJOR,			/* OS major version number */
 	SYSVAR_OSMINOR,			/* OS minor version number */
-	SYSVAR_ISWIN95,			/* Whether code base is Win95 or WinNT */
+#endif /* VC++ < 2005 */
 	SYSVAR_HWCAP,			/* Hardware crypto capabilities */
 	SYSVAR_PAGESIZE,		/* System page size */
 	SYSVAR_LAST				/* Last valid system variable type */
@@ -148,6 +152,15 @@ int getSysVar( const SYSVAR_TYPE type );
 #define HWCAP_FLAG_TRNG		0x20	/* AMD Geode LX TRNG MSR support */
 #define HWCAP_FLAG_AES		0x40	/* Intel AES instruction support */
 #define HWCAP_FLAG_RDRAND	0x80	/* Intel RDRAND instruction support */
+#define HWCAP_FLAG_MAX		0xFF	/* Maximum possible flag value */
+
+/* cryptlib-specific feature flags used in the keyFeatures extension in
+   certificates */
+
+#define KEYFEATURE_FLAG_NONE		0x00	/* No special key features */
+#define KEYFEATURE_FLAG_RESERVED	0x01	/* Reserved for backwards-compat.*/
+#define KEYFEATURE_FLAG_RAISSUED	0x02	/* Cert.was issued via an RA */
+#define KEYFEATURE_FLAG_MAX			0x03	/* Maximum possible flag value */
 
 /* Windows NT/2000/XP/Vista support ACL-based access control mechanisms for 
    system objects, so when we create objects such as files and threads we 
@@ -175,8 +188,19 @@ int getSysVar( const SYSVAR_TYPE type );
 *																			*
 ****************************************************************************/
 
+/* Check whether a value is a valid text character or not.  In almost all 
+   cases for standard ASCII the isprint() restricts the input range to
+   0x20 ... 0x7E, we perform the explicit range check beforehand mostly to 
+   ensure that the input range to isprint() isn't exceeded in cases where
+   it's implemented as a straight unchecked table lookup */
+
+#define isValidTextChar( value )	( value >= 0x08 && value <= 0x7E && \
+									  isPrint( value ) )
+
 /* Compare two strings in a case-insensitive manner for those systems that
-   don't have this function */
+   don't have this function.  These are then mapped to the abstract 
+   functions strCompare() (with length) and strCompareZ() (zero-
+   terminated) */
 
 #if defined( __UNIX__ ) && !( defined( __CYGWIN__ ) )
   #if defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ )
@@ -187,12 +211,14 @@ int getSysVar( const SYSVAR_TYPE type );
 #elif defined( __WINCE__ )
   #define strnicmp	_strnicmp
   #define stricmp	_stricmp
-#elif defined( _MSC_VER ) && ( _MSC_VER >= 1300 )
+#elif defined( _MSC_VER ) 
   /* VC++ 8 and up warn about these being deprecated Posix functions and
-     require the ANSI/ISO conformant _strXcmp */
-  #define strnicmp	_strnicmp
-  #define stricmp	_stricmp
-#elif defined( __ECOS__ )
+     require the ANSI/ISO-conformant _strXcmp */
+  #if _MSC_VER >= 1300 
+	#define strnicmp _strnicmp
+	#define stricmp	_stricmp
+  #endif /* VC++ >= 8 */
+#elif defined( __ECOS__ ) || defined( __iOS__ )
   #define strnicmp	strncasecmp
   #define stricmp	strcasecmp
 #elif defined __PALMOS__
@@ -202,9 +228,13 @@ int getSysVar( const SYSVAR_TYPE type );
 
   #define strnicmp	StrNCaselessCompare
   #define stricmp	StrCaselessCompare
-#elif defined( __xxxOS___ )
+#elif defined( __BEOS__ ) || defined( __SMX__ ) || \
+	  defined( __SYMBIAN32__ ) || defined( __VxWorks___ )
   int strnicmp( const char *src, const char *dest, const int length );
   int stricmp( const char *src, const char *dest );
+
+  /* Make sure that we provide our own versions of the functions */
+  #define NO_NATIVE_STRICMP
 #endif /* OS-specific case-insensitive string compares */
 
 /* Sanitise a string before passing it back to the user.  This is used to
@@ -214,10 +244,15 @@ int getSysVar( const SYSVAR_TYPE type );
    printf( "..%s..", sanitiseString( string, strLen ) ).  In addition it
    formats the data to fit a fixed-length buffer.  If the string is longer 
    than the indicated buffer size it appends a '[...]' at the end of the 
-   buffer to indicate that further data was truncated */
+   buffer to indicate that further data was truncated.
+   
+   To avoid lots of problems with compilers and static analysers, the input
+   argument is specified as a 'void *' rather than a 'BYTE *' because the
+   fact that it converts a 'BYTE *' into a 'char *' gives these tools
+   headaches */
 					
 STDC_NONNULL_ARG( ( 1 ) ) \
-char *sanitiseString( INOUT_BUFFER( strMaxLen, strLen ) BYTE *string, 
+char *sanitiseString( INOUT_BUFFER( strMaxLen, strLen ) void *string, 
 					  IN_LENGTH_SHORT const int strMaxLen, 
 					  IN_LENGTH_SHORT const int strLen );
 
@@ -419,7 +454,8 @@ typedef struct {
 		provide its own more general error information on top of it.  This 
 		function is typically used when the caller wants to convert 
 		something like "Low-level error string" into "High-level error 
-		string: Low-level error string".
+		string: Low-level error string".  errorInfoPtr and 
+		existingErrorInfoPtr can point to the same location.
 	retExtErrAlt() is a variation of the above that appends the additional
 		error information rather than prepending it */
 
@@ -427,20 +463,13 @@ typedef struct {
 
 STDC_NONNULL_ARG( ( 1 ) ) \
 void clearErrorString( OUT ERROR_INFO *errorInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+int readErrorInfo( OUT ERROR_INFO *errorInfo, 
+				   IN_HANDLE const CRYPT_HANDLE objectHandle );
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 void setErrorString( OUT ERROR_INFO *errorInfoPtr, 
 					 IN_BUFFER( stringLength ) const char *string, 
 					 IN_LENGTH_ERRORMESSAGE  const int stringLength );
-#else
-  #define clearErrorString( errorInfoPtr )
-  #define setErrorString( errorInfoPtr, string, stringLength );
-#endif /* USE_ERRMSGS */
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void copyErrorInfo( OUT ERROR_INFO *destErrorInfoPtr, 
-					const ERROR_INFO *srcErrorInfoPtr );
-STDC_NONNULL_ARG( ( 1 ) ) \
-int readErrorInfo( OUT ERROR_INFO *errorInfo, 
-				   IN_HANDLE const CRYPT_HANDLE objectHandle );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtFn( IN_ERROR const int status, 
 			  OUT ERROR_INFO *errorInfoPtr, 
@@ -469,6 +498,14 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtErrAltFn( IN_ERROR const int status, 
 					INOUT ERROR_INFO *errorInfoPtr, 
 					FORMAT_STRING const char *format, ... );
+#else
+  #define clearErrorString( errorInfoPtr )
+  #define readErrorInfo( errorInfoPtr, objectHandle )
+  #define setErrorString( errorInfoPtr, string, stringLength );
+#endif /* USE_ERRMSGS */
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void copyErrorInfo( OUT ERROR_INFO *destErrorInfoPtr, 
+					const ERROR_INFO *srcErrorInfoPtr );
 
 #ifdef USE_ERRMSGS
   #define retExt( status, extStatus )		return retExtFn extStatus
@@ -537,11 +574,13 @@ int iCryptImportCertIndirect( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
    The use of the void * instead of STREAM * is necessary because the STREAM
    type isn't visible at the global level */
 
+#ifdef USE_INT_ASN1
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int iCryptReadSubjectPublicKey( INOUT TYPECAST( STREAM * ) void *streamPtr, 
 								OUT_HANDLE_OPT CRYPT_CONTEXT *iPubkeyContext,
 								IN_HANDLE const CRYPT_DEVICE iCreatorHandle, 
 								const BOOLEAN deferredLoad );
+#endif /* USE_INT_ASN1 */
 
 /* Get information on encoded object data.  The first parameter for this
    function is actually a STREAM *, but we can't use this here since
@@ -580,41 +619,45 @@ int importCertFromStream( INOUT void *streamPtr,
 						  IN_ENUM( CRYPT_CERTTYPE ) \
 							const CRYPT_CERTTYPE_TYPE certType, 
 						  IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
-							const int certDataLength );
+							const int certDataLength,
+						  IN_FLAGS( KEYMGMT ) const int options );
 
 /* base64/SMIME-en/decode routines */
 
+#ifdef USE_BASE64
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int base64checkHeader( IN_BUFFER( dataLength ) const char *data, 
-					   IN_LENGTH const int dataLength,
+int base64checkHeader( IN_BUFFER( dataLength ) const BYTE *data, 
+					   IN_DATALENGTH const int dataLength,
 					   OUT_ENUM_OPT( CRYPT_CERTFORMAT ) \
 					   CRYPT_CERTFORMAT_TYPE *format,
-					   OUT_LENGTH_Z int *startPos );
+					   OUT_DATALENGTH_Z int *startPos );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int base64encodeLen( IN_LENGTH_MIN( 10 ) const int dataLength,
-					 OUT_LENGTH_Z int *encodedLength,
+					 OUT_DATALENGTH_Z int *encodedLength,
 					 IN_ENUM_OPT( CRYPT_CERTTYPE ) \
 						const CRYPT_CERTTYPE_TYPE certType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int base64encode( OUT_BUFFER( destMaxLen, *destLen ) char *dest, 
 				  IN_LENGTH_MIN( 10 ) const int destMaxLen, 
-				  OUT_LENGTH_Z int *destLen,
+				  OUT_DATALENGTH_Z int *destLen,
 				  IN_BUFFER( srcLen ) const void *src, 
 				  IN_LENGTH_MIN( 10 ) const int srcLen, 
 				  IN_ENUM_OPT( CRYPT_CERTTYPE ) \
 					const CRYPT_CERTTYPE_TYPE certType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int base64decodeLen( IN_BUFFER( dataLength ) const char *data, 
+int base64decodeLen( IN_BUFFER( dataLength ) const BYTE *data, 
 					 IN_LENGTH_MIN( 10 ) const int dataLength,
-					 OUT_LENGTH_Z int *decodedLength );
+					 OUT_DATALENGTH_Z int *decodedLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int base64decode( OUT_BUFFER( destMaxLen, *destLen ) void *dest, 
 				  IN_LENGTH_MIN( 10 ) const int destMaxLen, 
-				  OUT_LENGTH_Z int *destLen,
-				  IN_BUFFER( srcLen ) const char *src, 
+				  OUT_DATALENGTH_Z int *destLen,
+				  IN_BUFFER( srcLen ) const BYTE *src, 
 				  IN_LENGTH_MIN( 10 ) const int srcLen, 
 				  IN_ENUM_OPT( CRYPT_CERTFORMAT ) \
 					const CRYPT_CERTFORMAT_TYPE format );
+#endif /* USE_BASE64 */
 
 /* User data en/decode routines */
 
@@ -1004,17 +1047,24 @@ typedef enum {
    leaving the result in the output buffer.
    
    In addition to the hash-step operation, we provide a one-step atomic hash
-   function that processes a single data quantity and returns its hash */
+   function that processes a single data quantity and returns its hash.
+   
+   The data block is defined in terms of a long[] rather than a BYTE[] in
+   order to deal with alignment issues */
 
-#if defined( USE_SHA2_EXT )
-  /* SHA2-384/512: ( 2 + 8 + 16 + 1 ) * sizeof( long long ) */
-  typedef BYTE HASHINFO[ ( 27 * 8 ) + 8 ];
+#if defined( USE_SHA2_EXT ) 
+  /* SHA2-384/512: ( 2 + 8 + 16 + 1 ) * sizeof( long long ) = 27 * 8 */
+  #if defined( SYSTEM_64BIT )
+	typedef long HASHINFO[ 27 + 1 ];			/* ( 27 * 8 ) + 8 */
+  #else
+	typedef long HASHINFO[ ( 27 * 2 ) + 2 ];	/* ( 27 * 8 ) + 8 */
+  #endif /* 32- vs. 64-bit systems */
 #elif defined( SYSTEM_64BIT )
-  /* RIPEMD160: 24 * sizeof( long long ) + 64 */
-  typedef BYTE HASHINFO[ ( 24 * 8 ) + 64 + 8 ];
+  /* RIPEMD160: 24 * sizeof( long long ) + 64 = 24 * 8 + 64 */
+  typedef long HASHINFO[ 24 + 8 + 1 ];			/* ( 24 * 8 ) + 64 + 8 */
 #else
-  /* SHA-256: ( 2 + 8 + 16 + 1 ) * sizeof( long ) */
-  typedef BYTE HASHINFO[ ( 27 * 4 ) + 8 ];
+  /* SHA-256: ( 2 + 8 + 16 + 1 ) * sizeof( long ) = 27 * 4 */
+  typedef long HASHINFO[ 27 + 2 ];				/* ( 27 * 4 ) + 8 */
 #endif /* SYSTEM_64BIT */
 
 typedef void ( *HASHFUNCTION )( INOUT_OPT HASHINFO hashInfo, 
@@ -1052,12 +1102,12 @@ void getHashAtomicParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
 
 RETVAL_RANGE( MAX_ERROR, 0xFFFF ) STDC_NONNULL_ARG( ( 1 ) ) \
 int checksumData( IN_BUFFER( dataLength ) const void *data, 
-				  IN_LENGTH const int dataLength );
+				  IN_DATALENGTH const int dataLength );
 STDC_NONNULL_ARG( ( 1, 3 ) ) \
 void hashData( OUT_BUFFER_FIXED( hashMaxLength ) BYTE *hash, 
 			   IN_LENGTH_HASH const int hashMaxLength, 
 			   IN_BUFFER( dataLength ) const void *data, 
-			   IN_LENGTH const int dataLength );
+			   IN_DATALENGTH const int dataLength );
 
 /* When we're comparing two cryptographic values, for example two MAC 
    values, and the developer's been careful to implement things really 
@@ -1117,8 +1167,8 @@ typedef struct {
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength ) \
 							void *signature, 
-						   IN_LENGTH_Z const int signatureMaxLength,
-						   OUT_LENGTH_Z int *signatureLength,
+						   IN_DATALENGTH_Z const int signatureMaxLength,
+						   OUT_DATALENGTH_Z int *signatureLength,
 						   IN_ENUM( CRYPT_FORMAT ) \
 							const CRYPT_FORMAT_TYPE formatType,
 						   IN_HANDLE const CRYPT_CONTEXT iSignContext,
@@ -1133,6 +1183,7 @@ int iCryptCheckSignature( IN_BUFFER( signatureLength ) const void *signature,
 						  IN_HANDLE const CRYPT_CONTEXT iHashContext,
 						  IN_HANDLE const CRYPT_CONTEXT iHash2Context,
 						  OUT_OPT_HANDLE_OPT CRYPT_HANDLE *extraData );
+#ifdef USE_INT_CMS
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int iCryptImportKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey, 
 					 IN_LENGTH_SHORT const int encryptedKeyLength,
@@ -1144,12 +1195,13 @@ int iCryptImportKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength ) \
 						void *encryptedKey, 
-					 IN_LENGTH_Z const int encryptedKeyMaxLength,
-					 OUT_LENGTH_Z int *encryptedKeyLength,
+					 IN_DATALENGTH_Z const int encryptedKeyMaxLength,
+					 OUT_DATALENGTH_Z int *encryptedKeyLength,
 					 IN_ENUM( CRYPT_FORMAT ) \
 						const CRYPT_FORMAT_TYPE formatType,
 					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
 					 IN_HANDLE const CRYPT_CONTEXT iExportKey );
+#endif /* USE_INT_CMS */
 
 /****************************************************************************
 *																			*
@@ -1164,38 +1216,38 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData, 
-				  IN_LENGTH_MIN( 16 ) const int inDataLength, 
+				  IN_DATALENGTH_MIN( 16 ) const int inDataLength, 
 				  OUT_BUFFER( outDataMaxLength, *outDataLength ) void *outData, 
-				  IN_LENGTH_MIN( 16 ) const int outDataMaxLength, 
-				  OUT_LENGTH_Z int *outDataLength, 
+				  IN_DATALENGTH_MIN( 16 ) const int outDataMaxLength, 
+				  OUT_DATALENGTH_Z int *outDataLength, 
 				  IN_ENUM( CRYPT_FORMAT ) const CRYPT_FORMAT_TYPE formatType,
 				  IN_ENUM_OPT( CRYPT_CONTENT ) const CRYPT_CONTENT_TYPE contentType,
 				  IN_HANDLE_OPT const CRYPT_HANDLE iPublicKey,
 				  OUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData, 
-					IN_LENGTH_MIN( 16 ) const int inDataLength,
+					IN_DATALENGTH_MIN( 16 ) const int inDataLength,
 					OUT_BUFFER( outDataMaxLength, *outDataLength ) void *outData, 
-					IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
-					OUT_LENGTH_Z int *outDataLength, 
+					IN_DATALENGTH_MIN( 16 ) const int outDataMaxLength,
+					OUT_DATALENGTH_Z int *outDataLength, 
 					IN_HANDLE_OPT const CRYPT_CONTEXT iPrivKey,
 					OUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
 int envelopeSign( IN_BUFFER_OPT( inDataLength ) const void *inData, 
-				  IN_LENGTH_Z const int inDataLength,
+				  IN_DATALENGTH_Z const int inDataLength,
 				  OUT_BUFFER( outDataMaxLength, *outDataLength ) void *outData, 
-				  IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
-				  OUT_LENGTH_Z int *outDataLength, 
+				  IN_DATALENGTH_MIN( 16 ) const int outDataMaxLength,
+				  OUT_DATALENGTH_Z int *outDataLength, 
 				  IN_ENUM_OPT( CRYPT_CONTENT ) const CRYPT_CONTENT_TYPE contentType,
 				  IN_HANDLE const CRYPT_CONTEXT iSigKey,
 				  IN_HANDLE_OPT const CRYPT_CERTIFICATE iCmsAttributes,
 				  OUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5, 7 ) ) \
 int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData, 
-					  IN_LENGTH_MIN( 16 ) const int inDataLength,
+					  IN_DATALENGTH_MIN( 16 ) const int inDataLength,
 					  OUT_BUFFER( outDataMaxLength, *outDataLength ) void *outData, 
-					  IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
-					  OUT_LENGTH_Z int *outDataLength, 
+					  IN_DATALENGTH_MIN( 16 ) const int outDataMaxLength,
+					  OUT_DATALENGTH_Z int *outDataLength, 
 					  IN_HANDLE_OPT const CRYPT_CONTEXT iSigCheckKey,
 					  OUT_STATUS int *sigResult, 
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iSigningCert,
@@ -1237,20 +1289,20 @@ typedef struct {
 		( formatInfo )->tag = ( formatTag ); \
 		( formatInfo )->isExplicit = ( formatIsExplicit )
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4 ) ) \
-int createX509signature( OUT_BUFFER_OPT( signedObjectMaxLength, \
-										 *signedObjectLength ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int createX509signature( OUT_BUFFER( signedObjectMaxLength, \
+									 *signedObjectLength ) \
 							void *signedObject, 
-						 IN_LENGTH_Z const int signedObjectMaxLength, 
-						 OUT_LENGTH_Z int *signedObjectLength,
+						 IN_DATALENGTH_Z const int signedObjectMaxLength, 
+						 OUT_DATALENGTH_Z int *signedObjectLength,
 						 IN_BUFFER( objectLength ) const void *object, 
-						 IN_LENGTH const int objectLength,
+						 IN_DATALENGTH const int objectLength,
 						 IN_HANDLE const CRYPT_CONTEXT iSignContext,
 						 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
 						 IN_OPT const X509SIG_FORMATINFO *formatInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int checkX509signature( IN_BUFFER( signedObjectLength ) const void *signedObject, 
-						IN_LENGTH const int signedObjectLength,
+						IN_DATALENGTH const int signedObjectLength,
 						IN_HANDLE const CRYPT_CONTEXT iSigCheckContext,
 						IN_OPT const X509SIG_FORMATINFO *formatInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
@@ -1269,11 +1321,12 @@ int checkRawSignature( IN_BUFFER( signatureLength ) const void *signature,
 
 /* Prototypes for functions in context/key_wr.c, used by devices */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5, 7 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 6 ) ) \
 int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer, 
 						IN_LENGTH_SHORT_Z const int bufMaxSize, 
 						OUT_LENGTH_SHORT_Z int *bufSize,
 						IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo, 
+						IN_RANGE( 0, 100 ) const int intParam,
 						IN_BUFFER( component1Length ) const void *component1, 
 						IN_LENGTH_PKC const int component1Length,
 						IN_BUFFER( component2Length ) const void *component2, 
@@ -1283,17 +1336,22 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 						IN_BUFFER_OPT( component4Length ) const void *component4, 
 						IN_LENGTH_PKC_Z const int component4Length );
 
-/* Prototypes for functions in cryptcrt.c, used by devices */
+/* Prototypes for functions in cryptcrt.c, used by devices, and a generic 
+   one used by anything that fetches a certificate */
 
-#ifdef USE_CERTIFICATES
-
+#if defined( USE_CERTIFICATES ) || defined( USE_PSEUDOCERTIFICATES )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int createCertificateIndirect( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
 							   STDC_UNUSED const void *auxDataPtr, 
 							   STDC_UNUSED const int auxValue );
-#else
-  #define createCertificateIndirect( createInfo, auxDataPtr, auxValue ) \
-		  CRYPT_ERROR_NOTAVAIL
+#endif /* USE_CERTIFICATES || USE_PSEUDOCERTIFICATES */
+#ifdef USE_CERTIFICATES
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 3 ) ) \
+int iCryptVerifyID( IN_HANDLE const CRYPT_CERTIFICATE iCertificate,
+					IN_ENUM( CRYPT_KEYID ) const CRYPT_KEYID_TYPE keyIDtype,
+					IN_BUFFER( keyIDlength ) const void *keyID, 
+					IN_LENGTH_SHORT const int keyIDlength );
 #endif /* USE_CERTIFICATES */
 
 /* Prototypes for functions in context/ctx_misc.c, used in the ASN.1/misc 

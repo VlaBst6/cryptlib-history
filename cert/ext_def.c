@@ -2192,7 +2192,7 @@ static const ATTRIBUTE_INFO FAR_BSS extensionInfo[] = {
 	  FL_ATTR_ATTREND, FL_MULTIVALUED | FL_SEQEND, RANGE_OID },
 #endif /* USE_CERT_OBSOLETE */
 
-	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_IATTRIBUTE_LAST }, { NULL, CRYPT_IATTRIBUTE_LAST }
 	};
 
 #if ( defined( USE_CERTREV ) || defined( USE_CERTREQ ) ) && \
@@ -2218,7 +2218,7 @@ STATIC_DATA const ATTRIBUTE_INFO FAR_BSS holdInstructionInfo[] = {
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  FL_ATTR_ATTREND, FL_OPTIONAL, RANGE_NONE },
 
-	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_IATTRIBUTE_LAST }, { NULL, CRYPT_IATTRIBUTE_LAST }
 	};
 #endif /* ( USE_CERTREV || USE_CERTREQ ) && USE_CERTLEVEL_PKIX_FULL */
 
@@ -2405,7 +2405,7 @@ STATIC_DATA const ATTRIBUTE_INFO FAR_BSS generalNameInfo[] = {
 	  ENCODING_TAGGED( OBJECT_IDENTIFIER, 8 ),
 	  FL_ATTR_ATTREND, FL_OPTIONAL, RANGE_OID },
 
-	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_IATTRIBUTE_LAST }, { NULL, CRYPT_IATTRIBUTE_LAST }
 	};
 
 /****************************************************************************
@@ -2715,7 +2715,7 @@ static const ATTRIBUTE_INFO FAR_BSS cmsAttributeInfo[] = {
 	  DESCRIPTION( "sMIMECapabilities.capability (catchAll)" )
 	  ENCODING( SEQUENCE ),
 	  0, FL_IDENTIFIER, RANGE_NONE },
-	{ NULL, 10000,
+	{ NULL, 0,
 	  DESCRIPTION( "sMIMECapabilities.capability.catchAll" )
 	  ENCODING_SPECIAL( BLOB_ANY ),	/* Match anything and ignore it */
 	  FL_ATTR_ATTREND, FL_NONENCODING | FL_SEQEND_2 /*FL_SEQEND*/, RANGE_NONE },
@@ -3317,75 +3317,80 @@ static const ATTRIBUTE_INFO FAR_BSS cmsAttributeInfo[] = {
 	  FL_ATTR_ATTREND, FL_OPTIONAL | FL_SEQEND, CHECK_HTTP },
 #endif /* USE_CMSATTR_OBSCURE */
 
-	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_IATTRIBUTE_LAST }, { NULL, CRYPT_IATTRIBUTE_LAST }
 	};
 
-/* Subtable for encoding the contentType */
+/* Subtable for encoding the contentType.  Since the fieldID that we're 
+   using for this subtable is a CRYPT_CONTENT_TYPE rather than the 
+   CRYPT_ATTRIBUTE_TYPE that's used for the standard encoding tables, we 
+   define a macro to convert to the appropriate type */
+
+#define MK_FIELDID( value )		( CRYPT_ATTRIBUTE_TYPE ) ( value )
 
 STATIC_DATA const ATTRIBUTE_INFO FAR_BSS contentTypeInfo[] = {
-	{ OID_CMS_DATA, CRYPT_CONTENT_DATA,
+	{ OID_CMS_DATA, MK_FIELDID( CRYPT_CONTENT_DATA ),
 	  DESCRIPTION( "contentType.data (1 2 840 113549 1 7 1)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  FL_ATTR_ATTRSTART, FL_OPTIONAL, RANGE_NONE },
-	{ OID_CMS_SIGNEDDATA, CRYPT_CONTENT_SIGNEDDATA,
+	{ OID_CMS_SIGNEDDATA, MK_FIELDID( CRYPT_CONTENT_SIGNEDDATA ),
 	  DESCRIPTION( "contentType.signedData (1 2 840 113549 1 7 2)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
-	{ OID_CMS_ENVELOPEDDATA, CRYPT_CONTENT_ENVELOPEDDATA,
+	{ OID_CMS_ENVELOPEDDATA, MK_FIELDID( CRYPT_CONTENT_ENVELOPEDDATA ),
 	  DESCRIPTION( "contentType.envelopedData (1 2 840 113549 1 7 3)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
 #ifdef USE_CMSATTR_OBSCURE
-	{ MKOID( "\x06\x09\x2A\x86\x48\x86\xF7\x0D\x01\x07\x04" ), CRYPT_CONTENT_SIGNEDANDENVELOPEDDATA,
+	{ MKOID( "\x06\x09\x2A\x86\x48\x86\xF7\x0D\x01\x07\x04" ), MK_FIELDID( CRYPT_CONTENT_SIGNEDANDENVELOPEDDATA ),
 	  DESCRIPTION( "contentType.signedAndEnvelopedData (1 2 840 113549 1 7 4)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
 #endif /* USE_CMSATTR_OBSCURE */
-	{ OID_CMS_DIGESTEDDATA, CRYPT_CONTENT_DIGESTEDDATA,
+	{ OID_CMS_DIGESTEDDATA, MK_FIELDID( CRYPT_CONTENT_DIGESTEDDATA ),
 	  DESCRIPTION( "contentType.digestedData (1 2 840 113549 1 7 5)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
-	{ OID_CMS_ENCRYPTEDDATA, CRYPT_CONTENT_ENCRYPTEDDATA,
+	{ OID_CMS_ENCRYPTEDDATA, MK_FIELDID( CRYPT_CONTENT_ENCRYPTEDDATA ),
 	  DESCRIPTION( "contentType.encryptedData (1 2 840 113549 1 7 6)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
 #ifdef USE_COMPRESSION
-	{ OID_CMS_COMPRESSEDDATA, CRYPT_CONTENT_COMPRESSEDDATA,
+	{ OID_CMS_COMPRESSEDDATA, MK_FIELDID( CRYPT_CONTENT_COMPRESSEDDATA ),
 	  DESCRIPTION( "contentType.compressedData (1 2 840 113549 1 9 16 1 9)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
 #endif /* USE_COMPRESSION */
 #ifdef USE_TSP
-	{ OID_CMS_TSTOKEN, CRYPT_CONTENT_TSTINFO,
+	{ OID_CMS_TSTOKEN, MK_FIELDID( CRYPT_CONTENT_TSTINFO ),
 	  DESCRIPTION( "contentType.tstInfo (1 2 840 113549 1 9 16 1 4)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
 #endif /* USE_TSP */
 #ifdef USE_CMSATTR_OBSCURE
-	{ OID_MS_SPCINDIRECTDATACONTEXT, CRYPT_CONTENT_SPCINDIRECTDATACONTEXT,
+	{ OID_MS_SPCINDIRECTDATACONTEXT, MK_FIELDID( CRYPT_CONTENT_SPCINDIRECTDATACONTEXT ),
 	  DESCRIPTION( "contentType.spcIndirectDataContext (1 3 6 1 4 1 311 2 1 4)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
 #endif /* USE_CMSATTR_OBSCURE */
 #ifdef USE_CERTVAL
-	{ OID_CRYPTLIB_RTCSREQ, CRYPT_CONTENT_RTCSREQUEST,
+	{ OID_CRYPTLIB_RTCSREQ, MK_FIELDID( CRYPT_CONTENT_RTCSREQUEST ),
 	  DESCRIPTION( "contentType.rtcsRequest (1 3 6 1 4 1 3029 4 1 4)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
-	{ OID_CRYPTLIB_RTCSRESP, CRYPT_CONTENT_RTCSRESPONSE,
+	{ OID_CRYPTLIB_RTCSRESP, MK_FIELDID( CRYPT_CONTENT_RTCSRESPONSE ),
 	  DESCRIPTION( "contentType.rtcsResponse (1 3 6 1 4 1 3029 4 1 5)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
-	{ OID_CRYPTLIB_RTCSRESP_EXT, CRYPT_CONTENT_RTCSRESPONSE_EXT,
+	{ OID_CRYPTLIB_RTCSRESP_EXT, MK_FIELDID( CRYPT_CONTENT_RTCSRESPONSE_EXT ),
 	  DESCRIPTION( "contentType.rtcsResponseExt (1 3 6 1 4 1 3029 4 1 6)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  0, FL_OPTIONAL, RANGE_NONE },
 #endif /* USE_CERTVAL */
-	{ MKOID( "\x06\x06\x67\x81\x08\x01\x01\x01" ), CRYPT_CONTENT_MRTD,
+	{ MKOID( "\x06\x06\x67\x81\x08\x01\x01\x01" ), MK_FIELDID( CRYPT_CONTENT_MRTD ),
 	  DESCRIPTION( "contentType.mRTD (2 23 136 1 1 1)" )
 	  ENCODING_SPECIAL( IDENTIFIER ),
 	  FL_ATTR_ATTREND, FL_OPTIONAL, RANGE_NONE },
-	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_IATTRIBUTE_LAST }, { NULL, CRYPT_IATTRIBUTE_LAST }
 	};
 
 /* Select the appropriate attribute information table for encoding/type 
@@ -3471,7 +3476,7 @@ static BOOLEAN checkExtension( IN_ARRAY( noAttributeInfoEntries ) \
 		}
 
 	for( iterationCount = 0;
-		 attributeInfoPtr->fieldID != CRYPT_ERROR && \
+		 !isAttributeTableEnd( attributeInfoPtr ) && \
 			iterationCount < noAttributeInfoEntries;
 		 attributeInfoPtr++, iterationCount++ )
 		{
@@ -3530,6 +3535,9 @@ static BOOLEAN checkExtension( IN_ARRAY( noAttributeInfoEntries ) \
 
 		/* Make sure that the field entries are consistent with the field 
 		   type */
+		if( attributeInfoPtr->fieldType < FIELDTYPE_LAST || \
+			attributeInfoPtr->fieldType >= MAX_TAG )
+			return( FALSE ); 
 		if( attributeInfoPtr->fieldType == FIELDTYPE_CHOICE && \
 			attributeInfoPtr->extraData == NULL )
 			{
@@ -3558,7 +3566,8 @@ static BOOLEAN checkExtension( IN_ARRAY( noAttributeInfoEntries ) \
 			const ATTRIBUTE_INFO *nextAttributeInfoPtr = attributeInfoPtr + 1;
 
 			/* FIELDID_FOLLOWS entry must be at the start of the attribute 
-			   and must followed by the one that contains the actual field ID */
+			   and must followed by the one that contains the actual field 
+			   ID */
 			if( !( attributeInfoPtr->typeInfoFlags & FL_ATTR_ATTRSTART ) )
 				return( FALSE );
 			if( nextAttributeInfoPtr->fieldID < CRYPT_CERTINFO_FIRST_EXTENSION || \
@@ -3622,7 +3631,7 @@ static BOOLEAN checkExtension( IN_ARRAY( noAttributeInfoEntries ) \
 
 			for( subTableInfoPtr = attributeInfoPtr->extraData, \
 					innerIterationCount = 0;
-				 subTableInfoPtr->fieldID != CRYPT_ERROR && \
+				 !isAttributeTableEnd( subTableInfoPtr ) && \
 					innerIterationCount < FAILSAFE_ITERATIONS_MED;
 				 subTableInfoPtr++, innerIterationCount++ )
 				{
@@ -3710,7 +3719,7 @@ static BOOLEAN checkExtensionTable( IN_ARRAY( noAttributeInfoEntries ) \
 	baseAttributeID = ( attributeInfoPtr->fieldID == FIELDID_FOLLOWS ) ? \
 					  attributeInfoPtr[ 1 ].fieldID : attributeInfoPtr->fieldID;
 	for( index = 0;
-		 attributeInfoPtr->fieldID != CRYPT_ERROR && \
+		 !isAttributeTableEnd( attributeInfoPtr ) && \
 			index < noAttributeInfoEntries;
 		 attributeInfoPtr++, index++ )
 		{
@@ -3741,7 +3750,7 @@ static BOOLEAN checkExtensionTable( IN_ARRAY( noAttributeInfoEntries ) \
 
 		/* Skip the remainder of this attribute */
 		for( iterationCount = 0;
-			 attributeInfoPtr->fieldID != CRYPT_ERROR && \
+			 !isAttributeTableEnd( attributeInfoPtr ) && \
 				!( attributeInfoPtr->typeInfoFlags & FL_ATTR_ATTREND ) && \
 				iterationCount < noAttributeInfoEntries;
 			 attributeInfoPtr++, iterationCount++ );
@@ -3891,7 +3900,7 @@ static int checkURLString( IN_BUFFER( urlLength ) const char *url,
 		{
 		const int ch = byteToInt( url[ i ] );
 
-		if( ch <= 0 || ch > 0x7F || !isPrint( ch ) || \
+		if( !isValidTextChar( ch ) || \
 			ch == ' ' || ch == '<' || ch == '>' || ch == '"' || \
 			ch == '{' || ch == '}' || ch == '|' || ch == '\\' || \
 			ch == '^' || ch == '[' || ch == ']' || ch == '`' )

@@ -109,6 +109,8 @@ static int performUpdate( INOUT DBMS_INFO *dbmsInfo,
 			isReadPtr( boundData, \
 					   sizeof( BOUND_DATA ) * BOUND_DATA_MAXITEMS ) );
 
+	ANALYSER_HINT_STRING( command );
+
 	REQUIRES( ( updateType == DBMS_UPDATE_ABORT && \
 				command == NULL && commandLength == 0 ) || \
 			  ( updateType != DBMS_UPDATE_ABORT && \
@@ -180,6 +182,8 @@ static int performQuery( INOUT DBMS_INFO *dbmsInfo,
 	assert( ( boundData == NULL ) || \
 			isReadPtr( boundData, \
 					   sizeof( BOUND_DATA ) * BOUND_DATA_MAXITEMS ) );
+
+	ANALYSER_HINT_STRING( command );
 
 	REQUIRES( ( ( queryType == DBMS_QUERY_CONTINUE || \
 				  queryType == DBMS_QUERY_CANCEL ) && \

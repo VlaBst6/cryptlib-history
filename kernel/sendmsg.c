@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Kernel Message Dispatcher						*
-*						Copyright Peter Gutmann 1997-2007					*
+*						Copyright Peter Gutmann 1997-2012					*
 *																			*
 ****************************************************************************/
 
@@ -20,21 +20,22 @@
 static KERNEL_DATA *krnlData = NULL;
 
 /* The ACL used to check objects passed as message parameters, in this case
-   for cert sign/sig-check messages */
+   for certificate sign/sig-check messages */
 
 static const MESSAGE_ACL FAR_BSS messageParamACLTbl[] = {
-	/* Certs can only be signed by (private-key) PKC contexts */
+	/* Certificates can only be signed by (private-key) PKC contexts */
 	{ MESSAGE_CRT_SIGN,
 	  { ST_CTX_PKC,
 		ST_NONE, ST_NONE } },
 
-	/* Signatures can be checked with a raw PKC context or a cert or cert
-	   chain.  The object being checked can also be checked against a CRL,
-	   against revocation data in a cert store, or against an RTCS or OCSP
-	   responder */
+	/* Signatures can be checked with a raw PKC context or a certificate 
+	   (but specifically not a certificate chain, see the long discussion
+	   in certs/certschk.c for details on this).  The object being checked 
+	   can also be checked against a CRL, against revocation data in a 
+	   certificate store, or against an RTCS or OCSP responder */
 	{ MESSAGE_CRT_SIGCHECK,
-	  { ST_CTX_PKC | ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_CRL,
-	    ST_KEYSET_DBMS,
+	  { ST_CTX_PKC | ST_CERT_CERT | ST_CERT_CRL,
+	    ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE,
 		ST_SESS_RTCS | ST_SESS_OCSP } },
 
 	/* End-of-ACL marker */
@@ -106,16 +107,22 @@ static const MESSAGE_ACL *findParamACL( IN_MESSAGE const MESSAGE_TYPE message )
 
 /* Wait for an object to become available so that we can use it, with a 
    timeout for blocked objects (dulcis et alta quies placidaeque similima 
-   morti).  This is an internal function which is used when mapping an 
-   object handle to object data, and is never called directly.  As an aid in 
-   identifying objects acting as bottlenecks, we provide a function to warn 
-   about excessive waiting, along with information on the object that was 
-   waited on, in debug mode.  A wait count threshold of 100 is generally 
-   high enough to avoid false positives caused by (for example) network 
-   subsystem delays */
+   morti).  We spin for WAITCOUNT_SLEEP_THRESHOLD turns, then sleep (see
+   the comment in waitForObject() for more on this), and finally bail out
+   once MAX_WAITCOUNT is reached.  
+   
+   This is an internal function that's used when mapping an object handle to 
+   object data, and is never called directly.  
+   
+   As an aid in identifying objects acting as bottlenecks, we provide a 
+   function to warn about excessive waiting, along with information on the 
+   object that was waited on, in debug mode.  A wait count threshold of 
+   100 is generally high enough to avoid false positives caused by (for 
+   example) network subsystem delays */
 
-#define MAX_WAITCOUNT				10000
-#define WAITCOUNT_WARN_THRESHOLD	100
+#define WAITCOUNT_SLEEP_THRESHOLD		100
+#define WAITCOUNT_WARN_THRESHOLD		100
+#define MAX_WAITCOUNT					1000
 
 #if !defined( NDEBUG )
 
@@ -212,7 +219,7 @@ static void getObjectDescription( IN_HANDLE const int objectHandle,
 
 /* Non thread-safe version of the above that can be used directly in
    printf() statements.  This is only called for diagnostics during startup/
-   shutdown when there's guaranteed to be only one thread active */
+   shutdown where there's guaranteed to be only one thread active */
 
 const char *getObjectDescriptionNT( IN_HANDLE const int objectHandle )
 	{
@@ -242,7 +249,7 @@ static void waitWarn( IN_HANDLE const int objectHandle,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int waitForObject( IN_HANDLE const int objectHandle, 
-				   OUT_PTR OBJECT_INFO **objectInfoPtrPtr )
+				   OUT_OPT_PTR OBJECT_INFO **objectInfoPtrPtr )
 	{
 	OBJECT_INFO *objectTable = krnlData->objectTable;
 	const int uniqueID = objectTable[ objectHandle ].uniqueID;
@@ -252,12 +259,40 @@ int waitForObject( IN_HANDLE const int objectHandle,
 	REQUIRES( isValidObject( objectHandle ) );
 	REQUIRES( isInUse( objectHandle ) && !isObjectOwner( objectHandle ) );
 
+	/* Clear return value */
+	*objectInfoPtrPtr = NULL;
+
 	/* While the object is busy, put the thread to sleep (Pauzele lungi si
 	   dese; Cheia marilor succese).  This is the only really portable way
 	   to wait on the resource, which gives up this thread's timeslice to
 	   allow other threads (including the one using the object) to run.
 	   Somewhat better methods methods such as mutexes with timers are
-	   difficult to manage portably across different platforms */
+	   difficult to manage portably across different platforms.
+
+	   Even this can cause problems in some circumstances.  The idea behind 
+	   the mechanism below is that by yielding the CPU, whichever thread 
+	   currently holds the object gets to finish with it and then the 
+	   current thread resumes.  However if there's a thundering-herd 
+	   situation where a dozen other threads are waiting on the lock and 
+	   they've voluntarily yielded the CPU and the scheduler prioritises 
+	   them above other threads because of this then they'll all fight for 
+	   the lock and so the thread that holds the object that they're waiting 
+	   on never gets to run.
+	   
+	   This seems somewhat unlikely, but it's cropped up on multicore 
+	   hyperthreaded Linux machines running large numbers of threads, 
+	   probably because of the thread-scheduling pecularities of HT CPUs
+	   combined with the thread-scheduling peculiarities of Linux (it
+	   doesn't occur on the same systems running Windows or other OSes).  
+	   The problem seems to be that if a thread yields on a CPU other than
+	   the one that holds the resource and no other threads are waiting to
+	   run then it's immediately re-scheduled, because the yield only 
+	   applies to threads on the same CPU.
+
+	   To deal with this we turn the basic thread-timeslice-yield into a 
+	   more aggressive thread-sleep (which really does yield the CPU, even
+	   with the thread-scheduling described above) if 
+	   WAITCOUNT_SLEEP_THRESHOLD yields are exceeded */
 	while( isValidObject( objectHandle ) && \
 		   objectTable[ objectHandle ].uniqueID == uniqueID && \
 		   isInUse( objectHandle ) && waitCount < MAX_WAITCOUNT && \
@@ -267,6 +302,13 @@ int waitForObject( IN_HANDLE const int objectHandle,
 		MUTEX_UNLOCK( objectTable );
 		waitCount++;
 		THREAD_YIELD();
+		if( waitCount > WAITCOUNT_SLEEP_THRESHOLD )
+			{
+			/* We've waited for over WAITCOUNT_SLEEP_THRESHOLD thread
+			   timeslices, explicitly put the thread to sleep rather than 
+			   just yielding its timeslice */
+			THREAD_SLEEP( 1 );
+			}
 		MUTEX_LOCK( objectTable );
 		objectTable = krnlData->objectTable;
 		}
@@ -319,9 +361,9 @@ int waitForObject( IN_HANDLE const int objectHandle,
 /* Find the ultimate target of an object attribute manipulation message by
    walking down the chain of controlling -> dependent objects.  For example
    a message targeted at a device and sent to a certificate would be routed
-   to the cert's dependent object (which would typically be a context).
-   The device message targeted at the context would in turn be routed to the
-   context's dependent device, which is its final destination */
+   to the certificate's dependent object (which would typically be a 
+   context).  The device message targeted at the context would in turn be 
+   routed to the context's dependent device, which is its final destination */
 
 CHECK_RETVAL \
 int findTargetType( IN_HANDLE const int originalObjectHandle, 
@@ -403,10 +445,10 @@ int findTargetType( IN_HANDLE const int originalObjectHandle,
 
 /* Find the ultimate target of a compare message by walking down the chain
    of controlling -> dependent objects.  For example a message targeted at a
-   device and sent to a certificate would be routed to the cert's dependent
-   object (which would typically be a context).  The device message targeted
-   at the context would be routed to the context's dependent device, which
-   is its final destination */
+   device and sent to a certificate would be routed to the certificate's 
+   dependent object (which would typically be a context).  The device 
+   message targeted at the context would be routed to the context's 
+   dependent device, which is its final destination */
 
 CHECK_RETVAL \
 static int routeCompareMessageTarget( IN_HANDLE const int originalObjectHandle,
@@ -425,6 +467,7 @@ static int routeCompareMessageTarget( IN_HANDLE const int originalObjectHandle,
 			  messageValue == MESSAGE_COMPARE_KEYID_OPENPGP || \
 			  messageValue == MESSAGE_COMPARE_SUBJECT || \
 			  messageValue == MESSAGE_COMPARE_ISSUERANDSERIALNUMBER || \
+			  messageValue == MESSAGE_COMPARE_SUBJECTKEYIDENTIFIER || \
 			  messageValue == MESSAGE_COMPARE_FINGERPRINT_SHA1 || \
 			  messageValue == MESSAGE_COMPARE_FINGERPRINT_SHA2 || \
 			  messageValue == MESSAGE_COMPARE_FINGERPRINT_SHAng || \
@@ -445,6 +488,7 @@ static int routeCompareMessageTarget( IN_HANDLE const int originalObjectHandle,
 
 		case MESSAGE_COMPARE_SUBJECT:
 		case MESSAGE_COMPARE_ISSUERANDSERIALNUMBER:
+		case MESSAGE_COMPARE_SUBJECTKEYIDENTIFIER:
 		case MESSAGE_COMPARE_FINGERPRINT_SHA1:
 		case MESSAGE_COMPARE_FINGERPRINT_SHA2:
 		case MESSAGE_COMPARE_FINGERPRINT_SHAng:
@@ -683,19 +727,19 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	  PARAMTYPE_NONE_NONE },
 
 	/* Object-type-specific messages: Certificates */
-	{ MESSAGE_CRT_SIGN,				/* Cert: Action = sign cert */
+	{ MESSAGE_CRT_SIGN,				/* Cert: Action = sign certificate */
 	  ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL | \
 		ST_CERT_OCSP_REQ | ST_CERT_OCSP_RESP, ST_NONE, ST_NONE, 
 	  PARAMTYPE_NONE_ANY,
 	  PRE_POST_DISPATCH( CheckStateParamHandle, ChangeState ) },
-	{ MESSAGE_CRT_SIGCHECK,			/* Cert: Action = check/verify cert */
+	{ MESSAGE_CRT_SIGCHECK,			/* Cert: Action = check/verify certificate */
 	  ROUTE( OBJECT_TYPE_CERTIFICATE ),
 		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL | \
 		ST_CERT_RTCS_RESP | ST_CERT_OCSP_RESP, ST_NONE, ST_NONE, 
 	  PARAMTYPE_NONE_ANY,
 	  PRE_DISPATCH( CheckParamHandleOpt ) },
-	{ MESSAGE_CRT_EXPORT,			/* Cert: Export encoded cert data */
+	{ MESSAGE_CRT_EXPORT,			/* Cert: Export encoded certificate data */
 	  ROUTE( OBJECT_TYPE_CERTIFICATE ), ST_CERT_ANY, ST_NONE, ST_NONE, 
 	  PARAMTYPE_DATA_FORMATTYPE,
 	  PRE_DISPATCH( CheckExportAccess ) },
@@ -758,12 +802,12 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	  PRE_DISPATCH( CheckData ) },
 
 	/* Object-type-specific messages: Keysets */
-	{ MESSAGE_KEY_GETKEY,			/* Keyset: Instantiate ctx/cert */
+	{ MESSAGE_KEY_GETKEY,			/* Keyset: Instantiate ctx/certificate */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_KEYSET, OBJECT_TYPE_DEVICE ),
 		ST_NONE, ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
 	  PARAMTYPE_DATA_ITEMTYPE,
 	  PRE_POST_DISPATCH( CheckKeysetAccess, MakeObjectExternal ) },
-	{ MESSAGE_KEY_SETKEY,			/* Keyset: Add ctx/cert */
+	{ MESSAGE_KEY_SETKEY,			/* Keyset: Add ctx/certificate */
 	  ROUTE_FIXED_ALT( OBJECT_TYPE_KEYSET, OBJECT_TYPE_DEVICE ),
 		ST_NONE, ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
 	  PARAMTYPE_DATA_ITEMTYPE,
@@ -783,7 +827,7 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 		ST_NONE, ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE,
 	  PARAMTYPE_DATA_ITEMTYPE,
 	  PRE_POST_DISPATCH( CheckKeysetAccess, MakeObjectExternal ) },
-	{ MESSAGE_KEY_CERTMGMT,			/* Keyset: Cert management */
+	{ MESSAGE_KEY_CERTMGMT,			/* Keyset: Certificate management */
 	  ROUTE_FIXED( OBJECT_TYPE_KEYSET ),
 		ST_NONE, ST_KEYSET_DBMS_STORE, ST_NONE,
 	  PARAMTYPE_DATA_CERTMGMTTYPE,

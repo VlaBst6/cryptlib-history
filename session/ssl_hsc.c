@@ -104,12 +104,26 @@ static int addSessionToCache( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 	else
 		{
+		BYTE sessionIDbuffer[ KEYID_SIZE + 8 ];
+		const BYTE *sessionIDptr = handshakeInfo->sessionID;
+		int sessionIDlength = handshakeInfo->sessionIDlength;
+
 		/* We're the server, add the client's state information indexed by 
 		   the sessionID */
+		if( handshakeInfo->hashedSNIpresent )
+			{
+			/* If there's an SNI present, update the session ID to include 
+			   it */
+			status = convertSNISessionID( handshakeInfo, sessionIDbuffer, 
+										  KEYID_SIZE );
+			if( cryptStatusError( status ) )
+				return( status );
+			sessionIDptr = sessionIDbuffer;
+			sessionIDlength = KEYID_SIZE;
+			}
 		status = cachedID = \
 				addScoreboardEntry( sslInfo->scoreboardInfoPtr,
-									handshakeInfo->sessionID,
-									handshakeInfo->sessionIDlength,
+									sessionIDptr, sessionIDlength,
 									masterSecret, masterSecretSize );
 		}
 	if( cryptStatusError( status ) )
@@ -428,7 +442,9 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	BYTE masterSecret[ SSL_SECRET_SIZE + 8 ];
 	BYTE initiatorHashes[ ( CRYPT_MAX_HASHSIZE * 2 ) + 8 ];
 	BYTE responderHashes[ ( CRYPT_MAX_HASHSIZE * 2 ) + 8 ];
+#ifdef USE_SSL3
 	const void *sslInitiatorString, *sslResponderString;
+#endif /* USE_SSL3 */
 	const void *tlsInitiatorString, *tlsResponderString;
 	const BOOLEAN isInitiator = isResumedSession ? !isClient : isClient;
 	const BOOLEAN updateSessionCache = 	\
@@ -454,16 +470,20 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	if( isResumedSession )
 		{
 		/* Resumed session, initiator = server, responder = client */
+#ifdef USE_SSL3
 		sslInitiatorString = SSL_SENDER_SERVERLABEL;
 		sslResponderString = SSL_SENDER_CLIENTLABEL;
+#endif /* USE_SSL3 */
 		tlsInitiatorString = "server finished";
 		tlsResponderString = "client finished";
 		}
 	else
 		{
 		/* Normal session, initiator = client, responder = server */
+#ifdef USE_SSL3
 		sslInitiatorString = SSL_SENDER_CLIENTLABEL;
 		sslResponderString = SSL_SENDER_SERVERLABEL;
+#endif /* USE_SSL3 */
 		tlsInitiatorString = "client finished";
 		tlsResponderString = "server finished";
 		}
@@ -509,6 +529,7 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Complete the dual-MAC/MAC of the initiator-side messages and, if 
 	   we're the responder, check that the MACs match the ones supplied by
 	   the initiator */
+#ifdef USE_SSL3
 	if( sessionInfoPtr->version <= SSL_MINOR_VERSION_SSL )
 		{
 		status = completeSSLDualMAC( initiatorMD5context, initiatorSHA1context,
@@ -517,6 +538,7 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 							sslLabelLength, masterSecret, SSL_SECRET_SIZE );
 		}
 	else
+#endif /* USE_SSL3 */
 		{
 		if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
 			{
@@ -589,6 +611,7 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 							 responderSHA2context );
 		return( status );
 		}
+#ifdef USE_SSL3
 	if( sessionInfoPtr->version <= SSL_MINOR_VERSION_SSL )
 		{
 		status = completeSSLDualMAC( responderMD5context, responderSHA1context,
@@ -597,6 +620,7 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 							sslLabelLength, masterSecret, SSL_SECRET_SIZE );
 		}
 	else
+#endif /* USE_SSL3 */
 		{
 		if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
 			{

@@ -55,11 +55,11 @@ static KERNEL_DATA *krnlData = NULL;
    this we can't just memset the entry to all zeroes */
 
 static const OBJECT_INFO FAR_BSS OBJECT_INFO_TEMPLATE = {
-	OBJECT_TYPE_NONE, 0,		/* Type, subtype */
+	OBJECT_TYPE_NONE, SUBTYPE_NONE,	/* Type, subtype */
 	NULL, 0,					/* Object data and size */
 	OBJECT_FLAG_INTERNAL | OBJECT_FLAG_NOTINITED,	/* Flags */
 	0,							/* Action flags */
-	0, 0,						/* Ref.count, lock count */
+	1, 0, 0,					/* Int.and ext. ref.counts, lock count */
 #ifdef USE_THREADS
 	THREAD_INITIALISER,			/* Lock owner */
 #endif /* USE_THREADS */
@@ -69,8 +69,8 @@ static const OBJECT_INFO FAR_BSS OBJECT_INFO_TEMPLATE = {
 	THREAD_INITIALISER,			/* Owner */
 #endif /* USE_THREADS */
 	NULL,						/* Message function */
-	CRYPT_ERROR, CRYPT_ERROR,
-	CRYPT_ERROR					/* Owning/dependent objects */
+	CRYPT_ERROR,				/* Owner */
+	CRYPT_ERROR, CRYPT_ERROR	/* Dependent object/device */
 	};
 
 /* A template used to initialise the object allocation state data */
@@ -214,7 +214,7 @@ int destroyObjectData( IN_HANDLE const int objectHandle )
 	/* Inner precondition: There's valid object data present */
 	REQUIRES( objectInfoPtr->objectPtr != NULL && \
 			  objectInfoPtr->objectSize > 0 && \
-			  objectInfoPtr->objectSize < MAX_INTLENGTH );
+			  objectInfoPtr->objectSize < MAX_BUFFER_SIZE );
 
 	/* Destroy the object's data and clear the object table entry */
 	if( objectInfoPtr->flags & OBJECT_FLAG_SECUREMALLOC )
@@ -387,6 +387,13 @@ int destroyObjects( void )
 	for( objectHandle = SYSTEM_OBJECT_HANDLE + 1;
 		 objectHandle < NO_SYSTEM_OBJECTS; objectHandle++ )
 		{
+		/* In the extremely unlikely event that we encounter an error during 
+		   the creation of the system object, no other objects will have been 
+		   created, so before we try and destroy an object we make sure that 
+		   it's actually been created */
+		if( !isValidObject( objectHandle ) )
+			continue;
+
 		status = destroyObject( objectHandle );
 		ENSURES( cryptStatusOK( status ) );
 		}
@@ -684,7 +691,11 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 	   which ensures that we don't try and create multi-typed objects, the
 	   sole exception to this rule is the default user object, which acts as
 	   both a user and an SO object) */
-	REQUIRES( objectDataSize > 16 && objectDataSize < 16384 );
+	REQUIRES( objectDataSize > 16 && \
+			  ( ( !( type == OBJECT_TYPE_CONTEXT && subType == SUBTYPE_CTX_PKC ) && \
+				objectDataSize < MAX_INTLENGTH_SHORT ) || \
+			  ( type == OBJECT_TYPE_CONTEXT && subType == SUBTYPE_CTX_PKC && \
+				objectDataSize < MAX_INTLENGTH ) ) );
 	REQUIRES( isValidType( type ) );
 	REQUIRES( \
 		( bitCount = ( subType & ~SUBTYPE_CLASS_MASK ) - \
@@ -717,7 +728,13 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 	/* Allocate memory for the object and set up as much as we can of the 
 	   object table entry (the remainder has to be set up inside the object-
 	   table lock).  The object is always created as an internal object, 
-	   it's up to the caller to make it externally visible */
+	   it's up to the caller to make it externally visible.
+	   
+	   The apparently redundant clearning of objectInfo before overwriting
+	   it with the object-info template is due to yet another gcc bug, in
+	   this case in the x64 debug (-o0) build, for which it doesn't memcpy()
+	   the template across but sets each field individually, leaving 
+	   whatever padding bytes were present beforehand set to random values */
 	if( createObjectFlags & CREATEOBJECT_FLAG_SECUREMALLOC )
 		{
 		int status = krnlMemalloc( objectDataPtr, objectDataSize );
@@ -731,6 +748,7 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 			return( CRYPT_ERROR_MEMORY );
 		}
 	memset( *objectDataPtr, 0, objectDataSize );
+	memset( &objectInfo, 0, sizeof( OBJECT_INFO ) ); /* See comment above */
 	objectInfo = OBJECT_INFO_TEMPLATE;
 	objectInfo.objectPtr = *objectDataPtr;
 	objectInfo.objectSize = objectDataSize;

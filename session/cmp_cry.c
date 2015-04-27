@@ -335,7 +335,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int checkMessageMAC( INOUT STREAM *stream, 
 					 INOUT CMP_PROTOCOL_INFO *protocolInfo,
 					 IN_BUFFER( messageLength ) const void *message,
-					 IN_LENGTH const int messageLength )
+					 IN_DATALENGTH const int messageLength )
 	{
 	MESSAGE_DATA msgData;
 	BYTE macValue[ CRYPT_MAX_HASHSIZE + 8 ];
@@ -345,7 +345,7 @@ int checkMessageMAC( INOUT STREAM *stream,
 	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 	assert( isReadPtr( message, messageLength ) );
 
-	REQUIRES( messageLength > 0 && messageLength < MAX_INTLENGTH );
+	REQUIRES( messageLength > 0 && messageLength < MAX_BUFFER_SIZE );
 
 	/* Read the BIT STRING encapsulation and get a pointer to the MAC value */
 	status = readBitStringHole( stream, &macValueLength, 16, DEFAULT_TAG );
@@ -375,7 +375,7 @@ int checkMessageMAC( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int checkMessageSignature( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 						   IN_BUFFER( messageLength ) const void *message,
-						   IN_LENGTH const int messageLength,
+						   IN_DATALENGTH const int messageLength,
 						   IN_BUFFER( signatureLength ) const void *signature,
 						   IN_LENGTH_SHORT const int signatureLength,
 						   IN_HANDLE const CRYPT_HANDLE iAuthContext )
@@ -388,7 +388,7 @@ int checkMessageSignature( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 	assert( isReadPtr( message, messageLength ) );
 	assert( isReadPtr( signature, signatureLength ) );
 
-	REQUIRES( messageLength > 0 && messageLength < MAX_INTLENGTH );
+	REQUIRES( messageLength > 0 && messageLength < MAX_BUFFER_SIZE );
 	REQUIRES( signatureLength > 0 && signatureLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( isHandleRangeValid( iAuthContext ) );
 

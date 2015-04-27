@@ -34,9 +34,9 @@
 
 #if defined( USE_TCP ) && defined( USE_DNSSRV )
 
-#if defined( _MSC_VER )
+#if defined( _MSC_VER ) || defined( __GNUC__ )
   #pragma message( "  Building with DNS SRV enabled." )
-#endif /* Warn with VC++ */
+#endif /* Warn about special features enabled */
 
 /****************************************************************************
 *																			*
@@ -169,6 +169,8 @@ static int convertToSrv( OUT_BUFFER_FIXED( srvNameMaxLen ) char *srvName,
 
 	assert( isReadPtr( srvName, srvNameMaxLen ) );
 	assert( isReadPtr( hostName, MIN_DNS_SIZE ) );
+	
+	ANALYSER_HINT_STRING( hostName );
 
 	REQUIRES( srvNameMaxLen > 0 && srvNameMaxLen <= MAX_DNS_SIZE );
 	REQUIRES( srvName != hostName );
@@ -256,8 +258,9 @@ static int getSrvFQDN( INOUT NET_STREAM_INFO *netStream,
 
 			/* Check for a name */
 			if( DnsQuery( cachedFQDN, DNS_TYPE_PTR, DNS_QUERY_BYPASS_CACHE,
-						  NULL, &pDns, NULL ) == 0 )
+						  NULL, &pDns, NULL ) == ERROR_SUCCESS )
 				break;
+			pDns = NULL;
 			}
 		}
 	if( pDns == NULL )
@@ -406,7 +409,7 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 #define SRV_NAME_OFFSET		( NS_RRFIXEDSZ + 6 )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int getFQDN( INOUT NET_STREAM_INFO *netStream, 
+static int getFQDN( STDC_UNUSED INOUT NET_STREAM_INFO *netStream, 
 					OUT_BUFFER_FIXED( fqdnMaxLen ) char *fqdn, 
 					IN_LENGTH_DNS const int fqdnMaxLen )
 	{
@@ -603,7 +606,8 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 		int priority, port;
 
 		nameSegmentLen = dn_skipname( namePtr, endPtr );
-		if( nameSegmentLen <= 0 || nameSegmentLen > MAX_DNS_SIZE )
+		if( nameSegmentLen <= 0 || nameSegmentLen > MAX_DNS_SIZE || \
+			namePtr + nameSegmentLen + NS_SRVFIXEDSZ > endPtr )
 			{
 	        return( setSocketError( netStream, "RR contains invalid answer", 26,
 	                                CRYPT_ERROR_BADDATA, FALSE ) );
@@ -625,18 +629,14 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 			/* It's a lower-priority host, skip it */
 			nameSegmentLen = dn_skipname( namePtr, endPtr );
 			}
-		if( nameSegmentLen <= 0 || nameSegmentLen > MAX_DNS_SIZE )
+		if( nameSegmentLen <= 0 || nameSegmentLen > MAX_DNS_SIZE || \
+			namePtr + nameSegmentLen > endPtr )
 			{
 	        return( setSocketError( netStream, "RR contains invalid answer", 26,
 	                                CRYPT_ERROR_NOTFOUND, FALSE ) );
 			}
 		hostName[ nameSegmentLen ] = '\0';
 		namePtr += nameSegmentLen;
-		}
-	if( namePtr > endPtr )
-		{
-		return( setSocketError( netStream, "RR contains invalid data", 24,
-								CRYPT_ERROR_BADDATA, FALSE ) );
 		}
 #ifdef EBCDIC_CHARS
 	ebcdicToAscii( hostName, strlen( hostName ) );

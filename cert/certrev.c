@@ -485,7 +485,8 @@ int sizeofCRLentry( INOUT REVOCATION_INFO *crlEntry )
 	/* Remember the encoded attribute size for later when we write the
 	   attributes */
 	status = \
-		crlEntry->attributeSize = sizeofAttributes( crlEntry->attributes );
+		crlEntry->attributeSize = sizeofAttributes( crlEntry->attributes,
+													CRYPT_CERTTYPE_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -994,7 +995,8 @@ int sizeofOcspRequestEntry( INOUT REVOCATION_INFO *ocspEntry )
 	/* Remember the encoded attribute size for later when we write the
 	   attributes */
 	status = \
-		ocspEntry->attributeSize = sizeofAttributes( ocspEntry->attributes );
+		ocspEntry->attributeSize = sizeofAttributes( ocspEntry->attributes,
+													 CRYPT_CERTTYPE_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -1148,7 +1150,8 @@ int sizeofOcspResponseEntry( INOUT REVOCATION_INFO *ocspEntry )
 	/* Remember the encoded attribute size for later when we write the
 	   attributes */
 	status = \
-		ocspEntry->attributeSize = sizeofAttributes( ocspEntry->attributes );
+		ocspEntry->attributeSize = sizeofAttributes( ocspEntry->attributes,
+													 CRYPT_CERTTYPE_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 

@@ -173,6 +173,7 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	CRYPT_CERTIFICATE iCertResponse;
 	MESSAGE_DATA msgData;
+	STREAM_PEER_TYPE peerSystemType;
 	STREAM stream;
 	BYTE nonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	const char *errorString = NULL;
@@ -186,6 +187,13 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 		return( status );
 	DEBUG_DUMP_FILE( "ocsp_resp", sessionInfoPtr->receiveBuffer,
 					 sessionInfoPtr->receiveBufEnd );
+
+	/* See whether we can determine the remote system type, used to work 
+	   around bugs in implementations */
+	status = sioctlGet( &sessionInfoPtr->stream, STREAM_IOCTL_GETPEERTYPE, 
+						&peerSystemType, sizeof( STREAM_PEER_TYPE ) );
+	if( cryptStatusError( status ) )
+		peerSystemType = STREAM_PEER_NONE;
 
 	/* Try and extract an OCSP status code from the returned object:
 
@@ -226,7 +234,16 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 			break;
 
 		case OCSP_RESP_UNAUTHORISED:
-			errorString = "Client isn't authorised to perform query";
+			if( peerSystemType == STREAM_PEER_MICROSOFT )
+				{
+				errorString = "Client isn't authorised to perform query.  "
+							  "This is probably due to a Windows Server "
+							  "configuration issue, the server administrator "
+							  "needs to enable 'Allow Nonce requests' for "
+							  "compliance with RFC 2560";
+				}
+			else
+				errorString = "Client isn't authorised to perform query";
 			status = CRYPT_ERROR_PERMISSION;
 			break;
 
@@ -261,7 +278,8 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 		}
 	status = importCertFromStream( &stream, &iCertResponse, 
 								   DEFAULTUSER_OBJECT_HANDLE,
-								   CRYPT_CERTTYPE_OCSP_RESPONSE, length );
+								   CRYPT_CERTTYPE_OCSP_RESPONSE, length,
+								   KEYMGMT_FLAG_NONE );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		retExt( status, 

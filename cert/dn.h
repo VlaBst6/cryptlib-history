@@ -72,8 +72,8 @@ typedef struct DC {
 /* Type information for DN components */
 
 typedef struct {
-	const CRYPT_ATTRIBUTE_TYPE type;/* cryptlib type or index value for non-
-									   cryptlib attributes */
+	const int type;					/* cryptlib attribute type, or index 
+									   value for non-cryptlib attributes */
 	const BYTE *oid;				/* OID for this type */
 	ARRAY_FIXED( nameLen ) \
 	const char *name;				/* Name for this type */
@@ -108,12 +108,6 @@ int insertDNstring( INOUT DN_COMPONENT **dnComponentListPtrPtr,
 
 /* Prototypes for functions in dnstring.c */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
-int getAsn1StringInfo( IN_BUFFER( stringLen ) const void *string, 
-					   IN_LENGTH_SHORT const int stringLen,
-					   OUT_RANGE( 0, 20 ) int *stringType, 
-					   int *asn1StringType,
-					   OUT_LENGTH_SHORT_Z int *asn1StringLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int copyToAsn1String( OUT_BUFFER( destMaxLen, *destLen ) void *dest, 
 					  IN_LENGTH_SHORT const int destMaxLen, 

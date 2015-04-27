@@ -434,7 +434,7 @@ static void printTimes( HIRES_TIME times[ NO_TESTS + 1 ][ 8 ],
 		if( throughput <= 0 )
 			puts( ", throughput < 1 MB/s." );
 		else
-			printf( ", throughput %d MB/s.\n", throughput );
+			printf( ", throughput %ld MB/s.\n", throughput );
 		}
 	}
 

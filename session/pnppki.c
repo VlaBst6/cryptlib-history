@@ -600,7 +600,7 @@ int pnpPkiSession( INOUT SESSION_INFO *sessionInfoPtr )
 	/* Get the CA/RA certificate from the returned CTL and set it as the 
 	   certificate to use for authenticating server responses */
 	attributeListPtr = findSessionInfo( sessionInfoPtr->attributeList,
-										CRYPT_SESSINFO_SERVER_FINGERPRINT );
+										CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1 );
 	if( attributeListPtr != NULL )
 		{
 		status = getCACert( &iCACert, sessionInfoPtr->iCertResponse, 

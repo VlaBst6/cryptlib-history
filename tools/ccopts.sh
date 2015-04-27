@@ -9,17 +9,23 @@
 
 CCARGS=""
 OSNAME=`uname`
+ANALYSE=0
+ISCLANG=0
+ISCLANG_ANALYSER=0
 
 # Make sure that we've been given either single argument consisting of the
 # compiler name or the compiler name and an OS name for the shared-lib cc
-# options.
+# options or the compiler name and an indication that this is an analysis
+# build.
 
-if [ "$1" = "" ] ; then
+if [ -z "$1" ] ; then
 	echo "$0: Missing compiler name." >&2 ;
 	exit 1 ;
 fi
 if [ $# -eq 2 ] ; then
-	if [ "$2" != "autodetect" ] ; then
+	if [ "$2" = "analyse" ] ; then
+		ANALYSE=1 ;
+	elif [ "$2" != "autodetect" ] ; then
 		OSNAME=$2 ;
 	fi ;
 else
@@ -69,6 +75,8 @@ if [ `uname -s` = "Linux" ] ; then
 		ISDEVELOPMENT=1 ;
 	elif [ `hostname -f` = "pakastelohi.cypherpunks.to" ] ; then
 		ISDEVELOPMENT=1 ;
+	elif [ `hostname -f` = "grunt" ] ; then
+		ISDEVELOPMENT=1 ;
 	elif [ `uname -n | grep -c gcc[0-9][0-9]` -gt 0 ] ; then
 		case `uname -n` in
 			'gcc10'|'gcc33'|'gcc40'|'gcc51'|'gcc54'|'gcc55'|'gcc61')
@@ -77,9 +85,34 @@ if [ `uname -s` = "Linux" ] ; then
 	fi 
 fi
 
-# Check whether we're running using the clang static analyser
+# Check whether we're running using the clang static analyser.  Since this 
+# requires a build configuration specific to a development machine, we only
+# allow it to be enabled on a development system.
+#
+# Use of clang is a bit complicated because there's clang the compiler and
+# clang the static analyser, to deal with this we detect both the compiler
+# (via the "clang" string (general) or the "LLVM" string (Apple) in the 
+# verbose info) and the analyser (via the "ccc-analyzer" string in the 
+# verbose info).
 
-ISCLANG=`echo $CC | grep -c "ccc-analyzer"`
+if [ `$CC -v 2>&1 | grep -ci "clang"` -gt 0 -o \
+	 `$CC -v 2>&1 | grep -ci "llvm"` -gt 0 ] ; then
+	ISCLANG=1 ;
+fi
+if [ `$CC -v 2>&1 | grep -c "ccc-analyzer"` -gt 0 ] ; then
+	ISCLANG_ANALYSER=1 ;
+fi
+if [ $ISCLANG_ANALYSER -gt 0 ] ; then
+	ANALYSE=1 ;
+	if [ -z $CCC_CC ] ; then
+		echo "$0: Environment variable CCC_CC must be set to 'clang' for the analysis build." >&2 ;
+		exit 1 ;
+	fi ;
+	if [ $ISDEVELOPMENT -le 0 ] ; then
+		echo "$0: clang must be run on a system designated as a development environment by changing the ISDEVELOPMENT in this script." >&2 ;
+		exit 1 ;
+	fi ;
+fi
 
 # Determine whether various optional system features are installed and
 # enable their use if they're present.  Since these additional libs are
@@ -113,9 +146,6 @@ if [ $HASDYNLOAD -gt 0 ] ; then
 	if [ -f /usr/include/sql.h ] ; then
 		echo "ODBC interface detected, enabling ODBC support." >&2 ;
 		CCARGS="$CCARGS -DHAS_ODBC" ;
-		if [ $ISDEVELOPMENT -gt 0 ] ; then
-			CCARGS="$CCARGS -DUSE_ODBC" ;
-		fi ;
 	elif [ -f /usr/local/include/sql.h ] ; then
 		echo "ODBC interface detected, enabling ODBC support." >&2 ;
 		CCARGS="$CCARGS -DHAS_ODBC -I/usr/local/include" ;
@@ -134,9 +164,6 @@ if [ $HASDYNLOAD -gt 0 ] ; then
 		 -f /usr/include/opensc/pkcs11.h -o -f /usr/local/include/pkcs11.h ] ; then
 		echo "PKCS #11 interface detected, enabling PKCS #11 support." >&2 ;
 		CCARGS="$CCARGS -DHAS_PKCS11" ;
-		if [ $ISDEVELOPMENT -gt 0 ] ; then
-			CCARGS="$CCARGS -DUSE_PKCS11" ;
-		fi ;
 	fi
 	if [ -f /opt/nfast/toolkits/pkcs11/libcknfast.so -o \
 		 -f /usr/lib/libcknfast.so ] ; then
@@ -144,25 +171,87 @@ if [ $HASDYNLOAD -gt 0 ] ; then
 		CCARGS="$CCARGS -DNCIPHER_PKCS11" ;
 	fi
 fi
+if [ -d /usr/include/event2 -a -f /usr/include/event2/event.h ] ; then
+	echo "  (Enabling use of libevent)." >&2 ;
+	CCARGS="$CCARGS -DHAS_LIBEVENT" ;
+fi
 
-# If we're building on the usual development box, enable various unsafe
+# If we're building a development or analysis build, enable various unsafe
 # options that are normally disabled by default
 
-if [ $ISDEVELOPMENT -gt 0 ] ; then
-	echo "  (Enabling unsafe source code options for development version)." >&2 ;
+if [ $ANALYSE -gt 0 ] ; then
+	echo "  (Enabling all source code options for analysis build)." >&2 ;
+	CCARGS="$CCARGS -DUSE_ANALYSER" ;
+elif [ $ISDEVELOPMENT -gt 0 ] ; then
+	echo "  (Enabling additional source code options for development version)." >&2 ;
 	CCARGS="$CCARGS -DUSE_CERT_DNSTRING -DUSE_DNSSRV -DUSE_ECC" ;
 fi
 
 # If we're building with the clang static analyser, set options specific to
-# that.  clang uses gcc as a front-end with -Wall enabled so we have to
-# disable the false-positive-inducing options for that as per the long
-# comment at the end of this file for the -Wall debug build.  We also turn
-# off tautological-comparison warnings because the use of range checking
-# in REQUIRES() predicates gives nothing but false positives.
+# that.  The standard clang uses gcc as a front-end with -Wall enabled so 
+# we'd have to disable the false-positive-inducing options for that as per 
+# the long comment at the end of this file for the -Wall debug build, 
+# however we override the front-end type by setting the CCC_CC environment
+# variable to 'clang'.  Since almost all of the clang warnings are 
+# undocumented outside of analysing the source code, we resort to enabling
+# all warnings with -Weverything and then disabling the false positive-
+# inducing ones.  These are:
+#
+#	-Wno-gnu: 
+#	-Wno-language-extension-token: Use of a gcc'ism, which isn't a problem 
+#		in this case because clang detects as gcc in conditional-compilation 
+#		directives.
+#
+#	-Wno-missing-field-initializers: Missing initialisers in structs.  This 
+#		also warns about things like the fairly common 'struct foo = { 0 }', 
+#		which makes it too noisy for detecting problems.
+#
+#	-Wno-missing-prototypes: Declaration of function without an earlier
+#		prototype.
+#
+#	-Wno-padded: Padding in structs.
+#
+#	-Wno-pointer-sign: char * to unsigned char * and similar.
+#
+#	-Wno-shorten-64-to-32: Warn about long -> int conversion, this has the 
+#		potential to catch issues but at the moment leads to all false
+#		positives around things like the sizeofXXX() functions or stell(),
+#		as well as anything involving size_t (e.g. strlen()), which return a 
+#		long in general but are often used in cases where the range is an 
+#		int (or more generally a short).
+#
+#	-Wno-sign-compare: Compare int to unsigned int and similar.
+#
+#	-Wno-sign-conversion: int to unsigned int and similar.
+#
+#	-Wno-switch:
+#	-Wno-switch-enum: Unused enum values in a switch statement.  Since all 
+#		cryptlib attributes are declared from a single pool of enums but 
+#		only the values for a particular object class are used in the 
+#		object-specific code, this leads to huge numbers of warnings about 
+#		unhandled enum values in case statements.
+#
+#	-Wno-unused-macros: Macro defined but not used.  This typically occurs
+#		when macros are used to define constants (e.g. cipher block sizes),
+#		not all of which are used in the code.
+
+if [ $ISCLANG_ANALYSER -gt 0 ] ; then
+	echo "  (Enabling specific build options for clang)." >&2 ;
+	CCARGS="$CCARGS -Weverything" ;
+	CCARGS="$CCARGS -Wno-gnu -Wno-language-extension-token \
+			-Wno-missing-field-initializers -Wno-missing-prototypes \
+			-Wno-padded -Wno-pointer-sign -Wno-shorten-64-to-32 \
+			-Wno-sign-compare -Wno-sign-conversion -Wno-switch \
+			-Wno-switch-enum -Wno-unused-macros" ;
+fi
+
+# clang (the compiler, not the static analyser) has a subset of the above 
+# issues, since we're not using -Weverything for the pure compiler we only 
+# need to disable the two enabled-by default false-positive-inducing ones,
+# -Wswitch and -Wpointer-sign.
 
 if [ $ISCLANG -gt 0 ] ; then
-	echo "  (Enabling options for clang)." >&2 ;
-	CCARGS="$CCARGS -Wno-switch-enum -Wno-tautological-compare" ;
+	CCARGS="$CCARGS -Wno-pointer-sign -Wno-switch" ;
 fi
 
 # If we're building a shared lib, set up the necessary additional cc args.
@@ -462,10 +551,10 @@ fi
 # linker command line when building the self-test code.
 
 if [ $GCC_VER -ge 42 ] ; then
-  if [ `$CC -fstack-protector -S -o /dev/null -xc /dev/null 2>&1 | grep -c "unrecog"` -eq 0 ] ; then
-	CCARGS="$CCARGS -fstack-protector" ;
-  fi ;
-  CCARGS="$CCARGS -D_FORTIFY_SOURCE=2" ;
+	if [ `$CC -fstack-protector -S -o /dev/null -xc /dev/null 2>&1 | grep -c "unrecog"` -eq 0 ] ; then
+		CCARGS="$CCARGS -fstack-protector" ;
+	fi ;
+	CCARGS="$CCARGS -D_FORTIFY_SOURCE=2" ;
 fi
 
 # Newer versions of gcc support marking the stack as nonexecutable (e.g.
@@ -567,7 +656,23 @@ fi
 #		usually detected in the output by noting that a pile of supposedly
 #		shadow declarations occur within a few lines of one another.
 #
+# -Wsizeof-pointer-memaccess: Warn about suspicious use of sizeof with some
+#		string and memory functions, e.g. 
+#		memcpy( &foo, ptr, sizeof( &foo ) ) (-Wall)
+#
 # -Wstrict-prototypes: Warn if a function is declared or defined K&R-style.
+#
+# -Wtrampolines: Warn if trampolines are being generated, which requires an
+#		executable stack.  This is only done for nested functions:
+#
+#		foo( int x )
+#			{
+#			bar( int y )
+#				{ };
+#			}
+#
+#		which are a gcc-ism and not used anywhere, but we enable it anyway 
+#		just in case.
 #
 # -Wtype-limits: Warn if a comparison is always true due to the limited 
 #		range of a data type, e.g. unsigned >= 0.
@@ -581,7 +686,7 @@ fi
 # -Wunused-but-set-variable: Warn when a variable is assigned to but not 
 #		used (-Wall).
 #
-# -Wunused-local-typedefs: Warn about unused typedef (-Wall).
+# -Wunused-local-typedefs: Warn about unused typedef.
 #
 # -Wunused-value: Warn if a statement produces a result that isn't used, 
 #		e.g. 'x[i]' as a standalone statement (-Wall).
@@ -592,6 +697,10 @@ fi
 #
 # -Wwrite-strings: Warn on attempts to assign/use a constant string value
 #		with a non-const pointer.
+#
+# -Wzero-as-null-pointer-constant: Warn if an explicit 0 or '\0' is used
+#		instead of NULL.  Unfortunately this is currently valid (gcc 4.7) 
+#		only for C++ so we can't use it.
 #
 # Note that some of these require the use of at least -O2 in order to be
 # detected because they require the use of various levels of data flow
@@ -625,8 +734,12 @@ fi
 #		isn't very good, variables initialised conditionally always produce
 #		warnings.
 #
-# -Wunreachable-code: The use of -O2/-O3 interacts badly with this due to
-#		statements rearranged by the optimiser being declared unreachable.
+# -Wunreachable-code: The use of -O2/-O3 interacts badly with this due to 
+#		statements rearranged by the optimiser being declared unreachable. 
+#		Because of this the capability was removed in January 2010 
+#		(http://gcc.gnu.org/ml/gcc-patches/2009-11/msg00179.html), so while 
+#		the compiler still accepts the option it silently ignores it (par
+#		for the course for gcc).
 #
 # Finally there's also -Wextra, which warns about even more potential
 # problems, at the cost of more false positives.
@@ -638,24 +751,38 @@ fi
 # brokenness we undefine NDEBUG to enable the use of assertion checks that
 # will catch the problem.
 
-if [ $ISDEVELOPMENT -gt 0 ] ; then
+if [ $ANALYSE -gt 0 ] ; then
+	CCARGS="$CCARGS -DUSE_GCC_ATTRIBUTES" ;
+elif [ $ISDEVELOPMENT -gt 0 ] ; then
 	echo "  (Enabling unsafe compiler options for development version)." >&2 ;
 	CCARGS="$CCARGS -Wall -Waggregate-return -Wcast-align \
 					-Wdeclaration-after-statement -Wempty-body -Wextra \
 					-Wformat-nonliteral -Wformat-security -Winit-self \
-					-Wlogical-op -Wpointer-arith -Wredundant-decls \
-					-Wshadow -Wstrict-prototypes -Wtype-limits -Wundef \
-					-Wvla" ;
+					-Wlogical-op -Wparentheses -Wpointer-arith \
+					-Wredundant-decls -Wshadow -Wstrict-prototypes \
+					-Wtype-limits -Wundef -Wvla" ;
 	CCARGS="$CCARGS -Wno-missing-field-initializers -Wno-switch \
 					-Wno-sign-compare" ;
 	CCARGS="$CCARGS -DUSE_GCC_ATTRIBUTES -UNDEBUG" ;
-	if [ "$GCC_VER" -ge 43 ] ; then
-		echo "  (Enabling additional compiler options for gcc 4.3.x)." >&2 ;
-		CCARGS="$CCARGS -Wparentheses" ;
-	fi ;
 	if [ "$GCC_VER" -ge 45 ] ; then
 		echo "  (Enabling additional compiler options for gcc 4.5.x)." >&2 ;
 		CCARGS="$CCARGS -Wlogical-op -Wjump-misses-init" ;
+	fi ;
+	if [ "$GCC_VER" -ge 47 ] ; then
+		echo "  (Enabling additional compiler options for gcc 4.7.x)." >&2 ;
+		CCARGS="$CCARGS -Wtrampolines -Wunused-local-typedefs" ;
+	fi ;
+	if [ "$GCC_VER" -ge 48 ] ; then
+		echo "  (Enabling additional compiler options for gcc 4.8.x)." >&2 ;
+		CCARGS="$CCARGS -fsanitize=address -fsanitize=thread" ;
+	fi ;
+	if [ "$GCC_VER" -ge 49 ] ; then
+		echo "  (Enabling additional compiler options for gcc 4.9.x)." >&2 ;
+		CCARGS="$CCARGS -fsanitize=undefined" ;
+	fi ;
+	if [ "$GCC_VER" -ge 50 ] ; then
+		echo "  (Enabling additional compiler options for gcc 5.0.x)." >&2 ;
+		echo "  (This branch is too new to add options, check back later)." >&2 ;
 	fi ;
 fi
 

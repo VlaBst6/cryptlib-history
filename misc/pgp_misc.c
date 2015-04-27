@@ -29,6 +29,7 @@ typedef struct {
 	const int pgpAlgo;
 	const PGP_ALGOCLASS_TYPE pgpAlgoClass;
 	const CRYPT_ALGO_TYPE cryptlibAlgo;
+	const int cryptlibAlgoParam;
 	} PGP_ALGOMAP_INFO;
 static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 	/* Encryption algos */
@@ -57,9 +58,9 @@ static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 #ifdef USE_IDEA
 	{ PGP_ALGO_IDEA, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_IDEA },
 #endif /* USE_IDEA */
-	{ PGP_ALGO_AES_128, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES },
-	{ PGP_ALGO_AES_192, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES },
-	{ PGP_ALGO_AES_256, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES },
+	{ PGP_ALGO_AES_128, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES, 16 },
+	{ PGP_ALGO_AES_192, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES, 24 },
+	{ PGP_ALGO_AES_256, PGP_ALGOCLASS_PWCRYPT, CRYPT_ALGO_AES, 32 },
 
 	/* PKC encryption algos */
 	{ PGP_ALGO_RSA, PGP_ALGOCLASS_PKCCRYPT, CRYPT_ALGO_RSA },
@@ -82,7 +83,7 @@ static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 	{ PGP_ALGO_RIPEMD160, PGP_ALGOCLASS_HASH, CRYPT_ALGO_RIPEMD160 },
 #endif /* USE_RIPEMD160 */
 #ifdef USE_SHA2
-	{ PGP_ALGO_SHA2_256, PGP_ALGOCLASS_HASH, CRYPT_ALGO_SHA2 },
+	{ PGP_ALGO_SHA2_256, PGP_ALGOCLASS_HASH, CRYPT_ALGO_SHA2, 32 },
 #endif /* USE_SHA2 */
 
 	{ PGP_ALGO_NONE, 0, CRYPT_ALGO_NONE },
@@ -93,18 +94,23 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) const int pgpAlgo, 
 					   IN_ENUM( PGP_ALGOCLASS ) \
 							const PGP_ALGOCLASS_TYPE pgpAlgoClass,
-					   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo )
+					   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
+					   OUT_OPT_INT_Z int *cryptAlgoParam )
 	{
 	int i;
 
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
+	assert( cryptAlgoParam == NULL || \
+			isWritePtr( cryptAlgoParam, sizeof( int ) ) );
 
 	REQUIRES( pgpAlgo >= 0 && pgpAlgo <= 0xFF );
 	REQUIRES( pgpAlgoClass > PGP_ALGOCLASS_NONE && \
 			  pgpAlgoClass < PGP_ALGOCLASS_LAST );
 
-	/* Clear return value */
+	/* Clear return values */
 	*cryptAlgo = CRYPT_ALGO_NONE;
+	if( cryptAlgoParam != NULL )
+		*cryptAlgoParam = 0;
 
 	for( i = 0;
 		 ( pgpAlgoMap[ i ].pgpAlgo != pgpAlgo || \
@@ -116,6 +122,8 @@ int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) const int pgpAlgo,
 	if( pgpAlgoMap[ i ].cryptlibAlgo == PGP_ALGO_NONE )
 		return( CRYPT_ERROR_NOTAVAIL );
 	*cryptAlgo = pgpAlgoMap[ i ].cryptlibAlgo;
+	if( cryptAlgoParam != NULL )
+		*cryptAlgoParam = pgpAlgoMap[ i ].cryptlibAlgoParam;
 
 	return( CRYPT_OK );
 	}
@@ -151,30 +159,30 @@ int cryptlibToPgpAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptlibAlgo,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readPgpAlgo( INOUT STREAM *stream, 
 				 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
+				 OUT_OPT_INT_Z int *cryptAlgoParam,
 				 IN_ENUM( PGP_ALGOCLASS ) \
 						const PGP_ALGOCLASS_TYPE pgpAlgoClass )
 	{
-	CRYPT_ALGO_TYPE algo;
-	int value, status;
+	int value;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
+	assert( cryptAlgoParam == NULL || \
+			isWritePtr( cryptAlgoParam, sizeof( int ) ) );
 
 	REQUIRES( pgpAlgoClass > PGP_ALGOCLASS_NONE && \
 			  pgpAlgoClass < PGP_ALGOCLASS_LAST );
 
-	/* Clear return value */
+	/* Clear return values */
 	*cryptAlgo = CRYPT_ALGO_NONE;
+	if( cryptAlgoParam != NULL )
+		*cryptAlgoParam = 0;
 
 	value = sgetc( stream );
 	if( cryptStatusError( value ) )
 		return( value );
-	status = pgpToCryptlibAlgo( value, pgpAlgoClass, &algo );
-	if( cryptStatusError( status ) )
-		return( status );
-	*cryptAlgo = algo;
-
-	return( CRYPT_OK );
+	return( pgpToCryptlibAlgo( value, pgpAlgoClass, cryptAlgo, 
+							   cryptAlgoParam ) );
 	}
 
 /****************************************************************************
@@ -189,7 +197,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext, 
 					  IN_LENGTH_SHORT_OPT const int optKeyLength,
 					  IN_BUFFER( passwordLength ) const char *password, 
-					  IN_LENGTH_SHORT const int passwordLength, 
+					  IN_DATALENGTH const int passwordLength, 
 					  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo, 
 					  IN_BUFFER_OPT( saltSize ) const BYTE *salt, 
 					  IN_RANGE( 0, CRYPT_MAX_HASHSIZE ) const int saltSize,
@@ -204,7 +212,7 @@ int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			isReadPtr( salt, saltSize ) );
 
 	REQUIRES( isHandleRangeValid( iCryptContext ) );
-	REQUIRES( passwordLength > 0 && passwordLength < MAX_INTLENGTH );
+	REQUIRES( passwordLength > 0 && passwordLength < MAX_BUFFER_SIZE );
 	REQUIRES( ( optKeyLength == CRYPT_UNUSED ) || \
 			  ( optKeyLength >= MIN_KEYSIZE && \
 				optKeyLength <= CRYPT_MAX_KEYSIZE ) );
@@ -428,10 +436,11 @@ int pgpProcessIV( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			0x01: byte[8]	salt		-- S2K = 1, 3
 			0x03: byte		iterations	-- S2K = 3 */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4, 6 ) ) \
 int readPgpS2K( INOUT STREAM *stream, 
 				OUT_ALGO_Z CRYPT_ALGO_TYPE *hashAlgo,
-				OUT_BUFFER( saltSize, *saltLen ) BYTE *salt, 
+				OUT_INT_Z int *hashAlgoParam,
+				OUT_BUFFER( saltMaxLen, *saltLen ) BYTE *salt, 
 				IN_LENGTH_SHORT_MIN( PGP_SALTSIZE ) const int saltMaxLen, 
 				OUT_LENGTH_SHORT_Z int *saltLen,
 				OUT_INT_SHORT_Z int *iterations )
@@ -450,6 +459,7 @@ int readPgpS2K( INOUT STREAM *stream,
 
 	/* Clear return values */
 	*hashAlgo = CRYPT_ALGO_NONE;
+	*hashAlgoParam = 0;
 	memset( salt, 0, min( 16, saltMaxLen ) );
 	*saltLen = 0;
 	*iterations = 0;
@@ -460,7 +470,8 @@ int readPgpS2K( INOUT STREAM *stream,
 		return( status );
 	if( value != 0 && value != 1 && value != 3 )
 		return( CRYPT_ERROR_BADDATA );
-	status = readPgpAlgo( stream, hashAlgo, PGP_ALGOCLASS_HASH );
+	status = readPgpAlgo( stream, hashAlgo, hashAlgoParam, 
+						  PGP_ALGOCLASS_HASH );
 	if( cryptStatusError( status ) )
 		 return( status );
 

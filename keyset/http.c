@@ -184,9 +184,21 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
-	if( cryptStatusOK( status ) )
-		*iCryptHandle = createInfo.cryptHandle;
-	return( status );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = iCryptVerifyID( createInfo.cryptHandle, keyIDtype, keyID, 
+							 keyIDlength );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+		retExt( status, 
+				( status, KEYSET_ERRINFO, 
+				  "Certificate fetched for ID type %d doesn't actually "
+				  "correspond to the given ID", keyIDtype ) );
+		}
+	*iCryptHandle = createInfo.cryptHandle;
+
+	return( CRYPT_OK );
 	}
 
 /* Prepare to open a connection to an HTTP server */

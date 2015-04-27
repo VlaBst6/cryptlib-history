@@ -264,10 +264,8 @@ public class crypt
 	public const int CERTINFO_IMMUTABLE                          = 2002; // Cert is signed and immutable
 	public const int CERTINFO_XYZZY                              = 2003; // Cert is a magic just-works cert
 	public const int CERTINFO_CERTTYPE                           = 2004; // Certificate object type
-	public const int CERTINFO_FINGERPRINT                        = 2005; // Certificate fingerprints
-	public const int CERTINFO_FINGERPRINT_MD5                    = 2005;
+	public const int CERTINFO_FINGERPRINT_MD5                    = 2005; // Certificate fingerprints
 	public const int CERTINFO_FINGERPRINT_SHA1                   = 2006;
-	public const int CERTINFO_FINGERPRINT_SHA                    = 2006;
 	public const int CERTINFO_FINGERPRINT_SHA2                   = 2007;
 	public const int CERTINFO_FINGERPRINT_SHAng                  = 2008;
 	public const int CERTINFO_CURRENT_CERTIFICATE                = 2009; // Cursor mgt: Rel.pos in chain/CRL/OCSP
@@ -296,6 +294,7 @@ public class crypt
 	public const int CERTINFO_PKIUSER_ID                         = 2031; // PKI user ID
 	public const int CERTINFO_PKIUSER_ISSUEPASSWORD              = 2032; // PKI user issue password
 	public const int CERTINFO_PKIUSER_REVPASSWORD                = 2033; // PKI user revocation password
+	public const int CERTINFO_PKIUSER_RA                         = 2034; // PKI user is an RA
 	public const int CERTINFO_COUNTRYNAME                        = 2100; // countryName
 	public const int CERTINFO_STATEORPROVINCENAME                = 2101; // stateOrProvinceName
 	public const int CERTINFO_LOCALITYNAME                       = 2102; // localityName
@@ -648,7 +647,7 @@ public class crypt
 	public const int SESSINFO_AUTHRESPONSE                       = 6007; // Session authorisation OK
 	public const int SESSINFO_SERVER_NAME                        = 6008; // Server name
 	public const int SESSINFO_SERVER_PORT                        = 6009; // Server port number
-	public const int SESSINFO_SERVER_FINGERPRINT                 = 6010; // Server key fingerprint
+	public const int SESSINFO_SERVER_FINGERPRINT_SHA1            = 6010; // Server key fingerprint
 	public const int SESSINFO_CLIENT_NAME                        = 6011; // Client name
 	public const int SESSINFO_CLIENT_PORT                        = 6012; // Client port number
 	public const int SESSINFO_SESSION                            = 6013; // Transport mechanism
@@ -924,6 +923,8 @@ public class crypt
 	public const int SSLOPTION_MINVER_TLS12                   = 0x03;
 	public const int SSLOPTION_SUITEB_128                     = 0x04; // SuiteB security levels
 	public const int SSLOPTION_SUITEB_256                     = 0x08;
+	public const int SSLOPTION_DISABLE_NAMEVERIFY             = 0x10; // Disable cert hostname check
+	public const int SSLOPTION_DISABLE_CERTVERIFY             = 0x20; // Disable certificate check
 	
 	/****************************************************************************
 	*																			*
@@ -935,7 +936,7 @@ public class crypt
 	
 	public const int MAX_KEYSIZE                              = 256 ;
 	
-	/* The maximum IV size - 256 bits */
+	/* The maximum IV/cipher block size - 256 bits */
 	
 	public const int MAX_IVSIZE                               = 32  ;
 	
@@ -1098,13 +1099,16 @@ public class crypt
 	//	} CRYPT_PKCINFO_DLP;
 	
 	// CRYPT_ECCCURVE_TYPE
-	public const int ECCCURVE_NONE = 0; // No ECC curve type
-	public const int ECCCURVE_P192 = 1; // NIST P192/X9.62 P192r1/SECG p192r1 curve
-	public const int ECCCURVE_P224 = 2; // NIST P224/X9.62 P224r1/SECG p224r1 curve
-	public const int ECCCURVE_P256 = 3; // NIST P256/X9.62 P256v1/SECG p256r1 curve
-	public const int ECCCURVE_P384 = 4; // NIST P384, SECG p384r1 curve
-	public const int ECCCURVE_P521 = 5; // NIST P521, SECG p521r1
-	public const int ECCCURVE_LAST = 6; // Last valid ECC curve type
+	public const int ECCCURVE_NONE           = 0; // No ECC curve type
+	public const int ECCCURVE_P192           = 1; // NIST P192/X9.62 P192r1/SECG p192r1 curve
+	public const int ECCCURVE_P224           = 2; // NIST P224/X9.62 P224r1/SECG p224r1 curve
+	public const int ECCCURVE_P256           = 3; // NIST P256/X9.62 P256v1/SECG p256r1 curve
+	public const int ECCCURVE_P384           = 4; // NIST P384, SECG p384r1 curve
+	public const int ECCCURVE_P521           = 5; // NIST P521, SECG p521r1
+	public const int ECCCURVE_BRAINPOOL_P256 = 6; // Brainpool p256r1
+	public const int ECCCURVE_BRAINPOOL_P384 = 7; // Brainpool p384r1
+	public const int ECCCURVE_BRAINPOOL_P512 = 8; // Brainpool p512r1
+	public const int ECCCURVE_LAST           = 9; // Last valid ECC curve type
 	
 	//CRYPTLIBCONVERTER - NOT SUPPORTED:
 	//typedef struct {

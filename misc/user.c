@@ -48,6 +48,21 @@ typedef enum {
 #define MAX_USERINDEX_SIZE	( ( 16 + ( KEYID_SIZE * 2 ) + \
 							  CRYPT_MAX_TEXTSIZE + 8 ) * MAX_USER_OBJECTS )
 
+/* The structure that stores the user index in the default user object */
+
+typedef struct {
+	USER_FILE_INFO userIndex[ MAX_USER_OBJECTS ];	/* User index */
+	int lastEntry;					/* Last entry in user index */
+	} USER_INDEX_INFO;
+
+#ifdef USE_KEYSETS
+
+/****************************************************************************
+*																			*
+*							Primary SO User Data							*
+*																			*
+****************************************************************************/
+
 /* Primary SO user info */
 
 static const USER_FILE_INFO FAR_BSS primarySOInfo = {
@@ -63,13 +78,6 @@ static const USER_FILE_INFO FAR_BSS primarySOInfo = {
 #define PRIMARYSO_PASSWORD		"zeroised"
 #define PRIMARYSO_ALTPASSWORD	"zeroized"
 #define PRIMARYSO_PASSWORD_LENGTH 8
-
-/* The structure that stores the user index in the default user object */
-
-typedef struct {
-	USER_FILE_INFO userIndex[ MAX_USER_OBJECTS ];	/* User index */
-	int lastEntry;					/* Last entry in user index */
-	} USER_INDEX_INFO;
 
 /****************************************************************************
 *																			*
@@ -819,11 +827,13 @@ const USER_FILE_INFO *getPrimarySoUserInfo( void )
 	return( &primarySOInfo );
 	}
 
+#ifdef USE_ENVELOPES
+
 /* Sign the user info and write it to the user keyset */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 static int signUserData( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
-						 const USER_INFO *userInfoPtr,
+						 STDC_UNUSED const USER_INFO *userInfoPtr,
 						 IN_HANDLE const CRYPT_CONTEXT iSignContext )
 	{
 	ERROR_INFO errorInfo;
@@ -857,6 +867,7 @@ static int sigCheckUserData( void )
 	{
 	return( CRYPT_ERROR_SIGNATURE );
 	}
+#endif /* USE_ENVELOPES */
 
 /* Create an SO private key and write it to the user keyset */
 
@@ -1009,7 +1020,7 @@ static int createPrimarySoUser( INOUT USER_INFO *userInfoPtr,
 	memcpy( &userIndex, &userInfoPtr->userFileInfo, 
 			sizeof( USER_FILE_INFO ) );
 	userIndex.fileRef = 0;
-	status = writeUserIndex( iIndexKeyset, &userIndex, MAX_USER_OBJECTS );
+	status = writeUserIndex( iIndexKeyset, &userIndex, 1 );
 	krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
@@ -1147,6 +1158,7 @@ static int createUserKeyset( INOUT USER_INFO *defaultUserInfoPtr,
 		krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
 		return( status );
 		}
+	ANALYSER_HINT( userIndexPtr != NULL );
 
 	/* Create the user keyset */
 	status = openUserKeyset( &iUserKeyset, userFileInfo->fileRef, 
@@ -1200,8 +1212,10 @@ USER_FILE_INFO dummyUserInfo = { 0 }, *userFileInfoPtr = &dummyUserInfo;
 USER_INFO userInfo;
 
 ( void ) readUserData( userFileInfoPtr, "", 0 );
+#ifdef USE_ENVELOPES
 ( void ) signUserData( 0, &userInfo, 0 );
 ( void ) sigCheckUserData();
+#endif /* USE_ENVELOPES */
 ( void ) createSOKey( 0, &userInfo, "", 0 );
 ( void ) createUserKeyset( &userInfo, &userInfo );
 }
@@ -1342,3 +1356,4 @@ void endUserIndex( INOUT void *userIndexPtr )
 	zeroise( userIndexInfo, sizeof( USER_INDEX_INFO ) );
 	clFree( "endUserIndex", userIndexInfo );
 	}
+#endif /* USE_KEYSETS */

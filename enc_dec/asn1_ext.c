@@ -13,6 +13,8 @@
   #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_INT_ASN1
+
 /****************************************************************************
 *																			*
 *							Message Digest Routines							*
@@ -546,3 +548,4 @@ int writeCMSencrHeader( INOUT STREAM *stream,
 		return( status );
 	return( writeCtag0Indef( stream ) );
 	}
+#endif /* USE_INT_ASN1 */

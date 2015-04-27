@@ -387,14 +387,14 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 								   TRUE : FALSE;
 #ifdef USE_CERTLEVEL_PKIX_PARTIAL
 	BOOLEAN keyUsageCritical = 0;
+	int rawExtKeyUsage;
 #endif /* USE_CERTLEVEL_PKIX_PARTIAL */
 	BOOLEAN isCA = FALSE;
 	const int trustedUsage = \
 				( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
 				  certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN ) ? \
 				certInfoPtr->cCertCert->trustedUsage : CRYPT_UNUSED;
-	int keyUsage, rawKeyUsage, extKeyUsage, rawExtKeyUsage, caKeyUsage;
-	int value, status;
+	int keyUsage, rawKeyUsage, extKeyUsage, caKeyUsage, value, status;
 
 	assert( isReadPtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
@@ -450,7 +450,7 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 
 	/* If it's a v1 self-signed certificate then the CA status and key usage 
 	   are implicit/undefined */
-	if( certInfoPtr->version == 1 && \
+	if( certInfoPtr->version == X509_V1 && \
 		( certInfoPtr->flags & CERT_FLAG_SELFSIGNED ) )
 		{
 		/* If it's claiming to be a CA certificate by virtue of being a v1 
@@ -488,10 +488,10 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 		{
 		/* Check whether the keyUsage extension is critical, needed for 
 		   some odd PKIX-defined checks at higher compliance levels */
-#ifdef USE_CERTLEVEL_PKIX_PARTIAL
 		status = getAttributeDataValue( attributePtr, &keyUsage );
 		if( cryptStatusError( status ) )
 			return( status );
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
 		keyUsageCritical = \
 			checkAttributeProperty( attributePtr, ATTRIBUTE_PROPERTY_CRITICAL );
 #endif /* USE_CERTLEVEL_PKIX_PARTIAL */
@@ -540,7 +540,9 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 
 	/* Apply the trusted-usage restrictions if necessary */
 	rawKeyUsage = keyUsage;
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
 	rawExtKeyUsage = extKeyUsage;
+#endif /* USE_CERTLEVEL_PKIX_PARTIAL */
 	if( trustedUsage != CRYPT_UNUSED )
 		{
 		keyUsage &= trustedUsage;
@@ -662,8 +664,7 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 	   trusted-usage values) because after this point we're performing 
 	   consistency checks on the values and need to check all of the bits */
 	keyUsage = rawKeyUsage;
-	extKeyUsage = rawExtKeyUsage;
-	   		
+
 	/* Make sure that mutually exclusive flags aren't set (RFC 3279 section 
 	   2.3.3) */
 	if( ( keyUsage & CRYPT_KEYUSAGE_ENCIPHERONLY ) && \
@@ -689,13 +690,18 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 		return( CRYPT_ERROR_INVALID );
 		}
 
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
+	/* Switch back to the original usage values as above.  This is done here
+	   because we only use extKeyUsage at a heightened level of compliance
+	   checking */
+	extKeyUsage = rawExtKeyUsage;
+
 	/* Mask out any non-relevant usages (e.g. certificate signing, which 
 	   doesn't occur in extended key usages and has already been checked 
 	   above) */
 	keyUsage &= ~USAGE_MASK_NONRELEVANT;
 	extKeyUsage &= ~USAGE_MASK_NONRELEVANT;
 
-#ifdef USE_CERTLEVEL_PKIX_PARTIAL
 	/* If we're being asked to check for private-key constraints, check and 
 	   enforce the privateKeyUsage attribute if there's one present */
 	if( ( flags & CHECKKEY_FLAG_PRIVATEKEY ) && \

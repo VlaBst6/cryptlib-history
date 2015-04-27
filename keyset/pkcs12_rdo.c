@@ -312,8 +312,10 @@ static int readEncryptedObjectInfo( INOUT STREAM *stream,
 									const BOOLEAN isEncryptedCert,
 									INOUT ERROR_INFO *errorInfo )
 	{
+#ifdef USE_ERRMSGS
 	const char *objectName = isEncryptedCert ? "encrypted certificate" : \
 											   "encrypted private key";
+#endif /* USE_ERRMSGS */
 	int payloadOffset = DUMMY_INIT, payloadLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );

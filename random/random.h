@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Randomness Interface						*
-*						Copyright Peter Gutmann 1995-2006					*
+*						Copyright Peter Gutmann 1995-2012					*
 *																			*
 ****************************************************************************/
 
@@ -24,9 +24,10 @@
   void endRandomPolling( void );
   CHECK_RETVAL \
   int waitforRandomCompletion( const BOOLEAN force );
-#elif defined( __UNIX__ ) && \
-	  !( defined( __MVS__ ) || defined( __TANDEM_NSK__ ) || \
-		 defined( __TANDEM_OSS__ ) )
+#elif defined( __Android__ ) || \
+	  ( defined( __UNIX__ ) && \
+		!( defined( __MVS__ ) || defined( __TANDEM_NSK__ ) || \
+		   defined( __TANDEM_OSS__ ) ) )
   void initRandomPolling( void );
   void endRandomPolling( void );
   CHECK_RETVAL \
@@ -44,9 +45,10 @@
    following function checks whether we've forked or not, which is used as a
    signal to adjust the pool contents */
 
-#if defined( __UNIX__ ) && \
-	!( defined( __MVS__ ) || defined( __TANDEM_NSK__ ) || \
-	   defined( __TANDEM_OSS__ ) )
+#if defined( __Android__ ) || \
+	( defined( __UNIX__ ) && \
+	  !( defined( __MVS__ ) || defined( __TANDEM_NSK__ ) || \
+		 defined( __TANDEM_OSS__ ) ) )
   CHECK_RETVAL_BOOL \
   BOOLEAN checkForked( void );
 #else
@@ -113,7 +115,7 @@ void endRandomInfo( INOUT void **randomInfoPtrPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int addEntropyData( INOUT void *randomInfoPtr, 
 					IN_BUFFER( length ) const void *buffer, 
-					IN_LENGTH const int length );
+					IN_DATALENGTH const int length );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int addEntropyQuality( INOUT void *randomInfoPtr, 
 					   IN_RANGE( 1, 100 ) const int quality );

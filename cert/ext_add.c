@@ -576,8 +576,15 @@ assert( ( flags & ~( ATTR_FLAG_CRITICAL | ATTR_FLAG_MULTIVALUED | ATTR_FLAG_BLOB
 			if( attributeInfoPtr->fieldType == FIELDTYPE_CHOICE )
 				{
 				/* For encoding purposes the subfield ID is set to the ID of 
-				   the CHOICE selection */
-				newElement->subFieldID = newElement->intValue;
+				   the CHOICE selection.  This isn't strictly speaking a 
+				   CRYPT_ATTRIBUTE_TYPE but something like a 
+				   CRYPT_HOLDINSTRUCTION_TYPE or CRYPT_CONTENT_TYPE, but
+				   we store it in a CRYPT_ATTRIBUTE_TYPE field */
+				REQUIRES( newElement->intValue > 0 && \
+						  newElement->intValue < 100 );
+
+				newElement->subFieldID = ( CRYPT_ATTRIBUTE_TYPE ) \
+										   newElement->intValue;
 				}
 			break;
 

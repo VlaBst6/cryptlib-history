@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate Routines Header File 					*
-*						Copyright Peter Gutmann 1996-2008					*
+*						Copyright Peter Gutmann 1996-2012					*
 *																			*
 ****************************************************************************/
 
@@ -26,13 +26,16 @@
 
 #define MIN_ATTRIBUTE_SIZE		12
 
-/* The maximum size of a PKCS #7 certificate chain.  The built-in bounds
-   value FAILSAFE_ITERATIONS_MED is used as a safety check for an upper
-   limit on chain lengths (that is, if we hit FAILSAFE_ITERATIONS_MED on
-   processing a certificate chain it's an internal error), so it has to
-   be larger than MAX_CHAINLENGTH */
+/* The maximum size of a PKCS #7 certificate chain, any chain longer than 8
+   certificates is somewhat suspicious, in fact a limit of 4 or 5 would
+   probably be sufficient for any chains seen in the wild.
+   
+   The built-in bounds value FAILSAFE_ITERATIONS_MED is used as a safety 
+   check for an upper limit on chain lengths (that is, if we hit 
+   FAILSAFE_ITERATIONS_MED on processing a certificate chain it's an 
+   internal error), so it has to be larger than MAX_CHAINLENGTH */
 
-#define MAX_CHAINLENGTH			16
+#define MAX_CHAINLENGTH			8
 
 #if MAX_CHAINLENGTH > FAILSAFE_ITERATIONS_MED
   #error FAILSAFE_ITERATIONS_MED must be larger than the maximum certificate chain length
@@ -67,7 +70,15 @@
    define a certificate-specific time value that we use as the oldest valid 
    time value */
 
-#define MIN_CERT_TIME_VALUE		( ( 1996 - 1970 ) * 365 * 86400L )
+#define MIN_CERT_TIME_VALUE		( ( 1998 - 1970 ) * 365 * 86400L )
+
+/* X.509 certificate version numbers.  These are somewhat tautological, but 
+   we define them anyway in order to avoid hardcoding constants into various 
+   places in the code */
+
+#define X509_V1					1
+#define X509_V2					2
+#define X509_V3					3
 
 /* Certificate information flags.  These are:
 
@@ -558,10 +569,14 @@ typedef struct {
 	int serialNumberLength;			/* Certificate serial number */
 
 	/* The certificate ID of the PKI user or certificate that authorised 
-	   this request.  This is from an external source, supplied when the 
+	   this request, and whether this request is coming directly from the 
+	   user (so the PKIUser corresponds to the issuer of the request) or
+	   via an RA (so the PKIUser is the RA that passed on the request from 
+	   the user).  This is from an external source, supplied when the 
 	   request is used as part of the CMP protocol */
 	BUFFER_FIXED( KEYID_SIZE ) \
 	BYTE authCertID[ KEYID_SIZE + 8 ];
+	BOOLEAN requestFromRA;
 	} CERT_REQ_INFO;
 #endif /* USE_CERTREQ */
 
@@ -574,6 +589,10 @@ typedef struct {
 	BYTE pkiIssuePW[ 16 + 8 ];
 	BUFFER_FIXED( 16 ) \
 	BYTE pkiRevPW[ 16 + 8 ];
+
+	/* Additional PKI user inforation: Whether this PKI user can act as an
+	   RA */
+	BOOLEAN isRA;
 	} CERT_PKIUSER_INFO;
 #endif /* USE_PKIUSER */
 

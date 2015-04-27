@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Internal Debugging API						*
-*						Copyright Peter Gutmann 1992-2008					*
+*						Copyright Peter Gutmann 1992-2013					*
 *																			*
 ****************************************************************************/
 
@@ -20,6 +20,12 @@
    be used with a debugger */
 
 #ifndef NDEBUG
+
+/****************************************************************************
+*																			*
+*							Diagnostic-dump Functions						*
+*																			*
+****************************************************************************/
 
 /* Older versions of the WinCE runtime don't provide complete stdio
    support so we have to emulate it using wrappers for native 
@@ -109,6 +115,11 @@ static void buildFilePath( IN_STRING const char *fileName,
 	{
 	int i;
 
+	assert( isReadPtr( fileName, 2 ) );
+	assert( isWritePtr( filenameBuffer, 1024 ) );
+
+	ANALYSER_HINT_STRING( fileName );
+
 	/* Check whether the filename appears to be an absolute path */
 	for( i = 0; fileName[ i ] != '\0'; i++ )
 		{
@@ -142,6 +153,8 @@ void debugDumpFile( IN_STRING const char *fileName,
 	assert( isReadPtr( fileName, 2 ) );
 	assert( isReadPtr( data, dataLength ) );
 
+	ANALYSER_HINT_STRING( fileName );
+
 	buildFilePath( fileName, filenameBuffer );
 #ifdef __STDC_LIB_EXT1__
 	if( fopen_s( &filePtr, filenameBuffer, "wb" ) != 0 )
@@ -174,6 +187,8 @@ void debugDumpFileCert( IN_STRING const char *fileName,
 
 	assert( isReadPtr( fileName, 2 ) );
 	assert( isHandleRangeValid( iCryptCert ) );
+
+	ANALYSER_HINT_STRING( fileName );
 
 	buildFilePath( fileName, filenameBuffer );
 #ifdef __STDC_LIB_EXT1__
@@ -212,6 +227,8 @@ void debugDumpHex( IN_STRING const char *prefixString,
 	{
 	char dumpBuffer[ 128 ];
 	int offset, i, j;
+
+	ANALYSER_HINT_STRING( prefixString );
 
 	offset = sprintf_s( dumpBuffer, 128, "%3s %4d %04X ", prefixString, 
 						dataLength, checksumData( data, dataLength ) );
@@ -305,13 +322,15 @@ void debugDumpStream( INOUT /*STREAM*/ void *streamPtr,
 								  length );
 	if( cryptStatusError( status ) )
 		return;
-	ANALYSER_HINT( dataPtr != NULL );
+	ANALYSER_HINT_V( dataPtr != NULL );
 	debugDumpData( dataPtr, length );
 	}
 
 /* Support function used to access the text string data from an ERROR_INFO
    structure.  Note that this function isn't thread-safe, but that should be
    OK since it's only used for debugging */
+
+#ifdef USE_ERRMSGS
 
 const char *getErrorInfoString( ERROR_INFO *errorInfo )
 	{
@@ -326,6 +345,7 @@ const char *getErrorInfoString( ERROR_INFO *errorInfo )
 
 	return( errorInfoString );
 	}
+#endif /* USE_ERRMSGS */
 
 /* Support function used with streams to pull data bytes out of the stream,
    allowing type and content data to be dumped with DEBUG_PRINT() */
@@ -343,4 +363,112 @@ int debugGetStreamByte( INOUT /*STREAM*/ void *streamPtr,
 		return( 0 );
 	return( byteToInt( *dataPtr ) );
 	}
+
+/****************************************************************************
+*																			*
+*						Fault-injection Support Functions					*
+*																			*
+****************************************************************************/
+
+/* Variables used for fault-injection tests */
+
+FAULT_TYPE faultType;
+int faultParam1;
+
+/* Get a substitute key to replace the actual one, used to check for 
+   detection of use of the wrong key */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int getSubstituteKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey )
+	{
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	MESSAGE_KEYMGMT_INFO getkeyInfo;
+	int status;
+
+	/* Clear return value */
+	*iPrivateKey = CRYPT_ERROR;
+
+	/* Try and read the certificate chain from the keyset */
+	setMessageCreateObjectInfo( &createInfo, CRYPT_KEYSET_FILE );
+	createInfo.arg2 = CRYPT_KEYOPT_READONLY;
+	createInfo.strArg1 = "test/keys/server2.p15";
+	createInfo.strArgLen1 = strlen( createInfo.strArg1 );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
+							  OBJECT_TYPE_KEYSET );
+	if( cryptStatusError( status ) )
+		return( status );
+	setMessageKeymgmtInfo( &getkeyInfo, CRYPT_KEYID_NAME, "Test user key", 13,
+						   NULL, 0, KEYMGMT_FLAG_USAGE_SIGN );
+	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_KEY_GETKEY, 
+							  &getkeyInfo, KEYMGMT_ITEM_PUBLICKEY );
+	krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DESTROY );
+	if( cryptStatusOK( status ) )
+		*iPrivateKey = getkeyInfo.cryptHandle;
+
+	return( status );
+	}
+
+/****************************************************************************
+*																			*
+*								Timing Functions							*
+*																			*
+****************************************************************************/
+
+#if defined( __WINDOWS__ ) || defined( __UNIX__ )
+
+#ifdef __UNIX__ 
+  #include <sys/time.h>		/* For gettimeofday() */
+#endif /* __UNIX__  */
+
+/* Get/update high-resolution timer value */
+
+HIRES_TIME debugTimeDiff( HIRES_TIME startTime )
+	{
+	HIRES_TIME timeValue;
+#ifdef __WINDOWS__
+	LARGE_INTEGER performanceCount;
+
+	/* Sensitive to context switches */
+	QueryPerformanceCounter( &performanceCount );
+	timeValue = performanceCount.QuadPart;
+#else
+	struct timeval tv;
+
+	/* Only accurate to about 1us */
+	gettimeofday( &tv, NULL );
+	timeValue = ( ( ( HIRES_TIME ) tv.tv_sec ) << 32 ) | tv.tv_usec;
+#endif /* Windows vs.Unix high-res timing */
+
+	if( !startTime )
+		return( timeValue );
+	return( timeValue - startTime );
+	}
+
+/* Display high-resulution time value */
+
+int debugTimeDisplay( HIRES_TIME timeValue )
+	{
+	HIRES_TIME timeMS, ticksPerSec;
+
+	/* Try and get the clock frequency */
+#ifdef __WINDOWS__
+	LARGE_INTEGER performanceCount;
+
+	QueryPerformanceFrequency( &performanceCount );
+	ticksPerSec = performanceCount.QuadPart;
+#else
+	ticksPerSec = 1000000L;
+#endif /* __WINDOWS__ */	
+
+	timeMS = ( timeValue * 1000 ) / ticksPerSec;
+	assert( timeMS < INT_MAX );
+	if( timeMS <= 0 )
+		printf( "< 1" );
+	else
+		printf( HIRES_FORMAT_SPECIFIER, timeMS );
+
+	return( ( timeMS <= 0 ) ? 1 : ( int ) timeMS );
+	}
+#endif /* __WINDOWS__ || __UNIX__ */
 #endif /* !NDEBUG */

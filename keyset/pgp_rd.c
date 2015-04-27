@@ -178,8 +178,9 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readPrivateKeyDecryptionInfo( INOUT STREAM *stream, 
 										 INOUT PGP_KEYINFO *keyInfo )
 	{
+	CRYPT_QUERY_INFO queryInfo;
 	const int ctb = sgetc( stream );
-	int ivSize = 8, value, status;
+	int ivSize, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( keyInfo, sizeof( PGP_KEYINFO ) ) );
@@ -208,10 +209,10 @@ static int readPrivateKeyDecryptionInfo( INOUT STREAM *stream,
 		{
 		keyInfo->cryptAlgo = CRYPT_ALGO_IDEA;
 		keyInfo->hashAlgo = CRYPT_ALGO_MD5;
-		status = sread( stream, keyInfo->iv, ivSize );
+		status = sread( stream, keyInfo->iv, 8 );
 		if( cryptStatusError( status ) )
 			return( status );
-		keyInfo->ivSize = ivSize;
+		keyInfo->ivSize = 8;
 
 		return( CRYPT_OK );
 		}
@@ -220,12 +221,9 @@ static int readPrivateKeyDecryptionInfo( INOUT STREAM *stream,
 	if( ctb != PGP_S2K && ctb != PGP_S2K_HASHED )
 		return( CRYPT_ERROR_BADDATA );
 
-	/* Get the key wrap algorithm and S2K information.  We have to save a 
-	   copy of the raw PGP algorithm ID for later examination to determine
-	   the AES key size to use */
-	value = sPeek( stream );
+	/* Get the key wrap algorithm and S2K information */
 	status = readPgpAlgo( stream, &keyInfo->cryptAlgo, 
-						  PGP_ALGOCLASS_PWCRYPT );
+						  &keyInfo->cryptAlgoParam, PGP_ALGOCLASS_PWCRYPT );
 	if( cryptStatusError( status ) )
 		{
 		if( status == CRYPT_ERROR_NOTAVAIL )
@@ -236,17 +234,14 @@ static int readPrivateKeyDecryptionInfo( INOUT STREAM *stream,
 
 		 return( status );
 		 }
-	if( keyInfo->cryptAlgo == CRYPT_ALGO_AES )
-		{
-		/* PGP uses three different algorithm IDs to identify AES with 
-		   different key sizes (ugh) so we have to remember the key size 
-		   alongside the algorithm type for this algorithm */
-		keyInfo->aesKeySize = ( value == PGP_ALGO_AES_128 ) ? 16 : \
-							  ( value == PGP_ALGO_AES_192 ) ? 24 : 32;
-		ivSize = 16;
-		}
-	status = readPgpS2K( stream, &keyInfo->hashAlgo, keyInfo->salt, 
-						 PGP_SALTSIZE, &keyInfo->saltSize, 
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_QUERYCAPABILITY, &queryInfo,
+							  keyInfo->cryptAlgo );
+	if( cryptStatusError( status ) )
+		return( status );
+	ivSize = queryInfo.blockSize;
+	status = readPgpS2K( stream, &keyInfo->hashAlgo, &keyInfo->hashAlgoParam, 
+						 keyInfo->salt, PGP_SALTSIZE, &keyInfo->saltSize, 
 						 &keyInfo->keySetupIterations );
 	if( status == CRYPT_ERROR_NOTAVAIL )
 		{
@@ -645,7 +640,7 @@ static int readKey( INOUT STREAM *stream,
 			|<--------------- packetLength ---------------->| */
 	pubKeyPos = stell( stream );
 	endPos = pubKeyPos + packetLength;
-	ENSURES( endPos > pubKeyPos && endPos < MAX_INTLENGTH );
+	ENSURES( endPos > pubKeyPos && endPos < MAX_BUFFER_SIZE );
 	status = value = sgetc( stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -976,7 +971,7 @@ static int processKeyringPackets( INOUT STREAM *stream,
 				if( bufEnd <= 0 )
 					{
 					/* If we've previously read at least one group of key 
-					   packets, we're OK */
+					   packets then we're OK */
 					if( keyGroupNo > 0 )
 						status = CRYPT_OK;
 					return( status );

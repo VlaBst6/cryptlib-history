@@ -5,7 +5,7 @@ interface
 {****************************************************************************
 *                                                                           *
 *                     Cryptlib external API interface                       *
-*                    Copyright Peter Gutmann 1997-2012                      *
+*                    Copyright Peter Gutmann 1997-2014                      *
 *                                                                           *
 *        adapted for Delphi Version 5 (32 bit) and Kylix Version 3          *
 *                              by W. Gothier                                *
@@ -16,7 +16,7 @@ interface
 
  This file has been created automatically by a perl script from the file:
 
- "cryptlib.h" dated Wed Aug 29 15:34:08 2012, filesize = 97645.
+ "cryptlib.h" dated Sat Oct  4 00:33:32 2014, filesize = 98058.
 
  Please check twice that the file matches the version of cryptlib.h
  in your cryptlib source! If this is not the right version, try to download an
@@ -42,7 +42,7 @@ const
 
 
 const
-  CRYPTLIB_VERSION = 3410;
+  CRYPTLIB_VERSION = 3430;
 
 {****************************************************************************
 *                                                                           *
@@ -289,7 +289,7 @@ const
   CRYPT_ATTRIBUTE_CURRENT_INSTANCE = 15;  { Cursor mgt: Instance in attribute list }
   CRYPT_ATTRIBUTE_BUFFERSIZE = 16;  { Internal data buffer size }
   
-  { User internally }
+  { Used internally }
   CRYPT_GENERIC_LAST = 17;  CRYPT_OPTION_FIRST = 100;  
   
   {**************************}
@@ -411,10 +411,8 @@ const
   CRYPT_CERTINFO_IMMUTABLE = 2002;  { Cert is signed and immutable }
   CRYPT_CERTINFO_XYZZY = 2003;  { Cert is a magic just-works cert }
   CRYPT_CERTINFO_CERTTYPE = 2004;  { Certificate object type }
-  CRYPT_CERTINFO_FINGERPRINT = 2005;  { Certificate fingerprints }
-  CRYPT_CERTINFO_FINGERPRINT_MD5 = 2005; { = CRYPT_CERTINFO_FINGERPRINT }  
+  CRYPT_CERTINFO_FINGERPRINT_MD5 = 2005;  { Certificate fingerprints }
   CRYPT_CERTINFO_FINGERPRINT_SHA1 = 2006;  
-  CRYPT_CERTINFO_FINGERPRINT_SHA = 2006; { = CRYPT_CERTINFO_FINGERPRINT_SHA1 }  
   CRYPT_CERTINFO_FINGERPRINT_SHA2 = 2007;  
   CRYPT_CERTINFO_FINGERPRINT_SHAng = 2008;  
   CRYPT_CERTINFO_CURRENT_CERTIFICATE = 2009;  { Cursor mgt: Rel.pos in chain/CRL/OCSP }
@@ -445,6 +443,7 @@ const
   CRYPT_CERTINFO_PKIUSER_ID = 2031;  { PKI user ID }
   CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD = 2032;  { PKI user issue password }
   CRYPT_CERTINFO_PKIUSER_REVPASSWORD = 2033;  { PKI user revocation password }
+  CRYPT_CERTINFO_PKIUSER_RA = 2034;  { PKI user is an RA }
   
   { X.520 Distinguished Name components.  This is a composite field, the
   DN to be manipulated is selected through the addition of a
@@ -1028,7 +1027,7 @@ const
   { Client/server information }
   CRYPT_SESSINFO_SERVER_NAME = 6008;  { Server name }
   CRYPT_SESSINFO_SERVER_PORT = 6009;  { Server port number }
-  CRYPT_SESSINFO_SERVER_FINGERPRINT = 6010;  { Server key fingerprint }
+  CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1 = 6010;  { Server key fingerprint }
   CRYPT_SESSINFO_CLIENT_NAME = 6011;  { Client name }
   CRYPT_SESSINFO_CLIENT_PORT = 6012;  { Client port number }
   CRYPT_SESSINFO_SESSION = 6013;  { Transport mechanism }
@@ -1367,6 +1366,8 @@ const
   CRYPT_SSLOPTION_MINVER_TLS12 = $03;
   CRYPT_SSLOPTION_SUITEB_128 = $04;    {  SuiteB security levels  }
   CRYPT_SSLOPTION_SUITEB_256 = $08;
+  CRYPT_SSLOPTION_DISABLE_NAMEVERIFY = $10;    {  Disable cert hostname check  }
+  CRYPT_SSLOPTION_DISABLE_CERTVERIFY = $20;    {  Disable certificate check  }
 
 {****************************************************************************
 *                                                                           *
@@ -1378,7 +1379,7 @@ const
 
   CRYPT_MAX_KEYSIZE = 256;
 
-{  The maximum IV size - 256 bits  }
+{  The maximum IV/cipher block size - 256 bits  }
 
   CRYPT_MAX_IVSIZE = 32;
 
@@ -1551,7 +1552,7 @@ type
   CRYPT_ECCCURVE_TYPE = (  
     {  Named ECC curves.  Since these need to be mapped to all manner of
        protocol- and mechanism-specific identifiers, when updating this list 
-       grep for occurrences of CRYPT_ECCCURVE_P256 (the most common one) and
+       grep for occurrences of the string "P256" (the most common one) and 
        check whether any related mapping tables need to be updated  }
     CRYPT_ECCCURVE_NONE,        {  No ECC curve type  }
     CRYPT_ECCCURVE_P192,        {  NIST P192/X9.62 P192r1/SECG p192r1 curve  }
@@ -1559,6 +1560,9 @@ type
     CRYPT_ECCCURVE_P256,        {  NIST P256/X9.62 P256v1/SECG p256r1 curve  }
     CRYPT_ECCCURVE_P384,        {  NIST P384, SECG p384r1 curve  }
     CRYPT_ECCCURVE_P521,        {  NIST P521, SECG p521r1  }
+    CRYPT_ECCCURVE_BRAINPOOL_P256, {  Brainpool p256r1  }
+    CRYPT_ECCCURVE_BRAINPOOL_P384, {  Brainpool p384r1  }
+    CRYPT_ECCCURVE_BRAINPOOL_P512, {  Brainpool p512r1  }
     CRYPT_ECCCURVE_LAST         {  Last valid ECC curve type  }
     
   );

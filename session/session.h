@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Secure Session Routines Header File					*
-*						 Copyright Peter Gutmann 1998-2004					*
+*						 Copyright Peter Gutmann 1998-2013					*
 *																			*
 ****************************************************************************/
 
@@ -92,7 +92,11 @@
 #define SESSION_NEEDS_PRIVKEYSIGN	0x0010	/* Priv.key must have sig.capabil.*/
 #define SESSION_NEEDS_PRIVKEYCERT	0x0020	/* Priv.key must have crypt capabil.*/
 #define SESSION_NEEDS_PRIVKEYCACERT	0x0040	/* Priv key must have CA certificate */
-#define SESSION_NEEDS_KEYORPASSWORD	0x0080	/* PW can be used in place of privK */
+#define SESSION_NEEDS_KEYORPASSWORD	( 0x0080 | SESSION_NEEDS_PASSWORD | \
+									  SESSION_NEEDS_PRIVATEKEY )
+											/* Password can be used in place of 
+											   private, this is a modifier on top 
+											   of privKey/password */
 #define SESSION_NEEDS_REQUEST		0x0100	/* Must have request obj.*/
 #define SESSION_NEEDS_KEYSET		0x0200	/* Must have certificate keyset */
 #define SESSION_NEEDS_CERTSTORE		0x0400	/* Keyset must be certificate store */
@@ -125,7 +129,7 @@ typedef enum {
    to do with the request.  If they set it to AUTHRESPONSE_SUCCESS, we allow 
    the client authorisation, if they set it to AUTHRESPONSE_FAILURE we 
    disallow it and the client gets another go at authorising themselves.  
-   The default setting of AUTHRESPONSE_NONE means we ask the user for 
+   The default setting of AUTHRESPONSE_NONE means that we ask the user for 
    instructions */
 
 typedef enum {
@@ -285,6 +289,13 @@ typedef struct {
 	#define gcmWriteSalt	macWriteSecret
 	int gcmSaltSize;
 
+	/* When TLS 1.1+ explicit IVs are used the IV is stripped on read so 
+	   that the remaining packet data can be copied into the read buffer for 
+	   in-place processing, however when used with encrypt-then-MAC we need 
+	   to store the read IV in order that it can be MAC'd once the packet is 
+	   processed */
+	BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];
+
 	/* The session scoreboard, used for the SSL session cache */
 	void *scoreboardInfoPtr;			/* Session scoreboard */
 
@@ -360,7 +371,8 @@ typedef struct {
 	} CMP_INFO;
 
 typedef struct {
-	/* SCEP protocol flags */
+	/* SCEP request type and protocol flags */
+	int requestType;					/* SCEP request subtype */
 	int flags;							/* Protocol flags */
 	} SCEP_INFO;
 
@@ -666,13 +678,13 @@ int readFixedHeader( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int getSessionData( INOUT SESSION_INFO *sessionInfoPtr, 
 					OUT_BUFFER( dataMaxLength, *bytesCopied ) void *data, 
-					IN_LENGTH const int dataMaxLength, 
-					OUT_LENGTH_Z int *bytesCopied );
+					IN_DATALENGTH const int dataMaxLength, 
+					OUT_DATALENGTH_Z int *bytesCopied );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 int putSessionData( INOUT SESSION_INFO *sessionInfoPtr, 
 					IN_BUFFER_OPT( dataLength ) const void *data,
-					IN_LENGTH_Z const int dataLength, 
-					OUT_LENGTH_Z int *bytesCopied );
+					IN_DATALENGTH_Z const int dataLength, 
+					OUT_DATALENGTH_Z int *bytesCopied );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readPkiDatagram( INOUT SESSION_INFO *sessionInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -691,18 +703,25 @@ int initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 BOOLEAN checkAttributesConsistent( INOUT SESSION_INFO *sessionInfoPtr,
 								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
-int checkServerCertValid( const CRYPT_CERTIFICATE iServerCert,
-						  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-							CRYPT_ATTRIBUTE_TYPE *errorLocus,
-						  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-							CRYPT_ERRTYPE_TYPE *errorType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int checkServerCertValid( const CRYPT_CERTIFICATE iServerKey,
+						  INOUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int activateSession( INOUT SESSION_INFO *sessionInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sendCloseNotification( INOUT SESSION_INFO *sessionInfoPtr,
 						   IN_BUFFER_OPT( length ) const void *data, 
 						   IN_LENGTH_SHORT_Z const int length );
+
+/* Prototypes for functions in sshl_dh.c */
+
+#if defined( USE_SSH ) || defined( USE_SSL )
+CHECK_RETVAL \
+int loadDHcontext( IN_HANDLE const CRYPT_CONTEXT iDHContext, 
+				   IN_LENGTH_SHORT_OPT const int requestedKeySize );
+CHECK_RETVAL \
+int checkDHdata( void );
+#endif /* USE_SSH || USE_SSL */
 
 /* Prototypes for session mapping functions */
 

@@ -312,7 +312,7 @@ static int checkComponentPresent( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldI
 		{
 		/* Sanity check to make sure that we don't fall off the end of the 
 		   table */
-		ENSURES( attributeInfoPtr->fieldID != CRYPT_ERROR );
+		ENSURES( !isAttributeTableEnd( attributeInfoPtr ) );
 
 		/* Adjust the nesting level depending on whether we're entering or
 		   leaving a sequence */
@@ -684,7 +684,7 @@ static int checkAttribute( INOUT ATTRIBUTE_CHECK_INFO *attributeCheckInfo )
 
 		/* Sanity check to make sure that we don't fall off the end of the 
 		   encoding table */
-		ENSURES( attributeCheckInfo->attributeInfoPtr->fieldID != CRYPT_ERROR );
+		ENSURES( !isAttributeTableEnd( attributeCheckInfo->attributeInfoPtr ) );
 
 		/* Check whether this is a repeated instance of the same attribute
 		   and if it is remember the encoding restart point.  We have to do
@@ -855,7 +855,7 @@ int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
 		   first entries will contain a FIELDID_FOLLOWS code to indicate 
 		   that the following field contains the attribute/fieldID */
 		for( innerIterationCount = 0;
-			 attributeCheckInfo.attributeInfoPtr->fieldID != CRYPT_ERROR && \
+			 !isAttributeTableEnd( attributeCheckInfo.attributeInfoPtr ) && \
 				innerIterationCount < FAILSAFE_ITERATIONS_LARGE;
 			 attributeCheckInfo.attributeInfoPtr++, innerIterationCount++ )
 			{
@@ -873,7 +873,7 @@ int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
 				}
 			}
 		ENSURES( innerIterationCount < FAILSAFE_ITERATIONS_LARGE );
-		ENSURES( attributeCheckInfo.attributeInfoPtr->fieldID != CRYPT_ERROR );
+		ENSURES( !isAttributeTableEnd( attributeCheckInfo.attributeInfoPtr ) );
 
 		/* Check this attribute */
 		status = checkAttribute( &attributeCheckInfo );

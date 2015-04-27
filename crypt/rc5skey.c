@@ -66,6 +66,8 @@
   #include "crypt/rc5locl.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_RC5
+
 void RC5_32_set_key(RC5_32_KEY *key, int len, const unsigned char *data,
 		    int rounds)
 	{
@@ -117,4 +119,4 @@ void RC5_32_set_key(RC5_32_KEY *key, int len, const unsigned char *data,
 		if (++jj >= c) jj=0;
 		}
 	}
-
+#endif /* USE_RC5 */

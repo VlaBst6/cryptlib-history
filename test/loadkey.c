@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Test Key Load Code						*
-*						Copyright Peter Gutmann 1995-2007					*
+*						Copyright Peter Gutmann 1995-2012					*
 *																			*
 ****************************************************************************/
 
@@ -734,8 +734,9 @@ BOOLEAN loadDHKey( const CRYPT_DEVICE cryptDevice,
 									 CRYPT_ALGO_DH );
 	if( cryptStatusError( status ) )
 		{
-		printf( "crypt%sCreateContext() failed with error code %d, "
-				"line %d.\n", isDevice ? "Device" : "", status, __LINE__ );
+		fprintf( outputStream, "crypt%sCreateContext() failed with error "
+				 "code %d, line %d.\n", isDevice ? "Device" : "", status, 
+				 __LINE__ );
 		return( FALSE );
 		}
 	if( !setLabel( *cryptContext, "DH key" ) )
@@ -782,8 +783,9 @@ static int loadRSAPublicKey( const CRYPT_DEVICE cryptDevice,
 									 CRYPT_ALGO_RSA );
 	if( cryptStatusError( status ) )
 		{
-		printf( "crypt%sCreateContext() failed with error code %d, "
-				"line %d.\n", isDevice ? "Device" : "", status, __LINE__ );
+		fprintf( outputStream, "crypt%sCreateContext() failed with error "
+				 "code %d, line %d.\n", isDevice ? "Device" : "", status, 
+				 __LINE__ );
 		return( status );
 		}
 	if( isDevice && !setLabel( *cryptContext, cryptContextLabel ) )
@@ -869,8 +871,8 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 		if( cryptStatusError( status ) )
 			{
 			free( rsaKey );
-			printf( "Public key load failed with error code %d, line %d.\n", 
-					status, __LINE__ );
+			fprintf( outputStream, "Public key load failed with error "
+					 "code %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		if( decryptContext == NULL )
@@ -898,8 +900,9 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 				cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME,
 								cryptContextLabel );
 			}
-		printf( "crypt%sCreateContext() failed with error code %d, "
-				"line %d.\n", isDevice ? "Device" : "", status, __LINE__ );
+		fprintf( outputStream, "crypt%sCreateContext() failed with error "
+				 "code %d, line %d.\n", isDevice ? "Device" : "", status, 
+				 __LINE__ );
 		return( FALSE );
 		}
 	if( !setLabel( *decryptContext, decryptContextLabel ) )
@@ -996,8 +999,8 @@ BOOLEAN loadDSAContextsEx( const CRYPT_DEVICE cryptDevice,
 		if( cryptStatusError( status ) )
 			{
 			free( dsaKey );
-			printf( "cryptCreateContext() failed with error code %d, "
-					"line %d.\n", status, __LINE__ );
+			fprintf( outputStream, "cryptCreateContext() failed with error "
+					 "code %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		if( !setLabel( *signContext, signContextLabel ) )
@@ -1048,8 +1051,8 @@ BOOLEAN loadDSAContextsEx( const CRYPT_DEVICE cryptDevice,
 				cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME,
 								signContextLabel );
 			}
-		printf( "cryptCreateContext() failed with error code %d, line %d.\n", 
-				status, __LINE__ );
+		fprintf( outputStream, "cryptCreateContext() failed with error "
+				 "code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	if( !setLabel( *sigCheckContext, sigCheckContextLabel ) )
@@ -1122,8 +1125,8 @@ BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 		if( cryptStatusError( status ) )
 			{
 			free( elgamalKey );
-			printf( "cryptCreateContext() failed with error code %d, "
-					"line %d.\n", status, __LINE__ );
+			fprintf( outputStream, "cryptCreateContext() failed with error "
+					 "code %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		if( !setLabel( *cryptContext, ELGAMAL_PUBKEY_LABEL ) )
@@ -1164,8 +1167,8 @@ BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 		free( elgamalKey );
 		if( cryptContext != NULL )
 			cryptDestroyContext( *cryptContext );
-		printf( "cryptCreateContext() failed with error code %d, line %d.\n", 
-				status, __LINE__ );
+		fprintf( outputStream, "cryptCreateContext() failed with error "
+				 "code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	if( !setLabel( *decryptContext, ELGAMAL_PRIVKEY_LABEL ) )
@@ -1191,8 +1194,7 @@ BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 		{
 		if( cryptContext != NULL )
 			cryptDestroyContext( *cryptContext );
-		if( decryptContext != NULL )
-			cryptDestroyContext( *decryptContext );
+		cryptDestroyContext( *decryptContext );
 		printf( "Private key load failed with error code %d, line %d.\n", 
 				status, __LINE__ );
 		return( FALSE );
@@ -1203,10 +1205,12 @@ BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 
 /* Load Diffie-Hellman encrytion contexts */
 
-BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
+BOOLEAN loadDHContexts( const CRYPT_DEVICE cryptDevice,
+						CRYPT_CONTEXT *cryptContext1,
 						CRYPT_CONTEXT *cryptContext2 )
 	{
 	CRYPT_PKCINFO_DLP *dhKey;
+	const BOOLEAN isDevice = ( cryptDevice != CRYPT_UNUSED ) ? TRUE : FALSE;
 	int status;
 
 	/* Allocate room for the public-key components */
@@ -1214,12 +1218,16 @@ BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
 		return( FALSE );
 
 	/* Create the first encryption context */
-	status = cryptCreateContext( cryptContext1, CRYPT_UNUSED, CRYPT_ALGO_DH );
+	if( isDevice )
+		status = cryptDeviceCreateContext( cryptDevice, cryptContext1,
+										   CRYPT_ALGO_DH );
+	else
+		status = cryptCreateContext( cryptContext1, CRYPT_UNUSED, CRYPT_ALGO_DH );
 	if( cryptStatusError( status ) )
 		{
 		free( dhKey );
-		printf( "cryptCreateContext() failed with error code %d, line %d.\n", 
-				status, __LINE__ );
+		fprintf( outputStream, "cryptCreateContext() failed with error "
+				 "code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	if( !setLabel( *cryptContext1, DH_KEY1_LABEL ) )
@@ -1254,15 +1262,17 @@ BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
 	if( cryptStatusError( status ) )
 		{
 		free( dhKey );
-		printf( "cryptCreateContext() failed with error code %d, line %d.\n", 
-				status, __LINE__ );
+		fprintf( outputStream, "cryptCreateContext() failed with error "
+				 "code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	if( !setLabel( *cryptContext2, DH_KEY2_LABEL ) )
 		{
 		free( dhKey );
-		if( cryptContext1 != NULL )
-			cryptDestroyContext( *cryptContext1 );
+		if( isDevice )
+			cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME,
+							DH_KEY1_LABEL );
+		cryptDestroyContext( *cryptContext1 );
 		cryptDestroyContext( *cryptContext2 );
 		return( FALSE );
 		}
@@ -1277,6 +1287,13 @@ BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
 	free( dhKey );
 	if( cryptStatusError( status ) )
 		{
+		if( isDevice )
+			{
+			cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME,
+							DH_KEY1_LABEL );
+			cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME,
+							DH_KEY2_LABEL );
+			}
 		printf( "DH #2 key load failed with error code %d, line %d.\n", 
 				status, __LINE__ );
 		return( FALSE );
@@ -1287,10 +1304,14 @@ BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
 
 /* Load ECDSA encrytion contexts */
 
-BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *sigCheckContext,
-						   CRYPT_CONTEXT *signContext )
+BOOLEAN loadECDSAContextsEx( const CRYPT_DEVICE cryptDevice,
+							 CRYPT_CONTEXT *sigCheckContext,
+							 CRYPT_CONTEXT *signContext,
+							 const C_STR sigCheckContextLabel,
+							 const C_STR signContextLabel )
 	{
 	CRYPT_PKCINFO_ECC *eccKey;
+	const BOOLEAN isDevice = ( cryptDevice != CRYPT_UNUSED ) ? TRUE : FALSE;
 	const ECC_KEY *eccKeyData = &eccP256TestKey;
 	int status;
 
@@ -1301,16 +1322,20 @@ BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *sigCheckContext,
 	/* Create the signature context */
 	if( signContext != NULL )
 		{
-		status = cryptCreateContext( signContext, CRYPT_UNUSED,
-									 CRYPT_ALGO_ECDSA );
+		if( isDevice )
+			status = cryptDeviceCreateContext( cryptDevice, signContext,
+											   CRYPT_ALGO_ECDSA );
+		else
+			status = cryptCreateContext( signContext, CRYPT_UNUSED,
+										 CRYPT_ALGO_ECDSA );
 		if( cryptStatusError( status ) )
 			{
 			free( eccKey );
-			printf( "cryptCreateContext() failed with error code %d, "
-					"line %d.\n", status, __LINE__ );
+			fprintf( outputStream, "cryptCreateContext() failed with error "
+					 "code %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
-		if( !setLabel( *signContext, ECDSA_PRIVKEY_LABEL ) )
+		if( !setLabel( *signContext, signContextLabel ) )
 			{
 			free( eccKey );
 			cryptDestroyContext( *signContext );
@@ -1350,22 +1375,36 @@ BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *sigCheckContext,
 		}
 
 	/* Create the sig.check context */
-	status = cryptCreateContext( sigCheckContext, CRYPT_UNUSED,
-								 CRYPT_ALGO_ECDSA );
+	if( isDevice )
+		status = cryptDeviceCreateContext( cryptDevice, sigCheckContext,
+										   CRYPT_ALGO_ECDSA );
+	else
+		status = cryptCreateContext( sigCheckContext, CRYPT_UNUSED,
+									 CRYPT_ALGO_ECDSA );
 	if( cryptStatusError( status ) )
 		{
 		free( eccKey );
 		if( signContext != NULL )
+			{
 			cryptDestroyContext( *signContext );
-		printf( "cryptCreateContext() failed with error code %d, line %d.\n", 
-				status, __LINE__ );
+			if( isDevice )
+				cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME,
+								signContextLabel );
+			}
+		fprintf( outputStream, "cryptCreateContext() failed with error "
+				 "code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	if( !setLabel( *sigCheckContext, ECDSA_PRIVKEY_LABEL ) )
+	if( !setLabel( *sigCheckContext, sigCheckContextLabel ) )
 		{
 		free( eccKey );
 		if( signContext != NULL )
+			{
 			cryptDestroyContext( *signContext );
+			if( isDevice )
+				cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME,
+								signContextLabel );
+			}
 		cryptDestroyContext( *sigCheckContext );
 		return( FALSE );
 		}
@@ -1390,7 +1429,12 @@ BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *sigCheckContext,
 	if( cryptStatusError( status ) )
 		{
 		if( signContext != NULL )
+			{
 			cryptDestroyContext( *signContext );
+			if( isDevice )
+				cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME,
+								signContextLabel );
+			}
 		cryptDestroyContext( *sigCheckContext );
 		printf( "Public key load failed with error code %d, line %d.\n", 
 				status, __LINE__ );
@@ -1398,6 +1442,14 @@ BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *sigCheckContext,
 		}
 
 	return( TRUE );
+	}
+
+BOOLEAN loadECDSAContexts( const CRYPT_DEVICE cryptDevice,
+						   CRYPT_CONTEXT *sigCheckContext,
+						   CRYPT_CONTEXT *signContext )
+	{
+	return( loadECDSAContextsEx( cryptDevice, sigCheckContext, signContext, 
+								 ECDSA_PUBKEY_LABEL, ECDSA_PRIVKEY_LABEL ) );
 	}
 
 /* Destroy the encryption contexts */

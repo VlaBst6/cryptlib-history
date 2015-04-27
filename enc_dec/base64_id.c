@@ -15,12 +15,15 @@
 
 #define BITS_PER_GROUP	( 5 * 5 )	/* 5 chars encoding 5 bits each */
 
-/* En/decode tables for text representations of binary keys */
+/* En/decode tables for text representations of binary keys.  For the two
+   mask tables, only positions 4...7 are used */
 
 static const char codeTable[] = \
-					"ABCDEFGHJKLMNPQRSTUVWXYZ23456789____";	/* No O/0, I/1 */
-static const int hiMask[] = { 0x00, 0x00, 0x00, 0x00, 0x0F, 0x07, 0x03, 0x01 };
-static const int loMask[] = { 0x00, 0x00, 0x00, 0x00, 0x80, 0xC0, 0xE0, 0xF0 };
+			"ABCDEFGHJKLMNPQRSTUVWXYZ23456789____";	/* No O/0, I/1 */
+static const int hiMask[] = \
+			{ 0x00, 0x00, 0x00, 0x00, 0x0F, 0x07, 0x03, 0x01, 0x00, 0x00 };
+static const int loMask[] = \
+			{ 0x00, 0x00, 0x00, 0x00, 0x80, 0xC0, 0xE0, 0xF0, 0x00, 0x00 };
 
 /****************************************************************************
 *																			*
@@ -163,6 +166,7 @@ int encodePKIUserValue( OUT_BUFFER( encValMaxLen, *encValLen ) char *encVal,
 			bitCount -= 8;
 			byteCount++;
 			}
+		ENSURES( bitCount >= 0 && bitCount < 8 );
 		ENSURES( byteCount >= 0 && byteCount < 64 );
 		}
 	*encValLen = length;
@@ -326,6 +330,7 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 			bitCount -= 8;
 			byteCount++;
 			}
+		ENSURES( bitCount >= 0 && bitCount < 8 );
 		ENSURES( byteCount >= 0 && byteCount < 64 );
 		}
 

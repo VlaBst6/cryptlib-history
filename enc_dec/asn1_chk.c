@@ -117,6 +117,14 @@ typedef struct {
 	int headerSize;		/* Size of tag+length */
 	} ASN1_ITEM;
 
+#ifdef USE_INT_ASN1
+
+/****************************************************************************
+*																			*
+*								Utility Routines							*
+*																			*
+****************************************************************************/
+
 /* Get an ASN.1 object's tag and length */
 
 CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -317,14 +325,20 @@ static BOOLEAN checkEncapsulation( INOUT STREAM *stream,
 	return( isEncapsulated );
 	}
 
+/****************************************************************************
+*																			*
+*							Check Primitive ASN.1 Objects					*
+*																			*
+****************************************************************************/
+
 /* Check a primitive ASN.1 object */
 
 CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1 ) ) \
-static ASN1_STATE checkASN1( INOUT STREAM *stream, 
-							 IN_LENGTH const long length, 
-							 const BOOLEAN isIndefinite, 
-							 IN_RANGE( 0, MAX_NESTING_LEVEL ) const int level, 
-							 IN_ENUM_OPT( ASN1_STATE ) ASN1_STATE state, 
+static ASN1_STATE checkASN1( INOUT STREAM *stream,
+							 IN_DATALENGTH const long length,
+							 const BOOLEAN isIndefinite,
+							 IN_RANGE( 0, MAX_NESTING_LEVEL ) const int level,
+							 IN_ENUM_OPT( ASN1_STATE ) ASN1_STATE state,
 							 const BOOLEAN checkDataElements );
 
 CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -337,22 +351,44 @@ static ASN1_STATE checkPrimitive( INOUT STREAM *stream, const ASN1_ITEM *item,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( item, sizeof( ASN1_ITEM ) ) );
 	
-	REQUIRES( level > 0 && level <= MAX_NESTING_LEVEL );
-	REQUIRES( state >= STATE_NONE && state < STATE_ERROR );
-	REQUIRES( length >= 0 && length < MAX_INTLENGTH );
+	REQUIRES_EXT( level > 0 && level <= MAX_NESTING_LEVEL, STATE_ERROR );
+	REQUIRES_EXT( state >= STATE_NONE && state < STATE_ERROR, STATE_ERROR );
+	REQUIRES_EXT( length >= 0 && length < MAX_INTLENGTH, STATE_ERROR );
 
 	/* Make sure that we're not processing suspiciosly deeply nested data */
 	if( level >= MAX_NESTING_LEVEL )
 		return( STATE_ERROR );
 
 	/* In theory only NULL and EOC elements (BER_RESERVED) are allowed to 
-	   have a zero length, but some broken implementations (Netscape, Van 
-	   Dyke) encode numeric zero values as a zero-length element so we have 
-	   to accept these as well */
-	if( length <= 0 && item->tag != BER_NULL && \
-					   item->tag != BER_RESERVED && \
-					   item->tag != BER_INTEGER )
-		return( STATE_ERROR );
+	   have a zero length */
+	if( length <= 0 && item->tag != BER_NULL && item->tag != BER_RESERVED )
+		{
+		/* There are other cases where zero lengths can occur:
+
+			INTEGER: Broken implementations (older Netscape, older Van Dyke) 
+				encode numeric zero values as a zero-length element.  These
+				should have all vanished long ago, so we don't make an 
+				exception for them any more.
+
+			OCTET STRING: When using PBKDF2 as a general-purpose KDF (for
+				CMS authEnc encryption), the salt is omitted, which means 
+				that it's encoded as a zero-length value.  It would be 
+				better to perform context checking to see whether it's in 
+				the right location but the most information that we have at 
+				this point is the nesting level, we allow a zero-length 
+				OCTET STRING at a nesting level between 16 and 30, which 
+				occurs for CMS authEnveloped data */
+		if( 
+#if 0	/* 18/1/14 Removed since this software should have vanished years ago */
+			item->tag != BER_INTEGER &&
+#endif /* 0 */
+			!( item->tag == BER_OCTETSTRING && level >= 16 && level <= 30 ) )
+			return( STATE_ERROR );
+
+		/* Since this is a zero-length element, there's nothing further to
+		   check */
+		return( STATE_NONE );
+		}
 
 	/* Perform a general check that everything is OK.  We don't check for 
 	   invalid content except where it would impede decoding of the data in
@@ -360,6 +396,8 @@ static ASN1_STATE checkPrimitive( INOUT STREAM *stream, const ASN1_ITEM *item,
 	switch( item->tag )
 		{
 		case BER_BOOLEAN:
+			if( length != 1 )
+				return( STATE_ERROR );
 			return( cryptStatusError( sgetc( stream ) ) ? \
 					STATE_ERROR : STATE_BOOLEAN );
 
@@ -371,6 +409,9 @@ static ASN1_STATE checkPrimitive( INOUT STREAM *stream, const ASN1_ITEM *item,
 			return( STATE_NONE );
 
 		case BER_BITSTRING:
+			if( length < 2 )
+				return( STATE_ERROR );
+
 			/* Check the number of unused bits */
 			ch = sgetc( stream );
 			length--;
@@ -428,8 +469,33 @@ static ASN1_STATE checkPrimitive( INOUT STREAM *stream, const ASN1_ITEM *item,
 			}
 
 		case BER_OBJECT_IDENTIFIER:
+			if( length < 3 )
+				return( STATE_ERROR );
 			if( length > MAX_OID_SIZE - 2 )
 				{
+				/* Microsoft invented their own gibberish OIDs off the arc 
+				   1 3 6 1 4 1 311 21 8, beyond which the contents are just 
+				   noise.  These OIDs are technically valid (in the usual 
+				   sense that an MPEG of a cat encoded in there is valid) 
+				   but look like garbage, so they'd normally get rejected by 
+				   the sanity-checking.  In order to be able to process 
+				   Microsoft-generated certificates we kludge around them by 
+				   performing an explicit check for this particular arc and 
+				   not rejecting the input if it's one of these */
+				if( state == STATE_SEQUENCE && length < 48 )
+					{
+					BYTE oidBuffer[ 48 + 8 ];
+					int status;
+
+					status = sread( stream, oidBuffer, length );
+					if( cryptStatusError( status ) )
+						return( STATE_ERROR );
+					if( memcmp( oidBuffer, 
+								"\x2B\x06\x01\x04\x01\x82\x37\x15\x08", 9 ) )
+						return( STATE_ERROR );
+					return( STATE_OID );
+					}
+
 				/* Total OID size (including tag and length, since they're 
 				   treated as a blob) should be less than a sane limit */
 				return( STATE_ERROR );
@@ -437,8 +503,8 @@ static ASN1_STATE checkPrimitive( INOUT STREAM *stream, const ASN1_ITEM *item,
 			return( cryptStatusError( sSkip( stream, length ) ) ? \
 					STATE_ERROR : STATE_OID );
 
-		case BER_RESERVED:
-			break;					/* EOC */
+		case BER_RESERVED:			/* EOC */
+			return( STATE_NONE );
 
 		case BER_NULL:
 			return( STATE_NULL );
@@ -481,8 +547,14 @@ static ASN1_STATE checkPrimitive( INOUT STREAM *stream, const ASN1_ITEM *item,
 			return( STATE_ERROR );
 		}
 
-	return( STATE_NONE );
+	retIntError_Ext( STATE_ERROR );
 	}
+
+/****************************************************************************
+*																			*
+*							Check Complex ASN.1 Objects						*
+*																			*
+****************************************************************************/
 
 /* Check a single ASN.1 object.  checkASN1() and checkASN1Object() are 
    mutually recursive, the ...Object() version only exists to avoid a
@@ -515,8 +587,8 @@ static ASN1_STATE checkASN1Object( INOUT STREAM *stream, const ASN1_ITEM *item,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( item, sizeof( ASN1_ITEM ) ) );
 
-	REQUIRES( level > 0 && level <= MAX_NESTING_LEVEL );
-	REQUIRES( state >= STATE_NONE && state < STATE_ERROR );
+	REQUIRES_EXT( level > 0 && level <= MAX_NESTING_LEVEL, STATE_ERROR );
+	REQUIRES_EXT( state >= STATE_NONE && state < STATE_ERROR, STATE_ERROR );
 
 	/* Make sure that we're not processing suspiciosly deeply nested data */
 	if( level >= MAX_NESTING_LEVEL )
@@ -581,7 +653,7 @@ static ASN1_STATE checkASN1Object( INOUT STREAM *stream, const ASN1_ITEM *item,
 				STATE_NONE : STATE_ERROR );
 		}
 
-	ENSURES( item->length > 0 || item->indefinite );
+	ENSURES_EXT( item->length > 0 || item->indefinite, STATE_ERROR );
 
 	/* If it's constructed, parse the nested object(s) */
 	if( ( item->tag & BER_CONSTRUCTED_MASK ) == BER_CONSTRUCTED )
@@ -611,7 +683,7 @@ static ASN1_STATE checkASN1Object( INOUT STREAM *stream, const ASN1_ITEM *item,
 
 CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1 ) ) \
 static ASN1_STATE checkASN1( INOUT STREAM *stream, 
-							 IN_LENGTH const long length, 
+							 IN_DATALENGTH const long length, 
 							 const BOOLEAN isIndefinite, 
 							 IN_RANGE( 0, MAX_NESTING_LEVEL ) const int level, 
 							 IN_ENUM_OPT( ASN1_STATE ) ASN1_STATE state, 
@@ -626,12 +698,13 @@ static ASN1_STATE checkASN1( INOUT STREAM *stream,
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
-	REQUIRES( ( level > 0 && level <= MAX_NESTING_LEVEL ) || \
-			  ( level == 0 && length == LENGTH_MAGIC ) );
-	REQUIRES( state >= STATE_NONE && state < STATE_ERROR );
-	REQUIRES( ( isIndefinite && length == 0 ) || \
-			  ( !isIndefinite && length >= 0 && length < MAX_INTLENGTH ) );
-	REQUIRES( lastPos >= 0 && lastPos < MAX_INTLENGTH );
+	REQUIRES_EXT( ( level > 0 && level <= MAX_NESTING_LEVEL ) || \
+				  ( level == 0 && length == LENGTH_MAGIC ), STATE_ERROR );
+	REQUIRES_EXT( state >= STATE_NONE && state < STATE_ERROR, STATE_ERROR );
+	REQUIRES_EXT( ( isIndefinite && length == 0 ) || \
+				  ( !isIndefinite && length >= 0 && length < MAX_BUFFER_SIZE ),
+				  STATE_ERROR );
+	REQUIRES_EXT( lastPos >= 0 && lastPos < MAX_BUFFER_SIZE, STATE_ERROR );
 
 	/* Make sure that we're not processing suspiciosly deeply nested data */
 	if( level >= MAX_NESTING_LEVEL )
@@ -705,12 +778,18 @@ static ASN1_STATE checkASN1( INOUT STREAM *stream,
 	return( ( newState == STATE_NONE ) ? STATE_NONE : STATE_ERROR );
 	}
 
+/****************************************************************************
+*																			*
+*								ASN.1 Check Interface						*
+*																			*
+****************************************************************************/
+
 /* Check the encoding of a complete object and determine its length (qui 
    omnes insidias timet in nullas incidit - Syrus) */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int checkObjectEncoding( IN_BUFFER( objectLength ) const void *objectPtr, 
-						 IN_LENGTH const int objectLength )
+						 IN_DATALENGTH const int objectLength )
 	{
 	STREAM stream;
 	ASN1_STATE state;
@@ -718,7 +797,7 @@ int checkObjectEncoding( IN_BUFFER( objectLength ) const void *objectPtr,
 
 	assert( isReadPtr( objectPtr, objectLength ) );
 	
-	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
+	REQUIRES( objectLength > 0 && objectLength < MAX_BUFFER_SIZE );
 
 	sMemConnect( &stream, objectPtr, objectLength );
 	state = checkASN1( &stream, LENGTH_MAGIC, FALSE, 0, STATE_NONE, TRUE );
@@ -734,7 +813,7 @@ int checkObjectEncoding( IN_BUFFER( objectLength ) const void *objectPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int findObjectLength( INOUT STREAM *stream, 
-							 OUT_LENGTH_Z long *length, 
+							 OUT_DATALENGTH_Z long *length, 
 							 const BOOLEAN isLongObject )
 	{
 	const long startPos = stell( stream );
@@ -744,7 +823,7 @@ static int findObjectLength( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( length, sizeof( long ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	*length = 0;
@@ -798,7 +877,8 @@ static int findObjectLength( INOUT STREAM *stream,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int getStreamObjectLength( INOUT STREAM *stream, OUT_LENGTH_Z int *length )
+int getStreamObjectLength( INOUT STREAM *stream, 
+						   OUT_DATALENGTH_Z int *length )
 	{
 	long localLength;
 	int status;
@@ -817,7 +897,7 @@ int getStreamObjectLength( INOUT STREAM *stream, OUT_LENGTH_Z int *length )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int getLongStreamObjectLength( INOUT STREAM *stream, 
-							   OUT_LENGTH_Z long *length )
+							   OUT_DATALENGTH_Z long *length )
 	{
 	long localLength;
 	int status;
@@ -836,8 +916,8 @@ int getLongStreamObjectLength( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int getObjectLength( IN_BUFFER( objectLength ) const void *objectPtr, 
-					 IN_LENGTH const int objectLength, 
-					 OUT_LENGTH_Z int *length )
+					 IN_DATALENGTH const int objectLength, 
+					 OUT_DATALENGTH_Z int *length )
 	{
 	STREAM stream;
 	long localLength = DUMMY_INIT;
@@ -846,7 +926,7 @@ int getObjectLength( IN_BUFFER( objectLength ) const void *objectPtr,
 	assert( isReadPtr( objectPtr, objectLength ) );
 	assert( isWritePtr( length, sizeof( int ) ) );
 
-	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
+	REQUIRES( objectLength > 0 && objectLength < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	*length = 0;
@@ -863,8 +943,8 @@ int getObjectLength( IN_BUFFER( objectLength ) const void *objectPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int getLongObjectLength( IN_BUFFER( objectLength ) const void *objectPtr, 
-						 IN_LENGTH const long objectLength,
-						 OUT_LENGTH_Z long *length )
+						 IN_DATALENGTH const long objectLength,
+						 OUT_DATALENGTH_Z long *length )
 	{
 	STREAM stream;
 	long localLength;
@@ -873,7 +953,7 @@ int getLongObjectLength( IN_BUFFER( objectLength ) const void *objectPtr,
 	assert( isReadPtr( objectPtr, objectLength ) );
 	assert( isWritePtr( length, sizeof( long ) ) );
 
-	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
+	REQUIRES( objectLength > 0 && objectLength < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	*length = 0;
@@ -885,3 +965,4 @@ int getLongObjectLength( IN_BUFFER( objectLength ) const void *objectPtr,
 		*length = localLength;
 	return( status );
 	}
+#endif /* USE_INT_ASN1 */

@@ -133,7 +133,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int getRandomNonzero( INOUT DEVICE_INFO *deviceInfoPtr, 
 							 OUT_BUFFER_FIXED( length ) void *data,
 							 IN_LENGTH_SHORT const int length,
-							 INOUT_OPT MESSAGE_FUNCTION_EXTINFO *messageExtInfo )
+							 STDC_UNUSED INOUT_OPT \
+								MESSAGE_FUNCTION_EXTINFO *messageExtInfo )
 	{
 	BYTE randomBuffer[ 128 + 8 ], *outBuffer = data;
 	int count, iterationCount, status = CRYPT_OK;
@@ -191,7 +192,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int getDeviceAttribute( INOUT DEVICE_INFO *deviceInfoPtr,
 						OUT_INT_Z int *valuePtr, 
 						IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
-						INOUT MESSAGE_FUNCTION_EXTINFO *messageExtInfo )
+						STDC_UNUSED INOUT \
+								MESSAGE_FUNCTION_EXTINFO *messageExtInfo )
 	{
 	assert( isWritePtr( deviceInfoPtr, sizeof( DEVICE_INFO ) ) );
 	assert( isWritePtr( valuePtr, sizeof( int ) ) );

@@ -195,8 +195,9 @@ static int writePgpSigPacketHeader( OUT_BUFFER_OPT( dataMaxLen, *dataLen ) \
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
-						void *signature, IN_LENGTH_Z const int sigMaxLength, 
-						OUT_LENGTH_Z int *signatureLength, 
+							void *signature, 
+						IN_DATALENGTH_Z const int sigMaxLength, 
+						OUT_DATALENGTH_Z int *signatureLength, 
 						IN_HANDLE const CRYPT_CONTEXT iSignContext,
 						IN_HANDLE const CRYPT_CONTEXT iHashContext,
 						IN_RANGE( PGP_SIG_NONE, PGP_SIG_LAST - 1 ) \
@@ -219,7 +220,7 @@ int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	REQUIRES( ( signature == NULL && sigMaxLength == 0 ) || \
 			  ( signature != NULL && \
 				sigMaxLength > MIN_CRYPT_OBJECTSIZE && \
-				sigMaxLength < MAX_INTLENGTH ) );
+				sigMaxLength < MAX_BUFFER_SIZE ) );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( isHandleRangeValid( iHashContext ) );
 	REQUIRES( sigType >= PGP_SIG_NONE && sigType < PGP_SIG_LAST );
@@ -395,7 +396,7 @@ int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int checkSignaturePGP( IN_BUFFER( signatureLength ) const void *signature, 
-					   IN_LENGTH_SHORT const int signatureLength,
+					   IN_DATALENGTH const int signatureLength,
 					   IN_HANDLE const CRYPT_CONTEXT sigCheckContext,
 					   IN_HANDLE const CRYPT_CONTEXT iHashContext )
 	{
@@ -406,7 +407,7 @@ int checkSignaturePGP( IN_BUFFER( signatureLength ) const void *signature,
 
 	assert( isReadPtr( signature, signatureLength ) );
 	
-	REQUIRES( signatureLength > 40 && signatureLength < MAX_INTLENGTH );
+	REQUIRES( signatureLength > 40 && signatureLength < MAX_BUFFER_SIZE );
 	REQUIRES( isHandleRangeValid( sigCheckContext ) );
 	REQUIRES( isHandleRangeValid( iHashContext ) );
 

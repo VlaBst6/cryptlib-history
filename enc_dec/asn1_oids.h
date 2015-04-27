@@ -101,6 +101,10 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	{ CRYPT_ALGO_DSA, CRYPT_ALGO_SHA1, 0, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x07\x2A\x86\x48\xCE\x38\x04\x03" ) },
 	  /* dsaWithSha1 (1 2 840 10040 4 3) */
+	{ CRYPT_ALGO_DSA, CRYPT_ALGO_NONE, 0, ALGOID_CLASS_PKC,
+	  MKOID( "\x06\x07\x2A\x86\x48\xCE\x38\x04\x03" ) },
+	  /* Bug workaround for implementations that erroneously use
+	     dsaWithXXX when they should be using straight DSA */
 	{ CRYPT_ALGO_DSA, CRYPT_ALGO_SHA1, 0, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x05\x2B\x0E\x03\x02\x1B" ) },
 	  /* Another dsaWithSHA1 (1 3 14 3 2 27) */
@@ -112,6 +116,9 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	  /* When they ran out of valid dsaWithSHA's, they started using invalid
 	     ones.  This one is from JDK 1.1 and is actually dsaWithSHA(-0), but 
 		 it's used as if it were dsaWithSHA-1 (1 3 14 3 2 13) */
+	{ CRYPT_ALGO_DSA, CRYPT_ALGO_SHA2, 0, ALGOID_CLASS_PKC,
+	  MKOID( "\x06\x09\x60\x86\x48\x01\x65\x03\x04\x03\x02" ) },
+	  /* dsaWithSha256 (2 16 840 1 101 3 4 3 2) */
 #endif /* USE_DSA */
 
 	/* Elgamal */
@@ -143,6 +150,10 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA1, 0, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x07\x2A\x86\x48\xCE\x3D\x04\x01" ) },
 	  /* ecdsaWithSHA1 (1 2 840 10045 4 1) */
+	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA1, 0, ALGOID_CLASS_PKC,
+	  MKOID( "\x06\x07\x2A\x86\x48\xCE\x3D\x04\x01" ) },
+	  /* Bug workaround for implementations that erroneously use
+	     ecdsaWithXXX when they should be using straight ECDSA */
   #if 0		/* These are too awkward to support easily, and PKIX says they 
 			   shouldn't be used anyway */
 	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA1, 0, ALGOID_CLASS_PKCSIG,
@@ -156,13 +167,25 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 32, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x02" ) },
 	  /* ecdsaWithSHA256 (1 2 840 10045 4 3 2) */
+	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 32, ALGOID_CLASS_PKC,
+	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x02" ) },
+	  /* Bug workaround for implementations that erroneously use
+	     ecdsaWithXXX when they should be using straight ECDSA */
   #ifdef USE_SHA2_EXT
 	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 48, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x03" ) },
 	  /* ecdsaWithSHA384 (1 2 840 10045 4 3 3) */
+	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 48, ALGOID_CLASS_PKC,
+	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x03" ) },
+	  /* Bug workaround for implementations that erroneously use
+	     ecdsaWithXXX when they should be using straight ECDSA */
 	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 64, ALGOID_CLASS_PKCSIG,
 	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x04" ) },
 	  /* ecdsaWithSHA512 (1 2 840 10045 4 3 4) */
+	{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2, 64, ALGOID_CLASS_PKC,
+	  MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x04\x03\x04" ) },
+	  /* Bug workaround for implementations that erroneously use
+	     ecdsaWithXXX when they should be using straight ECDSA */
   #endif /* USE_SHA2_EXT */
 #endif /* USE_SHA2 */
 #endif /* USE_ECDSA */
@@ -220,9 +243,17 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	  MKOID( "\x06\x08\x2A\x86\x48\x86\xF7\x0D\x02\x07" ) },
 	  /* Another hmacWithSHA1 (1 2 840 113549 2 7) */
 #ifdef USE_HMAC_SHA2
-	{ CRYPT_ALGO_HMAC_SHA2, CRYPT_ALGO_NONE, 0, ALGOID_CLASS_HASH,
+	{ CRYPT_ALGO_HMAC_SHA2, 32, 0, ALGOID_CLASS_HASH,
 	  MKOID( "\x06\x08\x2A\x86\x48\x86\xF7\x0D\x02\x09" ) },
 	  /* hmacWithSHA256 (1 2 840 113549 2 9) */
+  #ifdef USE_SHA2_EXT
+	{ CRYPT_ALGO_HMAC_SHA2, 48, 0, ALGOID_CLASS_HASH,
+	  MKOID( "\x06\x08\x2A\x86\x48\x86\xF7\x0D\x02\x0A" ) },
+	  /* hmacWithSHA384 (1 2 840 113549 2 10) */
+	{ CRYPT_ALGO_HMAC_SHA2, 64, 0, ALGOID_CLASS_HASH,
+	  MKOID( "\x06\x08\x2A\x86\x48\x86\xF7\x0D\x02\x0B" ) },
+	  /* hmacWithSHA512 (1 2 840 113549 2 11) */
+  #endif /* USE_SHA2_EXT */
 #endif /* USE_HMAC_SHA2 */
 
 	/* Encryption algorithms */

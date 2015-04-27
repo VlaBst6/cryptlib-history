@@ -318,13 +318,7 @@ STDC_NONNULL_ARG( ( 1, 2 ) ) \
 void getCapabilityInfo( OUT CRYPT_QUERY_INFO *cryptQueryInfo,
 						const CAPABILITY_INFO FAR_BSS *capabilityInfoPtr );
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
-							   const BOOLEAN asymmetricOK );
-		/* The asymmetricOK flag indicates that the capabilities can have 
-		   asymmetric functionality, for example sign is supported but sig.
-		   check isn't (this is required for some tinkertoy implementations 
-		   in crypto tokens which support bare-minimum functionality such as 
-		   RSA private-key ops and nothing else) */
+BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr );
 
 /* Fallback functions to handle context-specific information that isn't 
    specific to a particular context.  The initial request goes to the 

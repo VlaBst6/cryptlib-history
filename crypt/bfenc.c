@@ -66,7 +66,16 @@
   #include "crypt/bflocl.h"
 #endif /* Compiler-specific includes */
 
-#ifndef USE_ASM
+#ifdef USE_BLOWFISH
+
+#ifdef USE_ASM
+
+#if defined( _MSC_VER )	
+  /* Pull in the Blowfish asm code packaged into a .lib - pcg */
+  #pragma comment( lib, "crypt/b-win32.lib" )
+#endif /* _MSC_VER */
+
+#else
 
 /* Blowfish as implemented from 'Blowfish: Springer-Verlag paper'
  * (From LECTURE NOTES IN COMPUTER SCIENCE 809, FAST SOFTWARE ENCRYPTION,
@@ -315,3 +324,4 @@ void BF_cbc_encrypt(const unsigned char *in, unsigned char *out, long length,
 #endif
 
 #endif /* USE_ASM */
+#endif /* USE_BLOWFISH */

@@ -220,10 +220,12 @@ static int getObject( IN_HANDLE const int objectHandle,
 
 	/* Preconditions: It's a valid object */
 	REQUIRES( isValidHandle( objectHandle ) );
+#ifndef CONFIG_FUZZ_INJECT
 	REQUIRES( isValidType( type ) && \
 			  ( type == OBJECT_TYPE_CONTEXT || \
 				type == OBJECT_TYPE_CERTIFICATE || \
 				type == OBJECT_TYPE_DEVICE || type == OBJECT_TYPE_USER ) );
+#endif /* CONFIG_FUZZ_INJECT */
 	REQUIRES( checkType > ACCESS_CHECK_NONE && \
 			  checkType < ACCESS_CHECK_LAST );
 	REQUIRES( ( ( objectHandle == SYSTEM_OBJECT_HANDLE || \
@@ -244,6 +246,7 @@ static int getObject( IN_HANDLE const int objectHandle,
 	/* Perform similar access checks to the ones performed in
 	   krnlSendMessage(), as well as situation-specific additional checks 
 	   for correct object types */
+#ifndef CONFIG_FUZZ_INJECT
 	status = checkAccessValid( objectHandle, checkType, errorCode );
 	if( cryptStatusError( status ) )
 		{
@@ -251,6 +254,9 @@ static int getObject( IN_HANDLE const int objectHandle,
 		THREAD_NOTIFY_CANCELLED( objectHandle );
 		retIntError_Ext( status );
 		}
+#else
+	status = CRYPT_OK;
+#endif /* CONFIG_FUZZ_INJECT */
 
 	/* Perform additional checks for correct object types */
 	if( ( ( objectHandle == SYSTEM_OBJECT_HANDLE || \
@@ -267,20 +273,24 @@ static int getObject( IN_HANDLE const int objectHandle,
 	objectInfoPtr = &objectTable[ objectHandle ];
 
 	/* Inner precondition: The object is of the requested type */
+#ifndef CONFIG_FUZZ_INJECT
 	REQUIRES( objectInfoPtr->type == type && \
 			 ( objectInfoPtr->type == OBJECT_TYPE_CONTEXT || \
 			   objectInfoPtr->type == OBJECT_TYPE_CERTIFICATE || \
 			   objectInfoPtr->type == OBJECT_TYPE_DEVICE || \
 			   objectInfoPtr->type == OBJECT_TYPE_USER ) );
+#endif /* CONFIG_FUZZ_INJECT */
 
 	/* If the object is busy, wait for it to become available */
 	if( isInUse( objectHandle ) && !isObjectOwner( objectHandle ) )
-		status = waitForObject( objectHandle, &objectInfoPtr );
-	if( cryptStatusError( status ) )
 		{
-		MUTEX_UNLOCK( objectTable );
-		THREAD_NOTIFY_CANCELLED( objectHandle );
-		return( status );
+		status = waitForObject( objectHandle, &objectInfoPtr );
+		if( cryptStatusError( status ) )
+			{
+			MUTEX_UNLOCK( objectTable );
+			THREAD_NOTIFY_CANCELLED( objectHandle );
+			return( status );
+			}
 		}
 
 	/* If it's an external access to certificate/device info or an internal 
@@ -352,6 +362,7 @@ static int releaseObject( IN_HANDLE const int objectHandle,
 	/* Perform similar access checks to the ones performed in
 	   krnlSendMessage(), as well as situation-specific additional checks 
 	   for correct object types */
+#ifndef CONFIG_FUZZ_INJECT
 	status = checkAccessValid( objectHandle, checkType, 
 							   CRYPT_ERROR_PERMISSION );
 	if( cryptStatusError( status ) )
@@ -360,6 +371,7 @@ static int releaseObject( IN_HANDLE const int objectHandle,
 		THREAD_NOTIFY_CANCELLED( objectHandle );
 		retIntError_Ext( status );
 		}
+#endif /* CONFIG_FUZZ_INJECT */
 
 	/* Perform additional checks for correct object types.  The ownership 
 	   check in checkAccessValid() simply checks whether the current thread 

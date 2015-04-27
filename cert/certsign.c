@@ -193,7 +193,6 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 	return( status );
 	}
 
-
 /* Check the key being used to sign a certificate object */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -426,6 +425,8 @@ static int initSignatureInfo( INOUT CERT_INFO *certInfoPtr,
 								const CRYPT_SIGNATURELEVEL_TYPE signatureLevel,
 							  OUT_OPT_LENGTH_SHORT_Z int *extraDataLength )
 	{
+	const CRYPT_ALGO_TYPE signingAlgo = ( issuerCertInfoPtr != NULL ) ? \
+				issuerCertInfoPtr->publicKeyAlgo : certInfoPtr->publicKeyAlgo;
 	int status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
@@ -511,6 +512,18 @@ static int initSignatureInfo( INOUT CERT_INFO *certInfoPtr,
 							  CRYPT_OPTION_ENCR_HASH );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( signingAlgo == CRYPT_ALGO_DSA )
+		{
+		/* If we're going to be signing with DSA then things get a bit 
+		   complicated, the only OID defined for non-SHA1 DSA is for 256-bit
+		   SHA2, and even then in order to use it with a generic 1024-bit 
+		   key we have to truncate the hash.  It's not clear how many 
+		   implementations can handle this, and if we're using a hash wider
+		   than SHA-2/256 or a newer hash like SHAng then we can't encode 
+		   the result at all.  To deal with this we restrict the hash used 
+		   with DSA to SHA-1 only */
+		*hashAlgo = CRYPT_ALGO_SHA1;
+		}
 	if( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
 		certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN || \
 		certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT )
@@ -672,19 +685,20 @@ static int pseudoSignCertificate( INOUT CERT_INFO *certInfoPtr,
 /* Sign the certificate information */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 6 ) ) \
-int signCertInfo( OUT_BUFFER( signedObjectMaxLength, *signedObjectLength ) \
-					void *signedObject, 
-				  IN_LENGTH const int signedObjectMaxLength, 
-				  OUT_LENGTH_Z int *signedObjectLength,
-				  IN_BUFFER( objectLength ) const void *object, 
-				  IN_LENGTH const int objectLength,
-				  INOUT CERT_INFO *certInfoPtr, 
-				  IN_HANDLE const CRYPT_CONTEXT iSignContext,
-				  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
-				  IN_ENUM( CRYPT_SIGNATURELEVEL ) \
-					const CRYPT_SIGNATURELEVEL_TYPE signatureLevel,
-				  IN_LENGTH_SHORT_Z const int extraDataLength,
-				  const CERT_INFO *issuerCertInfoPtr )
+static int signCertInfo( OUT_BUFFER( signedObjectMaxLength, \
+									 *signedObjectLength ) \
+							void *signedObject, 
+						 IN_DATALENGTH const int signedObjectMaxLength, 
+						 OUT_DATALENGTH_Z int *signedObjectLength,
+						 IN_BUFFER( objectLength ) const void *object, 
+						 IN_DATALENGTH const int objectLength,
+						 INOUT CERT_INFO *certInfoPtr, 
+						 IN_HANDLE const CRYPT_CONTEXT iSignContext,
+						 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+						 IN_ENUM( CRYPT_SIGNATURELEVEL ) \
+							const CRYPT_SIGNATURELEVEL_TYPE signatureLevel,
+						 IN_LENGTH_SHORT_Z const int extraDataLength,
+						 IN_OPT const CERT_INFO *issuerCertInfoPtr )
 	{
 	STREAM stream;
 	const int extraDataType = \
@@ -701,17 +715,18 @@ int signCertInfo( OUT_BUFFER( signedObjectMaxLength, *signedObjectLength ) \
 	assert( issuerCertInfoPtr == NULL || \
 			isReadPtr( issuerCertInfoPtr, sizeof( CERT_INFO ) ) );
 
-	REQUIRES( signedObjectMaxLength >= 16 && \
-			  signedObjectMaxLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( signedObjectMaxLength >= MIN_CRYPT_OBJECTSIZE && \
+			  signedObjectMaxLength < MAX_BUFFER_SIZE );
 	REQUIRES( objectLength >= 16 && \
 			  objectLength <= signedObjectMaxLength && \
-			  objectLength < MAX_INTLENGTH_SHORT );
+			  objectLength < MAX_BUFFER_SIZE );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( signatureLevel >= CRYPT_SIGNATURELEVEL_NONE && \
 			  signatureLevel < CRYPT_SIGNATURELEVEL_LAST );
 	REQUIRES( extraDataLength >= 0 && \
 			  extraDataLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( extraDataLength <= 0 || issuerCertInfoPtr != NULL );
 
 	/* Sign the certificate information.  CRMF and OCSP use a b0rken
 	   signature format (the authors couldn't quite manage a cut & paste of
@@ -759,7 +774,7 @@ int signCertInfo( OUT_BUFFER( signedObjectMaxLength, *signedObjectLength ) \
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_VALUE : status );
 
-	/* If there's no extra data to handle, we're done */
+	/* If there's no extra data to handle then we're done */
 	if( extraDataLength <= 0 )
 		{
 		ENSURES( !cryptStatusError( \
@@ -767,6 +782,20 @@ int signCertInfo( OUT_BUFFER( signedObjectMaxLength, *signedObjectLength ) \
 										 *signedObjectLength ) ) );
 		return( CRYPT_OK );
 		}
+	
+	/* The extra data consists of signing certificates, so we can't continue
+	   if there are none provided.  Figuring out how we get to this point is 
+	   rather complex, if we have a certificate, a CRL, or an OCSP object 
+	   with an associated signing key then we have an issuer cert present 
+	   (from signCert()).  If it's an OCSP request then the signature level 
+	   is something other than CRYPT_SIGNATURELEVEL_NONE, at which point if 
+	   there's an issuer certificate present then extraDataLength != 0 (from 
+	   initSignatureInfo()).  After this, signCert() will exit if there's no 
+	   signing key present since there's nothing further to do.  This means 
+	   that when we get here and extraDataLength != 0 then it means that 
+	   there's an issuer certificate present.  The following check ensures 
+	   that this is indeed the case */
+	ENSURES( issuerCertInfoPtr != NULL );
 
 	/* If we need to include extra data with the signature attach it to the 
 	   end of the signature */

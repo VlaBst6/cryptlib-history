@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							PGP Definitions Header File						*
-*						Copyright Peter Gutmann 1996-2011					*
+*						Copyright Peter Gutmann 1996-2013					*
 *																			*
 ****************************************************************************/
 
@@ -216,11 +216,11 @@ typedef enum {
 	} PGP_ALGOCLASS_TYPE;
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
-int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) \
-							const int pgpAlgo, 
+int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) const int pgpAlgo, 
 					   IN_ENUM( PGP_ALGOCLASS ) \
 							const PGP_ALGOCLASS_TYPE pgpAlgoClass,
-					   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo );
+					   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
+					   OUT_OPT_INT_Z int *cryptAlgoParam );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int cryptlibToPgpAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptlibAlgo,
 					   OUT_RANGE( PGP_ALGO_NONE, PGP_ALGO_LAST ) \
@@ -228,8 +228,9 @@ int cryptlibToPgpAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptlibAlgo,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readPgpAlgo( INOUT STREAM *stream, 
 				 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
+				 OUT_OPT_INT_Z int *cryptAlgoParam,
 				 IN_ENUM( PGP_ALGOCLASS ) \
-					const PGP_ALGOCLASS_TYPE pgpAlgoClass );
+						const PGP_ALGOCLASS_TYPE pgpAlgoClass );
 
 /* Prototypes for functions in pgp_misc.c */
 
@@ -237,7 +238,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext, 
 					  IN_LENGTH_SHORT_OPT const int optKeyLength,
 					  IN_BUFFER( passwordLength ) const char *password, 
-					  IN_LENGTH_SHORT const int passwordLength, 
+					  IN_DATALENGTH const int passwordLength, 
 					  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo, 
 					  IN_BUFFER_OPT( saltSize ) const BYTE *salt, 
 					  IN_RANGE( 0, CRYPT_MAX_HASHSIZE ) const int saltSize,
@@ -250,9 +251,10 @@ int pgpProcessIV( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 				  IN_LENGTH_IV const int ivDataSize, 
 				  IN_HANDLE_OPT const CRYPT_CONTEXT iMdcContext,
 				  const BOOLEAN isEncrypt );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4, 6 ) ) \
 int readPgpS2K( INOUT STREAM *stream, 
 				OUT_ALGO_Z CRYPT_ALGO_TYPE *hashAlgo,
+				OUT_INT_Z int *hashAlgoParam,
 				OUT_BUFFER( saltMaxLen, *saltLen ) BYTE *salt, 
 				IN_LENGTH_SHORT_MIN( PGP_SALTSIZE ) const int saltMaxLen, 
 				OUT_LENGTH_SHORT_Z int *saltLen,

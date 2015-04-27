@@ -15,6 +15,8 @@
   #include "crypt/des.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_DES
+
 /* The DES block size */
 
 #define DES_BLOCKSIZE			8
@@ -41,7 +43,7 @@
 /* Test the DES implementation against the test vectors given in NBS Special
    Publication 500-20, 1980 */
 
-static int testLoop( const DES_TEST *testDES, int iterations, BOOLEAN isEncrypt )
+static int testLoop( const DES_TEST *testDES, int iterations )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getDESCapability();
 	BYTE keyData[ DES_KEYSIZE + 8 ];
@@ -71,16 +73,16 @@ static int selfTest( void )
 	/* Check the DES test vectors.  Note that we don't explicitly test
 	   the RS values, however these are tested implicitly since they're
 	   just the decrypt side of the KP tests */
-	if( ( testLoop( testIP, sizeof( testIP ) / sizeof( DES_TEST ),
-					TRUE ) != CRYPT_OK ) || \
-		( testLoop( testVP, sizeof( testVP ) / sizeof( DES_TEST ),
-					TRUE ) != CRYPT_OK ) || \
-		( testLoop( testKP, sizeof( testKP ) / sizeof( DES_TEST ),
-					TRUE ) != CRYPT_OK ) || \
-		( testLoop( testDP, sizeof( testDP ) / sizeof( DES_TEST ),
-					TRUE ) != CRYPT_OK ) || \
-		( testLoop( testSB, sizeof( testSB ) / sizeof( DES_TEST ),
-					TRUE ) != CRYPT_OK ) )
+	if( ( testLoop( testIP, sizeof( testIP ) / \
+							sizeof( DES_TEST ) ) != CRYPT_OK ) || \
+		( testLoop( testVP, sizeof( testVP ) / \
+							sizeof( DES_TEST ) ) != CRYPT_OK ) || \
+		( testLoop( testKP, sizeof( testKP ) / \
+							sizeof( DES_TEST ) ) != CRYPT_OK ) || \
+		( testLoop( testDP, sizeof( testDP ) / \
+							sizeof( DES_TEST ) ) != CRYPT_OK ) || \
+		( testLoop( testSB, sizeof( testSB ) / \
+							sizeof( DES_TEST ) ) != CRYPT_OK ) )
 		return( CRYPT_ERROR_FAILED );
 
 	return( CRYPT_OK );
@@ -463,3 +465,4 @@ const CAPABILITY_INFO *getDESCapability( void )
 	{
 	return( &capabilityInfo );
 	}
+#endif /* USE_DES */

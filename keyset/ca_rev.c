@@ -329,8 +329,13 @@ int caRevokeCert( INOUT DBMS_INFO *dbmsInfo,
 	   special-case certificate data */
 	if( action == CRYPT_CERTACTION_CERT_CREATION_REVERSE )
 		{
-		memcpy( specialCertID, subjCertID, subjCertIDlength );
+		/* Turn the general certID into the form required for special-case
+		   certificate data by overwriting the first two bytes with an out-
+		   of-band value */
+		REQUIRES( rangeCheckZ( 0, subjCertIDlength, ENCODED_DBXKEYID_SIZE ) );
 		memcpy( specialCertID, KEYID_ESC1, KEYID_ESC_SIZE );
+		memcpy( specialCertID + KEYID_ESC_SIZE, subjCertID + KEYID_ESC_SIZE, 
+				subjCertIDlength - KEYID_ESC_SIZE );
 		specialCertIDlength = subjCertIDlength;
 		}
 

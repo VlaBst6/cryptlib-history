@@ -852,30 +852,31 @@ int initScoreboard( INOUT TYPECAST( SCOREBOARD_INFO * ) \
 	REQUIRES( scoreboardEntries >= SCOREBOARD_MIN_SIZE && \
 			  scoreboardEntries <= SCOREBOARD_MAX_SIZE );
 
+	/* Allocate memory for the scoreboard, which we can do before acquiring 
+	   the scoreboard mutex */
+	scoreboardIndex = clAlloc( "initScoreboard", \
+						scoreboardEntries * sizeof( SCOREBOARD_INDEX ) );
+	if( scoreboardIndex == NULL )
+		return( CRYPT_ERROR_MEMORY );
+	status = krnlMemalloc( ( void ** ) &scoreboardData, \
+						   scoreboardEntries * sizeof( SCOREBOARD_DATA ) );
+	if( cryptStatusError( status ) )
+		{
+		clFree( "initScoreboard", scoreboardIndex );
+		return( status );
+		}
+
 	status = krnlEnterMutex( MUTEX_SCOREBOARD );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Initialise the scoreboard */
 	memset( scoreboardInfo, 0, sizeof( SCOREBOARD_INFO ) );
-	scoreboardInfo->uniqueID = 0;
-	scoreboardInfo->lastEntry = 0;
+	scoreboardInfo->index = scoreboardIndex;
+	scoreboardInfo->data = scoreboardData;
 	scoreboardInfo->noEntries = scoreboardEntries;
-
-	/* Initialise the scoreboard data */
-	if( ( scoreboardInfo->index = clAlloc( "initScoreboard", \
-				scoreboardEntries * sizeof( SCOREBOARD_INDEX ) ) ) == NULL )
-		return( CRYPT_ERROR_MEMORY );
-	status = krnlMemalloc( &scoreboardInfo->data, \
-						   scoreboardEntries * sizeof( SCOREBOARD_DATA ) );
-	if( cryptStatusError( status ) )
-		{
-		clFree( "initScoreboard", scoreboardInfo->index );
-		memset( scoreboardInfo, 0, sizeof( SCOREBOARD_INFO ) );
-		return( status );
-		}
-	scoreboardIndex = scoreboardInfo->index;
-	scoreboardData = scoreboardInfo->data;
+	scoreboardInfo->lastEntry = 0;
+	scoreboardInfo->uniqueID = 0;
 	memset( scoreboardIndex, 0, \
 			scoreboardEntries * sizeof( SCOREBOARD_INDEX ) );
 	for( i = 0; i < scoreboardEntries; i++ )
@@ -894,6 +895,7 @@ int initScoreboard( INOUT TYPECAST( SCOREBOARD_INFO * ) \
 		clFree( "initScoreboard", scoreboardInfo->index );
 		memset( scoreboardInfo, 0, sizeof( SCOREBOARD_INFO ) );
 
+		krnlExitMutex( MUTEX_SCOREBOARD );
 		retIntError();
 		}
 

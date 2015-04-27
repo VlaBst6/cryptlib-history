@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib HTTP Parsing Routines						*
-*					  Copyright Peter Gutmann 1998-2011						*
+*					  Copyright Peter Gutmann 1998-2012						*
 *																			*
 ****************************************************************************/
 
@@ -65,9 +65,9 @@ static const HTTP_HEADER_PARSE_INFO FAR_BSS httpHeaderParseInfo[] = {
 		   creating them, so they rewrite "Connection: close" into something
 		   that won't be recognised in order to avoid the connection 
 		   actually being closed.  The reason for the 16-bit swap is because
-		   the Fletcher checksum used in TCP/IP doesn't detect 16-bit word
-		   swaps, so this allows the connection-control to be invalidated
-		   without requiring a recalculation of the TCP checksum.  
+		   the TCP/IP checksum doesn't detect 16-bit word swaps, so this 
+		   allows the connection-control to be invalidated without requiring 
+		   a recalculation of the TCP checksum.  
 		   
 		   Someone probably got bonus pay for coming up with this */
 	{ "Warning:", 8, HTTP_HEADER_WARNING },
@@ -244,7 +244,7 @@ static int getEncodedChar( IN_BUFFER( bufSize ) const char *buffer,
 	   multi-line responses containing user-controlled type : value pairs 
 	   (in other words they allow user data to be injected into the control
 	   channel) */
-	if( ch <= 0x1F || ch >= 0x7F || !isPrint( ch ) )
+	if( !isValidTextChar( ch ) || ch <= 0x1F )
 		return( CRYPT_ERROR_BADDATA );
 
 	return( ch );
@@ -1134,7 +1134,7 @@ int readHeaderLines( INOUT STREAM *stream,
 							  "line %d", lineCount + 2 ) );
 					}
 				status = strGetNumeric( lineBufPtr, lineLength, 
-										&contentLength, 1, MAX_INTLENGTH );
+										&contentLength, 1, MAX_BUFFER_SIZE );
 				if( cryptStatusError( status ) )
 					{
 					retExt( CRYPT_ERROR_BADDATA, 
@@ -1321,11 +1321,11 @@ int readHeaderLines( INOUT STREAM *stream,
 
 			case HTTP_HEADER_CONNECTION:
 				/* If the other side has indicated that it's going to close
-				   the connection, remember that the stream is now no longer
-				   usable */
+				   the connection, record the fact that this is the last 
+				   message in the session */
 				if( lineLength >= 5 && \
 					!strCompare( lineBufPtr, "Close", 5 ) )
-					sioctlSet( stream, STREAM_IOCTL_CONNSTATE, FALSE );
+					netStream->nFlags |= STREAM_NFLAG_LASTMSGR;
 				break;
 
 			case HTTP_HEADER_WARNING:

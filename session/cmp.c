@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib CMP Session Management					*
-*						Copyright Peter Gutmann 1999-2009					*
+*						Copyright Peter Gutmann 1999-2011					*
 *																			*
 ****************************************************************************/
 
@@ -303,14 +303,14 @@ static int getAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 								 OUT void *data, 
 								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
-	CRYPT_CERTIFICATE *cmpResponsePtr = ( CRYPT_CERTIFICATE * ) data;
 	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
+	CRYPT_CERTIFICATE *cmpResponsePtr = ( CRYPT_CERTIFICATE * ) data;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( data, sizeof( int ) ) );
 	
-	REQUIRES( type == CRYPT_SESSINFO_CMP_REQUESTTYPE || \
-			  type == CRYPT_SESSINFO_RESPONSE );
+	REQUIRES( type == CRYPT_SESSINFO_RESPONSE || \
+			  type == CRYPT_SESSINFO_CMP_REQUESTTYPE );
 
 	/* If it's a general protocol-specific attribute read, return the
 	   information and exit */
@@ -341,17 +341,17 @@ static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 								 IN const void *data,
 								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
-	CRYPT_CERTIFICATE cryptCert = *( ( CRYPT_CERTIFICATE * ) data );
 	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
+	CRYPT_CERTIFICATE cryptCert = *( ( CRYPT_CERTIFICATE * ) data );
 	int certReqType, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( data, sizeof( int ) ) );
 
-	REQUIRES( type == CRYPT_SESSINFO_CMP_REQUESTTYPE || \
-			  type == CRYPT_SESSINFO_CMP_PRIVKEYSET || \
-			  type == CRYPT_SESSINFO_REQUEST || \
-			  type == CRYPT_SESSINFO_CACERTIFICATE );
+	REQUIRES( type == CRYPT_SESSINFO_REQUEST || \
+			  type == CRYPT_SESSINFO_CACERTIFICATE || \
+			  type == CRYPT_SESSINFO_CMP_REQUESTTYPE || \
+			  type == CRYPT_SESSINFO_CMP_PRIVKEYSET );
 
 	/* Standard CMP (with user-supplied request information) can't be 
 	   combined with plug-and-play CMP (with automatically-generated request 

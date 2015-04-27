@@ -43,10 +43,8 @@ const char *getSSHPacketName( IN_RANGE( 0, 255 ) const int packetType )
 		{ SSH_MSG_SERVICE_ACCEPT, "SSH_MSG_SERVICE_ACCEPT" },
 		{ SSH_MSG_KEXINIT, "SSH_MSG_KEXINIT" },
 		{ SSH_MSG_NEWKEYS, "SSH_MSG_NEWKEYS" },
-		{ SSH_MSG_KEXDH_INIT, "SSH_MSG_KEXDH_INIT" },
-		{ SSH_MSG_KEXDH_REPLY,	"SSH_MSG_KEXDH_REPLY" },
-		{ SSH_MSG_KEXDH_GEX_REQUEST_OLD, "SSH_MSG_KEXDH_GEX_REQUEST_OLD" },
-		{ SSH_MSG_KEXDH_GEX_GROUP, "SSH_MSG_KEXDH_GEX_GROUP" },
+		{ SSH_MSG_KEXDH_INIT, "SSH_MSG_KEXDH_INIT/SSH_MSG_KEXDH_GEX_REQUEST_OLD/SSH_MSG_KEX_ECDH_INIT" },
+		{ SSH_MSG_KEXDH_REPLY,	"SSH_MSG_KEXDH_REPLY/SSH_MSG_KEXDH_GEX_GROUP/SSH_MSG_KEX_ECDH_REPLY" },
 		{ SSH_MSG_KEXDH_GEX_INIT, "SSH_MSG_KEXDH_GEX_INIT" },
 		{ SSH_MSG_KEXDH_GEX_REPLY, "SSH_MSG_KEXDH_GEX_REPLY" },
 		{ SSH_MSG_KEXDH_GEX_REQUEST_NEW, "SSH_MSG_KEXDH_GEX_REQUEST_NEW" },
@@ -333,6 +331,8 @@ int getDisconnectInfo( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		memcpy( errorString, "<No details available>", 22 + 1 );
 		}
+	DEBUG_PRINT(( "Processing disconnect message, reason %d, "
+				  "description '%s'.\n", errorCode, errorString ));
 
 	/* Try and map the SSH status to an equivalent cryptlib one */
 	status = mapValue( errorCode, &clibStatus, errorMapTbl,
@@ -356,7 +356,7 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 									SSH_MSG_SPECIAL_REQUEST ) \
 								const int expectedType, 
 						  OUT_LENGTH_Z long *packetLength,
-						  OUT_LENGTH_Z int *packetExtraLength,
+						  OUT_DATALENGTH_Z int *packetExtraLength,
 						  INOUT SSH_INFO *sshInfo,
 						  INOUT_OPT READSTATE_INFO *readInfo )
 	{
@@ -392,7 +392,9 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 		uint32		length (excluding MAC size)
 		byte		padLen
 		byte		type
-		byte[]		data */
+		byte[]		data 
+		byte[]		pad
+		byte[]		MAC*/
 	if( isHandshake )
 		{
 		/* Processing handshake data can run into a number of special-case
@@ -670,11 +672,11 @@ int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 					{
 					retExt( CRYPT_ERROR_WRONGKEY,
 							( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
-							  "Bad message MAC for %s packet, length %ld, "
+							  "Bad message MAC for %s (%d) packet, length %ld, "
 							  "probably due to an incorrect key being used "
 							  "to generate the MAC", 
 							  getSSHPacketName( sessionInfoPtr->receiveBuffer[ 1 ] ), 
-							  length ) );
+							  sessionInfoPtr->receiveBuffer[ 1 ], length ) );
 					}
 				retExt( CRYPT_ERROR_BADDATA,
 						( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 

@@ -236,7 +236,7 @@ int readPkcs15Keyset( INOUT STREAM *stream,
 	REQUIRES( maxNoPkcs15objects >= 1 && \
 			  maxNoPkcs15objects < MAX_INTLENGTH_SHORT );
 	REQUIRES( endPos > 0 && endPos > stell( stream ) && \
-			  endPos < MAX_INTLENGTH );
+			  endPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( pkcs15info, 0, sizeof( PKCS15_INFO ) * maxNoPkcs15objects );
@@ -276,7 +276,7 @@ int readPkcs15Keyset( INOUT STREAM *stream,
 		type = value;
 
 		/* Read the [n] [0] wrapper to find out what we're dealing with.  
-		   Note that we set the upper limit at MAX_INTLENGTH rather than
+		   Note that we set the upper limit at MAX_BUFFER_SIZE rather than
 		   MAX_INTLENGTH_SHORT because some keysets with many large objects 
 		   may have a combined group-of-objects length larger than 
 		   MAX_INTLENGTH_SHORT */
@@ -284,7 +284,7 @@ int readPkcs15Keyset( INOUT STREAM *stream,
 		status = readConstructed( stream, &innerEndPos, CTAG_OV_DIRECT );
 		if( cryptStatusError( status ) )
 			return( status );
-		if( innerEndPos < MIN_OBJECT_SIZE || innerEndPos >= MAX_INTLENGTH )
+		if( innerEndPos < MIN_OBJECT_SIZE || innerEndPos >= MAX_BUFFER_SIZE )
 			{
 			retExt( CRYPT_ERROR_BADDATA, 
 					( CRYPT_ERROR_BADDATA, errorInfo, 
@@ -308,6 +308,7 @@ int readPkcs15Keyset( INOUT STREAM *stream,
 								 &objectLength, type, errorInfo );
 			if( cryptStatusError( status ) )
 				return( status );
+			ANALYSER_HINT( object != NULL );
 
 			/* If we read an object with associated ID information, find out 
 			   where to add the object data */

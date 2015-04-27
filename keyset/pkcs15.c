@@ -131,9 +131,9 @@ PKCS15_INFO *findEntry( IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15inf
 				keyIDtype == CRYPT_KEYID_URI || \
 				keyIDtype == CRYPT_IKEYID_KEYID || \
 				keyIDtype == CRYPT_IKEYID_PGPKEYID || \
+				keyIDtype == CRYPT_IKEYID_SUBJECTID || \
 				keyIDtype == CRYPT_IKEYID_ISSUERID || \
-				keyIDtype == CRYPT_KEYIDEX_ID || \
-				keyIDtype == CRYPT_KEYIDEX_SUBJECTNAMEID );
+				keyIDtype == CRYPT_KEYIDEX_ID );
 	REQUIRES_N( ( keyID == NULL && keyIDlength == 0 ) || \
 				( keyID != NULL && \
 				  keyIDlength >= MIN_NAME_LENGTH && \
@@ -218,6 +218,13 @@ PKCS15_INFO *findEntry( IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15inf
 					return( ( PKCS15_INFO * ) pkcs15infoPtr );
 				break;
 
+			case CRYPT_IKEYID_SUBJECTID:
+				if( matchID( pkcs15infoPtr->subjectNameID,
+							 pkcs15infoPtr->subjectNameIDlength, keyID,
+							 keyIDlength ) )
+					return( ( PKCS15_INFO * ) pkcs15infoPtr );
+				break;
+
 			case CRYPT_IKEYID_ISSUERID:
 				if( matchID( pkcs15infoPtr->iAndSID,
 							 pkcs15infoPtr->iAndSIDlength, keyID,
@@ -228,13 +235,6 @@ PKCS15_INFO *findEntry( IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15inf
 			case CRYPT_KEYIDEX_ID:
 				if( matchID( pkcs15infoPtr->iD, pkcs15infoPtr->iDlength,
 							 keyID, keyIDlength ) )
-					return( ( PKCS15_INFO * ) pkcs15infoPtr );
-				break;
-
-			case CRYPT_KEYIDEX_SUBJECTNAMEID:
-				if( matchID( pkcs15infoPtr->subjectNameID,
-							 pkcs15infoPtr->subjectNameIDlength, keyID,
-							 keyIDlength ) )
 					return( ( PKCS15_INFO * ) pkcs15infoPtr );
 				break;
 
@@ -511,7 +511,7 @@ static int readPkcs15header( INOUT STREAM *stream,
 	   position */
 	currentPos = stell( stream ) - sizeofShortInteger( 0 );
 	if( endPos < 16 + MIN_OBJECT_SIZE || \
-		currentPos + endPos >= MAX_INTLENGTH )
+		currentPos + endPos >= MAX_BUFFER_SIZE )
 		{
 		retExt( CRYPT_ERROR_BADDATA, 
 				( CRYPT_ERROR_BADDATA, errorInfo, 

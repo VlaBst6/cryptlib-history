@@ -122,8 +122,8 @@ static int createDecryptionContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iSessionKey,
 		{
 		status = pgpPasswordToKey( iLocalContext, 
 								   ( keyInfo->cryptAlgo == CRYPT_ALGO_AES && \
-								     keyInfo->aesKeySize > 0 ) ? \
-									keyInfo->aesKeySize : CRYPT_UNUSED,
+								     keyInfo->cryptAlgoParam > 0 ) ? \
+									keyInfo->cryptAlgoParam : CRYPT_UNUSED,
 								   password, passwordLength, 
 								   keyInfo->hashAlgo, 
 								   ( keyInfo->saltSize > 0 ) ? \

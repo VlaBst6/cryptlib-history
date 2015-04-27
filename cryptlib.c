@@ -30,7 +30,6 @@ const int messageValueTrue = TRUE;
 const int messageValueFalse = FALSE;
 const int messageValueCryptOK = CRYPT_OK;
 const int messageValueCryptError = CRYPT_ERROR;
-const int messageValueCryptSignalled = CRYPT_ERROR_SIGNALLED;
 const int messageValueCryptUnused = CRYPT_UNUSED;
 const int messageValueCryptUseDefault = CRYPT_USE_DEFAULT;
 const int messageValueCursorFirst = CRYPT_CURSOR_FIRST;
@@ -355,7 +354,7 @@ int initCryptlib( void )
 									   FAILSAFE_ARRAYSIZE( preInitFunctions, \
 														   MANAGEMENT_FUNCTION ),
 									   MANAGEMENT_ACTION_PRE_INIT );
-	assert( cryptStatusOK( status ) );
+	assertNoFault( cryptStatusOK( status ) );
 	if( cryptStatusOK( status ) )
 		{
 		initLevel = 1;
@@ -363,7 +362,7 @@ int initCryptlib( void )
 										   FAILSAFE_ARRAYSIZE( initFunctions, \
 															   MANAGEMENT_FUNCTION ),
 										   MANAGEMENT_ACTION_INIT );
-		assert( cryptStatusOK( status ) );
+		assertNoFault( cryptStatusOK( status ) );
 		}
 	if( cryptStatusOK( status ) )
 		{
@@ -400,14 +399,14 @@ int initCryptlib( void )
 										   FAILSAFE_ARRAYSIZE( asyncInitFunctions, \
 															   MANAGEMENT_FUNCTION ),
 										   MANAGEMENT_ACTION_INIT );
-		assert( cryptStatusOK( status ) );
+		assertNoFault( cryptStatusOK( status ) );
 		}
 	if( cryptStatusOK( status ) )
 		{
 		/* Everything's set up, verify that the core crypto algorithms and 
 		   kernel security mechanisms are working as required */
 		status = testKernel();
-		assert( cryptStatusOK( status ) );
+		assertNoFault( cryptStatusOK( status ) );
 		}
 
 	/* If anything failed, shut down the internal functions and services

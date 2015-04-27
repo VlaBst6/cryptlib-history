@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  Certificate Chain Management Routines					*
-*						Copyright Peter Gutmann 1996-2008					*
+*						Copyright Peter Gutmann 1996-2013					*
 *																			*
 ****************************************************************************/
 
@@ -203,7 +203,7 @@ static int getChainingAttribute( INOUT CERT_INFO *certInfoPtr,
 									const CRYPT_ATTRIBUTE_TYPE attributeType,
 								 OUT_BUFFER_ALLOC_OPT( *attributeLength ) \
 									const void **attributePtrPtr, 
-								 OUT_LENGTH_SHORT_Z int *attributeLength )
+								 OUT_DATALENGTH_Z int *attributeLength )
 	{
 	ATTRIBUTE_PTR *attributePtr;
 
@@ -247,9 +247,68 @@ static void freeCertChain( IN_ARRAY( certChainSize ) \
 
 	for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
 		{
+		/* If we ran into an error while working with a certificate in the 
+		   chain then this position may be empty, in which case we skip it */
+		if( iCertChain[ i ] == CRYPT_ERROR )
+			continue;
+
+		/* Clear the certificate at this position */
 		krnlSendNotifier( iCertChain[ i ], IMESSAGE_DESTROY );
 		iCertChain[ i ] = CRYPT_ERROR;
 		}
+	}
+
+/* Convert a certificate object into a certificate-chain object.  This is 
+   necessary because at the point when we're importing the certificates
+   to build the chain we don't know which one is the leaf so we have to
+   import them all as certificates, and once that's done we can't change
+   the object type any more.  Because of this the only way to change
+   the object type is to re-create it as a certificate-chain object */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int convertCertToChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertChain,
+							   IN_HANDLE CRYPT_CERTIFICATE iCertificate,
+							   const BOOLEAN isDataOnlyCert )
+	{
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	DYNBUF certDB;
+	int status;
+
+	assert( isWritePtr( iCertChain, sizeof( CRYPT_CERTIFICATE ) ) );
+
+	REQUIRES( isHandleRangeValid( iCertificate ) );
+
+	/* Clear return value */
+	*iCertChain = CRYPT_ERROR;
+
+	/* Export the leaf certificate and re-import it to create the required 
+	   certificate-chain object, specifying KEYMGMT_FLAG_CERT_AS_CERTCHAIN 
+	   to ensure that the certificate is imported as a single-entry
+	   certificate chain */
+	status = dynCreateCert( &certDB, iCertificate, 
+							CRYPT_CERTFORMAT_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		return( status );
+	setMessageCreateObjectIndirectInfoEx( &createInfo, 
+							dynData( certDB ), dynLength( certDB ), 
+							CRYPT_CERTTYPE_CERTIFICATE, isDataOnlyCert ? \
+								KEYMGMT_FLAG_DATAONLY_CERT | \
+								KEYMGMT_FLAG_CERT_AS_CERTCHAIN : \
+								KEYMGMT_FLAG_CERT_AS_CERTCHAIN );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
+							  &createInfo, OBJECT_TYPE_CERTIFICATE );
+	dynDestroy( &certDB );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* We've now got the same certificate object as before, but with a 
+	   subtype of certificate chain rather than certificate, replace the 
+	   existing object with the new one */
+	krnlSendNotifier( iCertificate, IMESSAGE_DESTROY );
+	*iCertChain = createInfo.cryptHandle;
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -702,7 +761,8 @@ static int sortCertChain( INOUT_ARRAY( certChainSize ) CRYPT_CERTIFICATE *iCertC
 	ENSURES( i < MAX_CHAINLENGTH );
 
 	/* Replace the existing chain with the ordered version */
-	memset( iCertChain, 0, sizeof( CRYPT_CERTIFICATE ) * certChainSize );
+	for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
+		iCertChain[ i ] = CRYPT_ERROR;
 	if( orderedChainIndex > 0 )
 		{
 		memcpy( iCertChain, orderedChain,
@@ -728,6 +788,7 @@ static int buildCertChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iLeafCert,
 	CHAIN_INFO chainInfo[ MAX_CHAINLENGTH + 8 ];
 	CERT_INFO *certChainPtr;
 	CHAINING_INFO chainingInfo;
+	const int keyUsageOptions = options & KEYMGMT_MASK_USAGEOPTIONS;
 	int leafNodePos, newCertChainEnd, complianceLevel, status;
 
 	assert( isWritePtr( iLeafCert, sizeof( CRYPT_CERTIFICATE ) ) );
@@ -747,14 +808,15 @@ static int buildCertChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iLeafCert,
 				keyID != NULL && \
 				keyIDlength >= MIN_SKID_SIZE && \
 				keyIDlength < MAX_ATTRIBUTE_SIZE ) );
-	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX && \
-			  ( options & ~KEYMGMT_MASK_USAGEOPTIONS ) == 0 );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && \
+			  options < KEYMGMT_FLAG_MAX && \
+			  ( options & ~KEYMGMT_MASK_CERTOPTIONS ) == 0 );
 	REQUIRES( ( keyIDtype == CRYPT_KEYID_NONE && \
-				options == KEYMGMT_FLAG_NONE ) || \
+				keyUsageOptions == KEYMGMT_FLAG_NONE ) || \
 			  ( keyIDtype != CRYPT_KEYID_NONE && \
-				options == KEYMGMT_FLAG_NONE ) || \
+				keyUsageOptions == KEYMGMT_FLAG_NONE ) || \
 			  ( keyIDtype == CRYPT_KEYID_NONE && \
-				options != KEYMGMT_FLAG_NONE ) );
+				keyUsageOptions != KEYMGMT_FLAG_NONE ) );
 
 	/* Clear return value */
 	*iLeafCert = CRYPT_ERROR;
@@ -778,7 +840,10 @@ static int buildCertChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iLeafCert,
 											  keyIDtype, keyID, keyIDlength );
 		}
 	else
-		leafNodePos = findLeafNode( chainInfo, certChainEnd, options );
+		{
+		leafNodePos = findLeafNode( chainInfo, certChainEnd, 
+									keyUsageOptions );
+		}
 	if( cryptStatusError( leafNodePos ) )
 		return( leafNodePos );
 	ENSURES( leafNodePos >= 0 && leafNodePos < certChainEnd );
@@ -845,6 +910,16 @@ static int buildCertChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iLeafCert,
 		}
 #endif /* USE_CERTLEVEL_PKIX_FULL */
 
+	/* Since the objects that make up the chain were imported as individual 
+	   certificates because at the time of import we didn't know which one 
+	   was the leaf, we have to convert the leaf's object-type from 
+	   certificate to certificate chain */
+	status = convertCertToChain( iLeafCert, *iLeafCert,
+								 ( options & KEYMGMT_FLAG_DATAONLY_CERT ) ? \
+								   TRUE : FALSE );
+	if( cryptStatusError( status ) )
+		return( status );
+
 	/* Finally, we've got the leaf certificate and a chain up to the root.  
 	   Make the leaf a certificate-chain type and copy in the chain */
 	status = krnlAcquireObject( *iLeafCert, OBJECT_TYPE_CERTIFICATE, 
@@ -894,7 +969,7 @@ static BOOLEAN isCertPresent( INOUT_ARRAY( certChainLen ) \
 	setMessageData( &msgData, certChainHashes[ certChainLen ], 
 					CRYPT_MAX_HASHSIZE );
 	status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S,
-							  &msgData, CRYPT_CERTINFO_FINGERPRINT );
+							  &msgData, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -953,7 +1028,7 @@ int copyCertChain( INOUT CERT_INFO *certInfoPtr,
 							CRYPT_MAX_HASHSIZE );
 			status = krnlSendMessage( destCertChainInfo->chain[ i ], 
 									  IMESSAGE_GETATTRIBUTE_S, &msgData, 
-									  CRYPT_CERTINFO_FINGERPRINT );
+									  CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
@@ -1241,9 +1316,9 @@ static int readSingleCert( INOUT STREAM *stream,
 	   certificate is the leaf we can go back and decode the public key 
 	   information for it */
 	status = importCertFromStream( stream, iCryptCert, iCryptOwner,
-								   dataOnlyCert ? \
-										CRYPT_ICERTTYPE_DATAONLY : \
-										CRYPT_CERTTYPE_CERTIFICATE, length );
+								   CRYPT_CERTTYPE_CERTIFICATE, length,
+								   dataOnlyCert ? KEYMGMT_FLAG_DATAONLY_CERT : \
+												  KEYMGMT_FLAG_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -1284,7 +1359,7 @@ int readCertChain( INOUT STREAM *stream,
 	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH + 8 ];
 	const int dataOnlyCert = options & KEYMGMT_FLAG_DATAONLY_CERT;
 	int certSequenceLength = DUMMY_INIT, endPos = 0, certChainEnd = 0;
-	int iterationCount, status;
+	int iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
@@ -1337,7 +1412,6 @@ int readCertChain( INOUT STREAM *stream,
 			   SSL certificate chain, however the length will be equal to the 
 			   total remaining stream size */
 			certSequenceLength = sMemDataLeft( stream );
-			status = CRYPT_OK;
 			break;
 
 		default:
@@ -1345,6 +1419,9 @@ int readCertChain( INOUT STREAM *stream,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
+	ENSURES( ( certSequenceLength == CRYPT_UNUSED ) || \
+			 ( certSequenceLength > 0 && \
+			   certSequenceLength < MAX_INTLENGTH_SHORT ) );
 
 	/* If it's a definite-length chain, determine where it ends */
 	if( certSequenceLength != CRYPT_UNUSED )
@@ -1396,8 +1473,7 @@ int readCertChain( INOUT STREAM *stream,
 
 	/* Build the complete chain from the individual certificates */
 	status = buildCertChain( iCryptCert, iCertChain, certChainEnd, 
-							 keyIDtype, keyID, keyIDlength, 
-							 options & KEYMGMT_MASK_USAGEOPTIONS );
+							 keyIDtype, keyID, keyIDlength, options );
 	if( cryptStatusError( status ) )
 		{
 		freeCertChain( iCertChain, certChainEnd );
@@ -1418,24 +1494,27 @@ int assembleCertChain( OUT CRYPT_CERTIFICATE *iCertificate,
 					   IN_LENGTH_KEYID const int keyIDlength,
 					   IN_FLAGS( KEYMGMT ) const int options )
 	{
-	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH + 8 ], lastCert;
+	CRYPT_CERTIFICATE iCertSet[ MAX_CHAINLENGTH + 8 ], iCertChain, lastCert;
 	MESSAGE_KEYMGMT_INFO getnextcertInfo;
 	const int chainOptions = options & KEYMGMT_FLAG_DATAONLY_CERT;
-	int stateInfo = CRYPT_ERROR, certChainEnd = 1;
+	int stateInfo = CRYPT_ERROR, certSetSize = 1;
 	int iterationCount, status;
 
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( isReadPtr( keyID, keyIDlength ) && \
-			keyIDlength >= MIN_NAME_LENGTH && \
-			keyIDlength < MAX_ATTRIBUTE_SIZE );
+			keyIDlength > 0 && keyIDlength < MAX_ATTRIBUTE_SIZE );
+			/* The keyID can be an arbitrary value, including ones from
+			   PKCS #11 devices, so it can be as little as a single byte */
 
 	REQUIRES( isHandleRangeValid( iCertSource ) );
 	REQUIRES( keyIDtype > CRYPT_KEYID_NONE && \
 			  keyIDtype < CRYPT_KEYID_LAST );
-	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
-			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( keyIDlength > 0 && keyIDlength < MAX_ATTRIBUTE_SIZE );
 	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX && \
 			  ( options & ~KEYMGMT_MASK_CERTOPTIONS ) == 0 );
+
+	/* Clear return value */
+	*iCertificate = CRYPT_ERROR;
 
 	/* Get the initial certificate based on the key ID */
 	setMessageKeymgmtInfo( &getnextcertInfo, keyIDtype, keyID, keyIDlength, 
@@ -1445,7 +1524,7 @@ int assembleCertChain( OUT CRYPT_CERTIFICATE *iCertificate,
 							  &getnextcertInfo, KEYMGMT_ITEM_PUBLICKEY );
 	if( cryptStatusError( status ) )
 		return( status );
-	iCertChain[ 0 ] = lastCert = getnextcertInfo.cryptHandle;
+	iCertSet[ 0 ] = lastCert = getnextcertInfo.cryptHandle;
 
 	/* Fetch subsequent certificates that make up the chain based on the 
 	   state information.  Since the basic options apply only to the leaf 
@@ -1487,7 +1566,7 @@ int assembleCertChain( OUT CRYPT_CERTIFICATE *iCertificate,
 			}
 
 		/* Make sure that we don't overflow the chain */
-		if( certChainEnd >= MAX_CHAINLENGTH )
+		if( certSetSize >= MAX_CHAINLENGTH )
 			{
 			krnlSendNotifier( getnextcertInfo.cryptHandle,
 							  IMESSAGE_DECREFCOUNT );
@@ -1495,24 +1574,41 @@ int assembleCertChain( OUT CRYPT_CERTIFICATE *iCertificate,
 			break;
 			}
 
-		iCertChain[ certChainEnd++ ] = lastCert = getnextcertInfo.cryptHandle;
+		iCertSet[ certSetSize++ ] = lastCert = getnextcertInfo.cryptHandle;
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 	if( cryptStatusError( status ) )
 		{
-		freeCertChain( iCertChain, certChainEnd );
+		freeCertChain( iCertSet, certSetSize );
 		return( status );
 		}
 
 	/* Build the complete chain from the individual certificates */
-	status = buildCertChain( iCertificate, iCertChain, certChainEnd, 
-							 CRYPT_KEYID_NONE, NULL, 0, KEYMGMT_FLAG_NONE );
+	status = buildCertChain( &iCertChain, iCertSet, certSetSize, 
+							 CRYPT_KEYID_NONE, NULL, 0, chainOptions );
 	if( cryptStatusError( status ) )
 		{
-		freeCertChain( iCertChain, certChainEnd );
+		freeCertChain( iCertSet, certSetSize );
 		return( status );
 		}
 
+	/* Make sure that the data source that we're using actually gave us what
+	   we asked for.  We can't do this for key IDs with data-only 
+	   certificates since the IDs aren't present in the certificate but are 
+	   generated dynamically in the associated context */
+	if( !( ( keyIDtype == CRYPT_IKEYID_KEYID || \
+			 keyIDtype == CRYPT_IKEYID_PGPKEYID ) && \
+		   ( options & KEYMGMT_FLAG_DATAONLY_CERT ) ) )
+		{
+		status = iCryptVerifyID( iCertChain, keyIDtype, keyID, keyIDlength );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( iCertChain, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
+		}
+
+	*iCertificate = iCertChain;
 	return( CRYPT_OK );
 	}
 

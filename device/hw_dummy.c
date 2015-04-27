@@ -299,7 +299,7 @@ static void dummyGenRandom( void *buffer, const int length )
 
 	assert( isWritePtr( buffer, length ) );
 
-	REQUIRES_V( length >= 1 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 1 && length < MAX_BUFFER_SIZE );
 
 	/* Fill the buffer with random-ish data.  This gets a bit tricky because
 	   we need to fool the entropy tests so we can't just fill it with a 
@@ -897,7 +897,7 @@ int hwGetRandom( void *buffer, const int length )
 	{
 	assert( isWritePtr( buffer, length ) );
 
-	REQUIRES( length >= 1 && length < MAX_INTLENGTH );
+	REQUIRES( length >= 1 && length < MAX_BUFFER_SIZE );
 
 	/* Fill the buffer with random-ish data */
 	dummyGenRandom( buffer, length );

@@ -64,11 +64,12 @@ typedef struct {
 
 	/* Key data protection information */
 	CRYPT_ALGO_TYPE cryptAlgo;		/* Key wrap algorithm */
-	int aesKeySize;					/* Key size if algo == AES */
+	int cryptAlgoParam;				/* Optional parameter for key wrap algo */
 	BUFFER( CRYPT_MAX_IVSIZE, ivSize ) \
 	BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];/* Key wrap IV */
 	int ivSize;
 	CRYPT_ALGO_TYPE hashAlgo;		/* Password hashing algo */
+	int hashAlgoParam;				/* Optional parameter for hash algo */
 	BUFFER( PGP_SALTSIZE, saltSize ) \
 	BYTE salt[ PGP_SALTSIZE + 8 ];	/* Password hashing salt */
 	int saltSize;

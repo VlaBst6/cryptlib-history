@@ -15,6 +15,8 @@
   #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_INT_ASN1
+
 /****************************************************************************
 *																			*
 *								Utility Routines							*
@@ -63,7 +65,7 @@ static int writeLength( INOUT STREAM *stream, IN_LENGTH_Z const long length )
 		return( sputc( stream, length & 0xFF ) );
 
 	/* Encode the number of length octets followed by the octets themselves */
-	buffer[ 0 ] = 0x80 | noLengthOctets;
+	buffer[ 0 ] = 0x80 | intToByte( noLengthOctets );
 	if( noLengthOctets > 3 )
 		buffer[ bufPos++ ] = ( length >> 24 ) & 0xFF;
 	if( noLengthOctets > 2 )
@@ -303,7 +305,7 @@ int writeNull( INOUT STREAM *stream, IN_TAG const int tag )
 	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	buffer[ 0 ] = ( tag == DEFAULT_TAG ) ? \
-				  BER_NULL : MAKE_CTAG_PRIMITIVE( tag );
+				  BER_NULL : intToByte( MAKE_CTAG_PRIMITIVE( tag ) );
 	buffer[ 1 ] = 0;
 	return( swrite( stream, buffer, 2 ) );
 	}
@@ -321,7 +323,7 @@ int writeBoolean( INOUT STREAM *stream, const BOOLEAN boolean,
 	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	buffer[ 0 ] = ( tag == DEFAULT_TAG ) ? \
-				  BER_BOOLEAN : MAKE_CTAG_PRIMITIVE( tag );
+				  BER_BOOLEAN : intToByte( MAKE_CTAG_PRIMITIVE( tag ) );
 	buffer[ 1 ] = 1;
 	buffer[ 2 ] = boolean ? 0xFF : 0;
 	return( swrite( stream, buffer, 3 ) );
@@ -379,6 +381,11 @@ int writeBitString( INOUT STREAM *stream, IN_INT const int bitString,
 					IN_TAG const int tag )
 	{
 	BYTE buffer[ 16 + 8 ];
+#if UINT_MAX > 0xFFFF
+	const int maxIterations = 32;
+#else
+	const int maxIterations = 16;
+#endif /* 16 vs.32-bit systems */
 	unsigned int value = 0;
 	int data = bitString, noBits = 0, i;
 
@@ -389,7 +396,7 @@ int writeBitString( INOUT STREAM *stream, IN_INT const int bitString,
 
 	/* ASN.1 bitstrings start at bit 0, so we need to reverse the order of
 	  the bits before we write them out */
-	for( i = 0; i < ( sizeof( int ) > 2 ? 32 : 16 ); i++ )
+	for( i = 0; i < maxIterations; i++ )
 		{
 		/* Update the number of significant bits */
 		if( data > 0 )
@@ -409,8 +416,8 @@ int writeBitString( INOUT STREAM *stream, IN_INT const int bitString,
 	   beyond the main error code and text message, and it's unlikely that 
 	   too many people will be running a CMP server on a DOS box */
 	buffer[ 0 ] = ( tag == DEFAULT_TAG ) ? \
-				  BER_BITSTRING : MAKE_CTAG_PRIMITIVE( tag );
-	buffer[ 1 ] = 1 + ( ( noBits + 7 ) >> 3 );
+				  BER_BITSTRING : intToByte( MAKE_CTAG_PRIMITIVE( tag ) );
+	buffer[ 1 ] = 1 + intToByte( ( ( noBits + 7 ) >> 3 ) );
 	buffer[ 2 ] = ~( ( noBits - 1 ) & 7 ) & 7;
 #if UINT_MAX > 0xFFFF
 	buffer[ 3 ] = ( value >> 24 ) & 0xFF;
@@ -441,9 +448,10 @@ static int writeTime( INOUT STREAM *stream, const time_t timeVal,
 
 	timeInfoPtr = gmTime_s( &timeVal, timeInfoPtr );
 	ENSURES_S( timeInfoPtr != NULL && timeInfoPtr->tm_year > 90 );
-	buffer[ 0 ] = ( tag != DEFAULT_TAG ) ? MAKE_CTAG_PRIMITIVE( tag ) : \
+	buffer[ 0 ] = ( tag != DEFAULT_TAG ) ? \
+					intToByte( MAKE_CTAG_PRIMITIVE( tag ) ) : \
 				  isUTCTime ? BER_TIME_UTC : BER_TIME_GENERALIZED;
-	buffer[ 1 ] = length;
+	buffer[ 1 ] = intToByte( length );
 	if( isUTCTime )
 		{
 		sprintf_s( buffer + 2, 16, "%02d%02d%02d%02d%02d%02dZ", 
@@ -575,3 +583,4 @@ int writeGenericHole( INOUT STREAM *stream, IN_LENGTH_Z const int length,
 	writeTag( stream, tag );
 	return( writeLength( stream, length ) );
 	}
+#endif /* USE_INT_ASN1 */

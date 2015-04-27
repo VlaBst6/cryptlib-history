@@ -189,7 +189,7 @@ static int pgpExtractKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	CRYPT_ALGO_TYPE cryptAlgo = CRYPT_ALGO_NONE;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	static const int mode = CRYPT_MODE_CFB;	/* int vs.enum */
-	int status;
+	int algoParam, status;
 
 	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
 	assert( isReadPtr( data, dataLength ) );
@@ -200,13 +200,10 @@ static int pgpExtractKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	*iCryptContext = CRYPT_ERROR;
 
 	/* Get the session key algorithm.  We delay checking the algorithm ID
-	   until after the checksum calculation to reduce the chance of being
-	   used as an oracle.
-
-	   Note that there are three different IDs for AES depending on the
-	   keysize that's being used, we ignore these since the key size is
-	   specified explicitly via the unwrapped key */
-	status = pgpToCryptlibAlgo( data[ 0 ], PGP_ALGOCLASS_CRYPT, &cryptAlgo );
+	   return status until after the checksum calculation to reduce the 
+	   chance of being used as an oracle */
+	status = pgpToCryptlibAlgo( data[ 0 ], PGP_ALGOCLASS_CRYPT, &cryptAlgo,
+								&algoParam );
 
 	/* Checksum the session key, skipping the algorithm ID at the start and
 	   the checksum at the end.  This is actually superfluous since any
@@ -230,6 +227,16 @@ static int pgpExtractKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( algoParam != 0 )
+		{
+		/* Some algorithms have variable-size keys, if this is one of them 
+		   then indicate the key size that we want to use */
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE, &algoParam, 
+								  CRYPT_CTXINFO_KEYSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
 							  ( MESSAGE_CAST ) &mode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusError( status ) )
@@ -292,7 +299,28 @@ static int pkcWrapData( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
 								  IMESSAGE_CTX_ENCRYPT, wrappedData, 
 								  wrappedDataLength );
 		if( cryptStatusOK( status ) )
-			mechanismInfo->wrappedDataLength = wrappedDataLength;
+			{
+			const BYTE *dataPtr = mechanismInfo->wrappedData;
+			int dataLength = wrappedDataLength;
+
+			/* The PKC wrap functions take a fixed-length input and produce 
+			   a fixed-length output but some of this can be leading-zero 
+			   padding, so we strip the padding if there's any present */
+			if( *dataPtr == 0 )
+				{
+				while( *dataPtr == 0 && dataLength > 16 )
+					{
+					dataPtr++;
+					dataLength--;
+					}
+				ENSURES( dataLength >= 16 );
+				memmove( mechanismInfo->wrappedData, dataPtr, 
+						 dataLength );
+				memset( ( BYTE * ) mechanismInfo->wrappedData + dataLength, 
+						0, wrappedDataLength - dataLength );
+				}
+			mechanismInfo->wrappedDataLength = dataLength;
+			}
 		}
 	if( cryptStatusOK( status ) && !memcmp( dataSample, samplePtr, 16 ) )
 		{
@@ -457,7 +485,7 @@ static int recoverPkcs1DataBlock( IN_BUFFER( dataLength ) const BYTE *data,
 	assert( isReadPtr( data, dataLength ) );
 	assert( isWritePtr( padSize, sizeof( int ) ) );
 
-	REQUIRES( dataLength >= MIN_PKCSIZE && dataLength < MAX_INTLENGTH );
+	REQUIRES( dataLength >= MIN_PKCSIZE && dataLength < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	*padSize = 0;

@@ -36,7 +36,7 @@ static int processKeyFingerprint( INOUT SESSION_INFO *sessionInfoPtr,
 	HASHFUNCTION_ATOMIC hashFunctionAtomic;
 	const ATTRIBUTE_LIST *attributeListPtr = \
 				findSessionInfo( sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_SERVER_FINGERPRINT );
+								 CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1 );
 	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE + 8 ];
 	int hashSize;
 
@@ -53,7 +53,7 @@ static int processKeyFingerprint( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		/* Remember the value for the caller */
 		return( addSessionInfoS( &sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_SERVER_FINGERPRINT,
+								 CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1,
 								 fingerPrint, hashSize ) );
 		}
 
@@ -268,14 +268,12 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 /* Switch from using DH contexts and a DH exchange to the equivalent ECDH 
    contexts and values */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static int switchToECDH( INOUT SESSION_INFO *sessionInfoPtr,
-						 INOUT SSH_HANDSHAKE_INFO *handshakeInfo,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int switchToECDH( INOUT SSH_HANDSHAKE_INFO *handshakeInfo,
 						 INOUT KEYAGREE_PARAMS *keyAgreeParams )
 	{
 	int status;
 
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );
 	assert( isWritePtr( keyAgreeParams, sizeof( KEYAGREE_PARAMS ) ) );
 
@@ -329,32 +327,19 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 		}
 
-	/* SSH hashes parts of the handshake messages for integrity-protection
-	   purposes so we hash the ID strings (first our client string, then the
-	   server string that we read previously) encoded as SSH string values 
-	   and without the CRLF terminator that we sent above, which isn't part
-	   of the hashed data.  In addition since the handshake can 
-	   retroactively switch to a different hash algorithm mid-exchange we 
-	   have to speculatively hash the messages with alternative algorithms
-	   in case the other side decides to switch */
-	status = hashAsString( handshakeInfo->iExchangeHashContext, 
-						   SSH2_ID_STRING, SSH_ID_STRING_SIZE );
-	if( cryptStatusOK( status ) )
-		status = hashAsString( handshakeInfo->iExchangeHashContext,
-							   sessionInfoPtr->receiveBuffer,
-							   strlen( sessionInfoPtr->receiveBuffer ) );
-	if( cryptStatusOK( status ) && \
-		handshakeInfo->iExchangeHashAltContext != CRYPT_ERROR )
-		{
-		status = hashAsString( handshakeInfo->iExchangeHashAltContext, 
-							   SSH2_ID_STRING, SSH_ID_STRING_SIZE );
-		if( cryptStatusOK( status ) )
-			status = hashAsString( handshakeInfo->iExchangeHashAltContext,
+	/* SSH hashes the handshake ID strings for integrity-protection purposes, 
+	   first our client string and then the server string that we read 
+	   previously */
+	status = hashHandshakeStrings( handshakeInfo, 
+								   SSH2_ID_STRING, SSH_ID_STRING_SIZE,
 								   sessionInfoPtr->receiveBuffer,
-								   strlen( sessionInfoPtr->receiveBuffer ) );
-		}
+								   sessionInfoPtr->receiveBufEnd );
 	if( cryptStatusError( status ) )
 		return( status );
+
+	/* Now that we've processed the out-of-band data in the receive buffer, 
+	   mark it as empty */
+	sessionInfoPtr->receiveBufEnd = 0;
 
 	/* While we wait for the server to digest our version information and 
 	   send back its response we can create the context with the DH key and
@@ -440,9 +425,9 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusOK( status ) )
 		status = writeAlgoString( &stream, sessionInfoPtr->integrityAlgo );
 	if( cryptStatusOK( status ) )
-		status = writeAlgoString( &stream, CRYPT_PSEUDOALGO_COPR );
+		status = writeAlgoString( &stream, MK_ALGO( PSEUDOALGO_COPR ) );
 	if( cryptStatusOK( status ) )
-		status = writeAlgoString( &stream, CRYPT_PSEUDOALGO_COPR );
+		status = writeAlgoString( &stream, MK_ALGO( PSEUDOALGO_COPR ) );
 	if( cryptStatusError( status ) )
 		return( status );
 	writeUint32( &stream, 0 );	/* No language tag */
@@ -510,8 +495,7 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	   and a DH exchange to the equivalent ECDH contexts and values */
 	if( handshakeInfo->isECDH )
 		{
-		status = switchToECDH( sessionInfoPtr, handshakeInfo, 
-							   &keyAgreeParams );
+		status = switchToECDH( handshakeInfo, &keyAgreeParams );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );

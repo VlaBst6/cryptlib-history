@@ -6,11 +6,11 @@
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "mech.h"
+  #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
   #include "pgp_rw.h"
-  #include "asn1.h"
+  #include "mech.h"
 #else
   #include "enc_dec/asn1.h"
   #include "enc_dec/asn1_ext.h"
@@ -29,6 +29,8 @@ enum { CTAG_SI_SKI };
 *																			*
 ****************************************************************************/
 
+#ifdef USE_INT_ASN1
+
 /* Read/write raw signatures */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -41,7 +43,7 @@ static int readRawSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
@@ -90,7 +92,7 @@ static int readX509Signature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
@@ -137,12 +139,15 @@ static int writeX509Signature( INOUT STREAM *stream,
 	writeBitStringHole( stream, signatureLength, DEFAULT_TAG );
 	return( writeRawObject( stream, signature, signatureLength ) );
 	}
+#endif /* USE_INT_ASN1 */
 
 /****************************************************************************
 *																			*
 *							CMS Signature Routines							*
 *																			*
 ****************************************************************************/
+
+#ifdef USE_INT_CMS
 
 /* Read/write PKCS #7/CMS (issuerAndSerialNumber) signatures */
 
@@ -157,7 +162,7 @@ static int readCmsSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
@@ -209,7 +214,9 @@ static int readCmsSignature( INOUT STREAM *stream,
 	   this wrong and write an algorithm+hash algoID, to get around this the
 	   decoding table contains an alternative interpretation of the
 	   ALGOID_CLASS_PKCSIG information pretending to be an 
-	   ALGOID_CLASS_PKC */
+	   ALGOID_CLASS_PKC.  This broken behaviour was codified in RFC 5652
+	   (section 10.1.2, "SignatureAlgorithmIdentifier") so it's now part
+	   of the standard */
 	status = readAlgoID( stream, &queryInfo->cryptAlgo, 
 						 ALGOID_CLASS_PKC );
 	if( cryptStatusOK( status ) )
@@ -280,7 +287,7 @@ static int readCryptlibSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
@@ -330,12 +337,11 @@ static int writeCryptlibSignature( INOUT STREAM *stream,
 								   IN_LENGTH_SHORT_MIN( 40 ) \
 									const int signatureLength )
 	{
-	MESSAGE_DATA msgData;
-	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];
+	BYTE keyID[ 128 + 8 ];
 	const int signAlgoIdSize = \
 				sizeofContextAlgoID( iSignContext, CRYPT_ALGO_NONE );
 	const int hashAlgoIdSize = sizeofAlgoID( hashAlgo );
-	int status;
+	int keyIDlength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( signature, signatureLength ) );
@@ -352,25 +358,24 @@ static int writeCryptlibSignature( INOUT STREAM *stream,
 		return( hashAlgoIdSize );
 
 	/* Get the key ID */
-	setMessageData( &msgData, keyID, CRYPT_MAX_HASHSIZE );
-	status = krnlSendMessage( iSignContext, IMESSAGE_GETATTRIBUTE_S,
-							  &msgData, CRYPT_IATTRIBUTE_KEYID );
+	status = getCmsKeyIdentifier( iSignContext, keyID, 128, &keyIDlength );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Write the header */
 	writeSequence( stream, ( int ) sizeofShortInteger( SIGNATURE_EX_VERSION ) + \
-				   sizeofObject( msgData.length ) + \
+				   sizeofObject( keyIDlength ) + \
 				   signAlgoIdSize + hashAlgoIdSize + \
 				   sizeofObject( signatureLength ) );
 
 	/* Write the version, key ID and algorithm identifier */
 	writeShortInteger( stream, SIGNATURE_EX_VERSION, DEFAULT_TAG );
-	writeOctetString( stream, msgData.data, msgData.length, CTAG_SI_SKI );
+	writeOctetString( stream, keyID, keyIDlength, CTAG_SI_SKI );
 	writeAlgoID( stream, hashAlgo );
 	writeContextAlgoID( stream, iSignContext, CRYPT_ALGO_NONE );
 	return( writeOctetString( stream, signature, signatureLength, DEFAULT_TAG ) );
 	}
+#endif /* USE_INT_CMS */
 
 /****************************************************************************
 *																			*
@@ -394,7 +399,7 @@ static int readTypeAndValue( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 	REQUIRES( startPos < stell( stream ) );
 
 	/* Skip the flags */
@@ -434,7 +439,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readSignatureSubpackets( INOUT STREAM *stream, 
 									INOUT QUERY_INFO *queryInfo,
 									IN_LENGTH_SHORT const int length, 
-									IN_LENGTH const int startPos,
+									IN_DATALENGTH const int startPos,
 									STDC_UNUSED const BOOLEAN isAuthenticated )
 	{
 	const int endPos = stell( stream ) + length;
@@ -444,9 +449,9 @@ static int readSignatureSubpackets( INOUT STREAM *stream,
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	REQUIRES( length > 0 && length < MAX_INTLENGTH_SHORT );
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 	REQUIRES( startPos < stell( stream ) );
-	REQUIRES( endPos > 0 && endPos < MAX_INTLENGTH );
+	REQUIRES( endPos > 0 && endPos < MAX_BUFFER_SIZE );
 
 	for( iterationCount = 0;
 		 stell( stream ) < endPos && \
@@ -546,12 +551,18 @@ int readPgpOnepassSigPacket( INOUT STREAM *stream,
 	/* Skip the sig.type and get the hash algorithm and signature 
 	   algorithms */
 	status = sgetc( stream );	/* Skip signature type */
-	if( cryptStatusOK( status ) )
+	if( !cryptStatusError( status ) )
+		{
 		status = readPgpAlgo( stream, &queryInfo->hashAlgo, 
+							  &queryInfo->hashAlgoParam, 
 							  PGP_ALGOCLASS_HASH );
+		}
 	if( cryptStatusOK( status ) )
+		{
 		status = readPgpAlgo( stream, &queryInfo->cryptAlgo, 
+							  &queryInfo->cryptAlgoParam, 
 							  PGP_ALGOCLASS_SIGN );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->type = CRYPT_OBJECT_SIGNATURE;
@@ -583,14 +594,14 @@ int readPgpOnepassSigPacket( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readPgp2SigInfo( INOUT STREAM *stream, 
 							INOUT QUERY_INFO *queryInfo,
-							IN_LENGTH_Z const int startPos )
+							IN_DATALENGTH_Z const int startPos )
 	{
 	int value, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 	REQUIRES( startPos < stell( stream ) );
 
 	/* Read PGP 2.x additional signature information */
@@ -611,24 +622,27 @@ static int readPgp2SigInfo( INOUT STREAM *stream,
 		return( status );
 	queryInfo->keyIDlength = PGP_KEYID_SIZE;
 	status = readPgpAlgo( stream, &queryInfo->cryptAlgo, 
-						  PGP_ALGOCLASS_SIGN );
+						  &queryInfo->cryptAlgoParam, PGP_ALGOCLASS_SIGN );
 	if( cryptStatusOK( status ) )
+		{
 		status = readPgpAlgo( stream, &queryInfo->hashAlgo, 
+							  &queryInfo->hashAlgoParam, 
 							  PGP_ALGOCLASS_HASH );
+		}
 	return( status );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readOpenPgpSigInfo( INOUT STREAM *stream, 
 							   INOUT QUERY_INFO *queryInfo,
-							   IN_LENGTH_Z const int startPos )
+							   IN_DATALENGTH_Z const int startPos )
 	{
 	int length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 	REQUIRES( startPos < stell( stream ) );
 
 	/* Remember the extra data to be hashed and read the signature and hash 
@@ -640,11 +654,17 @@ static int readOpenPgpSigInfo( INOUT STREAM *stream,
 								 PGP_ALGOID_SIZE + PGP_ALGOID_SIZE;
 	status = sgetc( stream );	/* Skip signature type */
 	if( cryptStatusOK( status ) )
+		{
 		status = readPgpAlgo( stream, &queryInfo->cryptAlgo, 
+							  &queryInfo->cryptAlgoParam, 
 							  PGP_ALGOCLASS_SIGN );
+		}
 	if( cryptStatusOK( status ) )
+		{
 		status = readPgpAlgo( stream, &queryInfo->hashAlgo, 
+							  &queryInfo->hashAlgoParam, 
 							  PGP_ALGOCLASS_HASH );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -692,7 +712,7 @@ static int readPgpSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
@@ -748,7 +768,7 @@ static int readPgpSignature( INOUT STREAM *stream,
 		const int dataStartPos = stell( stream );
 		int dummy;
 
-		REQUIRES( dataStartPos >= 0 && dataStartPos < MAX_INTLENGTH );
+		REQUIRES( dataStartPos >= 0 && dataStartPos < MAX_BUFFER_SIZE );
 		REQUIRES( queryInfo->cryptAlgo == CRYPT_ALGO_DSA );
 
 		/* Read the DSA signature, recording the position and combined 
@@ -823,7 +843,7 @@ static int readSshSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
@@ -893,7 +913,11 @@ static int readSshSignature( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
 static int writeSshSignature( INOUT STREAM *stream,
+#ifdef USE_ECDSA
+							  const CRYPT_CONTEXT iSignContext,
+#else
 							  STDC_UNUSED const CRYPT_CONTEXT iSignContext,
+#endif /* !USE_ECDSA */
 							  STDC_UNUSED const CRYPT_ALGO_TYPE hashAlgo,
 							  STDC_UNUSED const int hashParam,
 							  IN_ALGO const CRYPT_ALGO_TYPE signAlgo,
@@ -976,7 +1000,7 @@ static int readSslSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
@@ -1043,7 +1067,7 @@ static int readTls12Signature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos >= 0 && startPos < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
@@ -1058,7 +1082,7 @@ static int readTls12Signature( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->hashAlgo = value;	/* int vs.enum */
-	if( isHashExtAlgo( value ) )
+	if( isHashMacExtAlgo( value ) )
 		{
 		/* If it's a parameterised algorithm then we have to return extra
 		   information to indicate the sub-algorithm type */
@@ -1105,9 +1129,9 @@ static int readTls12Signature( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
 static int writeTls12Signature( INOUT STREAM *stream,
 								STDC_UNUSED const CRYPT_CONTEXT iSignContext,
-								STDC_UNUSED const CRYPT_ALGO_TYPE hashAlgo,
+								IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
 								IN_INT_SHORT_Z const int hashParam,
-								STDC_UNUSED const CRYPT_ALGO_TYPE signAlgo,
+								IN_ALGO const CRYPT_ALGO_TYPE signAlgo,
 								IN_BUFFER( signatureLength ) const BYTE *signature,
 								IN_LENGTH_SHORT_MIN( 18 + 18 + 1 ) \
 									const int signatureLength )
@@ -1166,10 +1190,14 @@ typedef struct {
 	const READSIG_FUNCTION function;
 	} SIG_READ_INFO;
 static const SIG_READ_INFO sigReadTable[] = {
+#ifdef USE_INT_ASN1
 	{ SIGNATURE_RAW, readRawSignature },
 	{ SIGNATURE_X509, readX509Signature },
+#endif /* USE_INT_ASN1 */
+#ifdef USE_INT_CMS 
 	{ SIGNATURE_CMS, readCmsSignature },
 	{ SIGNATURE_CRYPTLIB, readCryptlibSignature },
+#endif /* USE_INT_CMS */
 #ifdef USE_PGP
 	{ SIGNATURE_PGP, readPgpSignature },
 #endif /* USE_PGP */
@@ -1188,10 +1216,14 @@ typedef struct {
 	const WRITESIG_FUNCTION function;
 	} SIG_WRITE_INFO;
 static const SIG_WRITE_INFO sigWriteTable[] = {
+#ifdef USE_INT_ASN1
 	{ SIGNATURE_RAW, writeRawSignature },
 	{ SIGNATURE_X509, writeX509Signature },
+#endif /* USE_INT_ASN1 */
+#ifdef USE_INT_CMS 
 	{ SIGNATURE_CMS, writeCmsSignature },
 	{ SIGNATURE_CRYPTLIB, writeCryptlibSignature },
+#endif /* USE_INT_CMS */
 #ifdef USE_PGP
 	{ SIGNATURE_PGP, writePgpSignature },
 #endif /* USE_PGP */

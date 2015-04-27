@@ -80,7 +80,7 @@ void endSemaphores( void )
 	krnlData->shutdownLevel = SHUTDOWN_LEVEL_MUTEXES;
 
 	/* Shut down the mutexes */
-	MUTEX_DESTROY( mutex3);
+	MUTEX_DESTROY( mutex3 );
 	MUTEX_DESTROY( mutex2 );
 	MUTEX_DESTROY( mutex1 );
 

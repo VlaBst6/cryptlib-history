@@ -16,6 +16,8 @@
   #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_INT_ASN1
+
 /****************************************************************************
 *																			*
 *								Utility Routines							*
@@ -418,7 +420,7 @@ int readRawObject( INOUT STREAM *stream,
 
 	REQUIRES_S( bufferMaxLength >= 3 && \
 				bufferMaxLength < MAX_INTLENGTH_SHORT );
-				/* Need to be able to write at least the tag, length, and 
+				/* Need to be able to process at least the tag, length, and 
 				   one byte of content */
 	REQUIRES_S( ( tag == NO_TAG ) || ( tag >= 1 && tag <= MAX_TAG ) );
 				/* Note tag != 0 */
@@ -438,14 +440,14 @@ int readRawObject( INOUT STREAM *stream,
 		const int objectTag = readTag( stream );
 		if( cryptStatusError( objectTag ) )
 			return( objectTag );
-		if( tag != objectTag )
+		if( objectTag != tag )
 			return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
-		buffer[ offset++ ] = objectTag;
+		buffer[ offset++ ] = intToByte( objectTag );
 		}
 	length = sgetc( stream );
 	if( cryptStatusError( length ) )
 		return( length );
-	buffer[ offset++ ] = length;
+	buffer[ offset++ ] = intToByte( length );
 	if( length & 0x80 )
 		{
 		/* If the object is indefinite-length or longer than 256 bytes (i.e. 
@@ -456,7 +458,7 @@ int readRawObject( INOUT STREAM *stream,
 		length = sgetc( stream );
 		if( cryptStatusError( length ) )
 			return( length );
-		buffer[ offset++ ] = length;
+		buffer[ offset++ ] = intToByte( length );
 		}
 	if( length <= 0 || length > 0xFF )
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
@@ -951,8 +953,6 @@ static int readString( INOUT STREAM *stream,
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 	if( isOctetString && length > maxLength )
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
-	if( length <= 0 )
-		return( CRYPT_OK );		/* Zero-length string */
 	return( readConstrainedData( stream, string, maxLength, stringLength, 
 								 length ) );
 	}
@@ -965,11 +965,9 @@ int readOctetStringTag( INOUT STREAM *stream,
 						IN_LENGTH_SHORT const int maxLength, 
 						IN_TAG_EXT const int tag )
 	{
-
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( string == NULL || isWritePtr( string, maxLength ) );
-	assert( stringLength == NULL || \
-			isWritePtr( stringLength, sizeof( int ) ) );
+	assert( isWritePtr( stringLength, sizeof( int ) ) );
 
 	REQUIRES_S( minLength > 0 && minLength <= maxLength && \
 				maxLength < MAX_INTLENGTH_SHORT );
@@ -989,17 +987,17 @@ int readOctetStringTag( INOUT STREAM *stream,
    that read them invariably have to sort out the valid tag types 
    themselves */
 
-RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 int readCharacterString( INOUT STREAM *stream, 
-						 OUT_BUFFER( stringMaxLength, *stringLength ) void *string, 
+						 OUT_BUFFER_OPT( stringMaxLength, *stringLength ) \
+							void *string, 
 						 IN_LENGTH_SHORT const int stringMaxLength, 
 						 OUT_LENGTH_SHORT_Z int *stringLength, 
 						 IN_TAG_EXT const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( string == NULL || isWritePtr( string, stringMaxLength ) );
-	assert( stringLength == NULL || \
-			isWritePtr( stringLength, sizeof( int ) ) );
+	assert( isWritePtr( stringLength, sizeof( int ) ) );
 
 	REQUIRES_S( stringMaxLength > 0 && \
 				stringMaxLength < MAX_INTLENGTH_SHORT );
@@ -1114,9 +1112,10 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readTime( INOUT STREAM *stream, OUT time_t *timePtr, 
 					 const BOOLEAN isUTCTime )
 	{
-	BYTE buffer[ 16 + 8 ], *bufPtr = buffer;
+	BYTE buffer[ 16 + 8 ];
 	struct tm theTime,  gmTimeInfo, *gmTimeInfoPtr = &gmTimeInfo;
 	time_t utcTime, gmTime;
+	char *bufPtr;
 	int value = 0, length, i, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -1152,6 +1151,7 @@ static int readTime( INOUT STREAM *stream, OUT time_t *timePtr,
 		}
 	if( buffer[ length - 1 ] != 'Z' )
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
+	bufPtr = ( char * ) buffer;	/* We now know it's 'char *' not 'BYTE *' */
 
 	/* Decode the time fields */
 	memset( &theTime, 0, sizeof( struct tm ) );
@@ -1760,7 +1760,7 @@ int readGenericObjectHeader( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readRawObjectAlloc( INOUT STREAM *stream, 
 						OUT_BUFFER_ALLOC_OPT( *length ) void **objectPtrPtr, 
-						OUT_LENGTH_Z int *objectLengthPtr,
+						OUT_LENGTH_SHORT_Z int *objectLengthPtr,
 						IN_LENGTH_SHORT_MIN( OBJECT_HEADER_DATA_SIZE ) \
 							const int minLength, 
 						IN_LENGTH_SHORT const int maxLength )
@@ -1837,3 +1837,4 @@ int readRawObjectAlloc( INOUT STREAM *stream,
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_INT_ASN1 */

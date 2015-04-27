@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Enveloping Test Routines					*
-*						Copyright Peter Gutmann 1996-2011					*
+*						Copyright Peter Gutmann 1996-2012					*
 *																			*
 ****************************************************************************/
 
@@ -147,8 +147,8 @@ static int createDeenvelope( CRYPT_ENVELOPE *envelope )
 	status = cryptCreateEnvelope( envelope, CRYPT_UNUSED, CRYPT_FORMAT_AUTO );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptCreateEnvelope() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printf( "cryptCreateEnvelope() for de-enveloping failed with error "
+				"code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 
@@ -181,8 +181,8 @@ static int addEnvInfoNumeric( const CRYPT_ENVELOPE envelope,
 	status = cryptSetAttribute( envelope, type, envInfo );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptSetAttribute() of %d failed with error code %d, "
-				"line %d.\n", type, status, __LINE__ );
+		fprintf( outputStream, "cryptSetAttribute() of %d failed with error "
+				 "code %d, line %d.\n", type, status, __LINE__ );
 		return( FALSE );
 		}
 
@@ -194,8 +194,14 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 									const int numericEnvInfo,
 									BOOLEAN *isRestartable )
 	{
+	BOOLEAN isWrongKey = FALSE, exitLoop = FALSE;
 	int cryptEnvInfo, cryptAlgo, keySize = DUMMY_INIT;
-	int integrityLevel, status;
+	int integrityLevel, iteration = 0, status;
+
+	/* Args are either NULL, a handle, or { data, length } */
+	assert( ( stringEnvInfo == NULL && numericEnvInfo == 0 ) || \
+			( stringEnvInfo == NULL && numericEnvInfo != 0 ) || \
+			( stringEnvInfo != NULL && numericEnvInfo >= 1 ) );
 
 	/* Clear return value */
 	*isRestartable = FALSE;
@@ -223,6 +229,7 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 					"%d, line %d.\n", status, __LINE__ );
 			return( status );
 			}
+		iteration++;
 
 		switch( cryptEnvInfo )
 			{
@@ -245,10 +252,28 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 												numericEnvInfo );
 					if( cryptStatusError( status ) )
 						{
-						printf( "Attempt to add private key failed with "
-								"error code %d, line %d.\n", status, 
-								__LINE__ );
-						return( status );
+						if( status != CRYPT_ERROR_WRONGKEY )
+							{
+							printf( "Attempt to add private key failed "
+									"with error code %d, line %d.\n", 
+									status, __LINE__ );
+							return( status );
+							}
+						printf( "Attempt to add private key for attribute "
+								"#%d failed with CRYPT_ERROR_WRONGKEY,\n"
+								"  trying for subsequent attributes.\n", 
+								iteration );
+						isWrongKey = TRUE;
+						}
+					else
+						{
+						if( isWrongKey )
+							{
+							isWrongKey = FALSE;
+							printf( "Decryption succeeded for attribute "
+									"#%d.\n", iteration );
+							}
+						exitLoop = TRUE;
 						}
 					*isRestartable = TRUE;
 					break;
@@ -271,25 +296,49 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 						label );
 #else
 				label[ labelLength ] = '\0';
-				printf( "Need password to decrypt private key '%s'.\n",
-						label );
+				fprintf( outputStream, "Need password to decrypt private key "
+						 "'%s'.\n", label );
 #endif /* UNICODE_STRINGS */
 				if( !addEnvInfoString( envelope, CRYPT_ENVINFO_PASSWORD,
-								stringEnvInfo, paramStrlen( stringEnvInfo ) ) )
+									   stringEnvInfo, numericEnvInfo ) )
 					return( SENTINEL );
 				*isRestartable = TRUE;
 				break;
 
 			case CRYPT_ENVINFO_PASSWORD:
-				puts( "Need user password." );
-				if( !addEnvInfoString( envelope, CRYPT_ENVINFO_PASSWORD,
-							stringEnvInfo, paramStrlen( stringEnvInfo ) ) )
-					return( SENTINEL );
+				fputs( "Need user password.", outputStream );
+				assert( stringEnvInfo != NULL );	/* For static analysers */
+				status = cryptSetAttributeString( envelope, 
+									CRYPT_ENVINFO_PASSWORD, stringEnvInfo, 
+									numericEnvInfo );
+				if( cryptStatusError( status ) )
+					{
+					if( status != CRYPT_ERROR_WRONGKEY )
+						{
+						printf( "Attempt to add password failed with error "
+								"code %d, line %d.\n", status, __LINE__ );
+						return( status );
+						}
+					printf( "Attempt to add password for attribute #%d "
+							"failed with CRYPT_ERROR_WRONGKEY, trying for "
+							"subsequent attributes.\n", iteration );
+					isWrongKey = TRUE;
+					}
+				else
+					{
+					if( isWrongKey )
+						{
+						isWrongKey = FALSE;
+						printf( "Decryption succeeded for attribute "
+								"#%d.\n", iteration );
+						}
+					exitLoop = TRUE;
+					}
 				*isRestartable = TRUE;
 				break;
 
 			case CRYPT_ENVINFO_SESSIONKEY:
-				puts( "Need session key." );
+				fputs( "Need session key.", outputStream );
 				if( !addEnvInfoNumeric( envelope, CRYPT_ENVINFO_SESSIONKEY,
 										numericEnvInfo ) )
 					return( SENTINEL );
@@ -297,7 +346,7 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 				break;
 
 			case CRYPT_ENVINFO_KEY:
-				puts( "Need conventional encryption key." );
+				fputs( "Need conventional encryption key.", outputStream );
 				if( !addEnvInfoNumeric( envelope, CRYPT_ENVINFO_KEY,
 										numericEnvInfo ) )
 					return( SENTINEL );
@@ -317,8 +366,18 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 				return( SENTINEL );
 			}
 		}
-	while( cryptSetAttribute( envelope, CRYPT_ATTRIBUTE_CURRENT_GROUP,
+	while( !exitLoop && \
+		   cryptSetAttribute( envelope, CRYPT_ATTRIBUTE_CURRENT_GROUP,
 							  CRYPT_CURSOR_NEXT ) == CRYPT_OK );
+
+	/* If we couldn't find a usable decryption key, we can't go any 
+	   further */
+	if( isWrongKey )
+		{
+		printf( "Couldn't find key capable of decrypting enveloped data, "
+				"line %d.\n", __LINE__ );
+		return( FALSE );
+		}
 
 	/* Check whether there's any integrity protection present */
 	status = cryptGetAttribute( envelope, CRYPT_ENVINFO_INTEGRITY, 
@@ -334,7 +393,8 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 		/* Display the integrity level.  For PGP it's not really a MAC but
 		   a sort-of-keyed encrypted hash, but we call it a MAC to keep 
 		   things simple */
-		printf( "Data is integrity-protected using %s authentication.\n",
+		fprintf( outputStream, "Data is integrity-protected using %s "
+				 "authentication.\n",
 				( integrityLevel == CRYPT_INTEGRITY_MACONLY ) ? \
 					"MAC" : \
 				( integrityLevel == CRYPT_INTEGRITY_FULL ) ? \
@@ -361,8 +421,8 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 				"envelope, status %d, line %d.\n", status, __LINE__ );
 		return( status );
 		}
-	printf( "Data is protected using algorithm %d with %d bit key.\n", 
-			cryptAlgo, keySize * 8 );
+	fprintf( outputStream, "Data is protected using algorithm %d with %d "
+			 "bit key.\n", cryptAlgo, keySize * 8 );
 	
 	return( CRYPT_OK );
 	}
@@ -372,6 +432,11 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 					 const int numericEnvInfo )
 	{
 	int bytesIn, contentType, status;
+
+	/* Args are either NULL, a handle, or { data, length } */
+	assert( ( stringEnvInfo == NULL && numericEnvInfo == 0 ) || \
+			( stringEnvInfo == NULL && numericEnvInfo != 0 ) || \
+			( stringEnvInfo != NULL && numericEnvInfo >= 1 ) );
 
 	/* Push in the data */
 	status = cryptPushData( envelope, buffer, length, &bytesIn );
@@ -480,7 +545,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 		return( status );
 		}
 	if( contentType != CRYPT_CONTENT_DATA )
-		printf( "Nested content type = %d.\n", contentType );
+		fprintf( outputStream, "Nested content type = %d.\n", contentType );
 
 	return( bytesIn );
 	}
@@ -577,7 +642,11 @@ static int envelopeData( const char *dumpFileName,
 	/* Create the envelope, push in the data, pop the enveloped result, and
 	   destroy the envelope */
 	if( !createEnvelope( &cryptEnvelope, formatType ) )
+		{
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
+		}
 	if( useDatasize )
 		cryptSetAttribute( cryptEnvelope, CRYPT_ENVINFO_DATASIZE, length );
 	if( bufferSize > 1 )
@@ -585,18 +654,32 @@ static int envelopeData( const char *dumpFileName,
 						   length + 1024 );
 	count = pushData( cryptEnvelope, inBufPtr, length, NULL, 0 );
 	if( cryptStatusError( count ) )
+		{
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
+		}
 	count = popData( cryptEnvelope, outBufPtr, bufSize );
 	if( cryptStatusError( count ) )
+		{
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
+		}
 	if( !destroyEnvelope( cryptEnvelope ) )
+		{
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
+		}
 	if( bufferSize == 0 && \
 		count != length + ( ( formatType == CRYPT_FORMAT_PGP ) ? 8 : \
 							useDatasize ? 17 : 25 ) )
 		{
 		printf( "Enveloped data length %d, should be %d, line %d.\n",
 				count, length + 25, __LINE__ );
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
 		}
 
@@ -608,23 +691,41 @@ static int envelopeData( const char *dumpFileName,
 	/* Create the envelope, push in the data, pop the de-enveloped result,
 	   and destroy the envelope */
 	if( !createDeenvelope( &cryptEnvelope ) )
+		{
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
+		}
 	if( bufferSize > 1 )
 		cryptSetAttribute( cryptEnvelope, CRYPT_ATTRIBUTE_BUFFERSIZE,
 						   length + 1024 );
 	count = pushData( cryptEnvelope, outBufPtr, count, NULL, 0 );
 	if( cryptStatusError( count ) )
+		{
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
+		}
 	count = popData( cryptEnvelope, outBufPtr, bufSize );
 	if( cryptStatusError( count ) )
+		{
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
+		}
 	if( !destroyEnvelope( cryptEnvelope ) )
+		{
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
+		}
 
 	/* Make sure that the result matches what we pushed */
 	if( count != length )
 		{
 		puts( "De-enveloped data length != original length." );
+		if( bufferSize > 1 )
+			free( inBufPtr );
 		return( FALSE );
 		}
 	if( bufferSize > 0 )
@@ -636,13 +737,19 @@ static int envelopeData( const char *dumpFileName,
 			{
 			printf( "De-enveloped data != original data at byte %d, "
 					"line %d.\n", i, __LINE__ );
+			if( bufferSize > 1 )
+				free( inBufPtr );
 			return( FALSE );
 			}
 		}
 	else
 		{
 		if( !compareData( ENVELOPE_TESTDATA, length, outBufPtr, length ) )
+			{
+			if( bufferSize > 1 )
+				free( inBufPtr );
 			return( FALSE );
+			}
 		}
 
 	/* Clean up */
@@ -1309,12 +1416,25 @@ static int envelopeBoundaryTest( const BOOLEAN usePassword,
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	BYTE encBuffer[ 1024 ];
-	const int eocPos = usePassword ? 182 : 34;
+	int eocPos = 34;
 	int count, status;
 
 	printf( "Testing %senveloping boundary condition handling, "
 			"strategy %d...\n", usePassword ? "encrypted " : "",
 			strategy );
+
+	/* If we're using password-based enveloping then the EOC position can
+	   vary depending on the hash algorithm used */
+	if( usePassword )
+		{
+		int hashAlgo;
+
+		status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_KEYING_ALGO, 
+									&hashAlgo );
+		if( cryptStatusError( status ) )
+			return( FALSE );
+		eocPos = ( hashAlgo == CRYPT_ALGO_SHA1 ) ? 182 : 216;
+		}
 
 	/* Create an envelope and envelope some data using indefinite-length
 	   encoding */
@@ -1344,7 +1464,7 @@ static int envelopeBoundaryTest( const BOOLEAN usePassword,
 		assert( ( encBuffer[ eocPos - 1 ] != 0 || \
 				  encBuffer[ eocPos - 2 ] != 0 || \
 				  encBuffer[ eocPos - 3 ] != 0 ) && \
-				encBuffer[ eocPos ] == 0 );
+				encBuffer[ eocPos ] == 0 && encBuffer[ eocPos + 1 ] == 0 );
 		}
 	else
 		{
@@ -1352,7 +1472,7 @@ static int envelopeBoundaryTest( const BOOLEAN usePassword,
 							ENVELOPE_TESTDATA[ ENVELOPE_TESTDATA_SIZE - 2 ] && \
 				encBuffer[ eocPos - 1 ] == \
 							ENVELOPE_TESTDATA[ ENVELOPE_TESTDATA_SIZE - 1 ] && \
-				encBuffer[ eocPos ] == 0 );
+				encBuffer[ eocPos ] == 0 && encBuffer[ eocPos + 1 ] == 0 );
 				/* [ -2 ] = last char, [ -1 ] = '\0' */
 		}
 
@@ -1425,15 +1545,32 @@ static int envelopeBoundaryTest( const BOOLEAN usePassword,
 				"line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	if( ( !usePassword && count != 0 ) || \
-		( usePassword && \
-		  ( count != ( ENVELOPE_TESTDATA_SIZE % 8 ) && \
-		    count != ENVELOPE_TESTDATA_SIZE - ( ENVELOPE_TESTDATA_SIZE % 8 ) ) ) )
+	if( usePassword )
 		{
-		printf( "Final data count should have been %d, was %d, line %d.\n", 
-				usePassword ? ENVELOPE_TESTDATA_SIZE % 8 : 0, count, 
-				__LINE__ );
-		return( FALSE );
+		int blockSize;
+
+		status = cryptGetAttribute( cryptEnvelope, CRYPT_CTXINFO_BLOCKSIZE, 
+									&blockSize );
+		if( cryptStatusError( status ) )
+			return( FALSE );
+		if( count != ( ENVELOPE_TESTDATA_SIZE % blockSize ) && \
+		    count != ENVELOPE_TESTDATA_SIZE - \
+							( ENVELOPE_TESTDATA_SIZE % blockSize ) )
+			{
+			printf( "Final data count should have been %d, was %d, "
+					"line %d.\n", ENVELOPE_TESTDATA_SIZE % blockSize, count, 
+					__LINE__ );
+			return( FALSE );
+			}
+		}
+	else
+		{
+		if( count != 0 )
+			{
+			printf( "Final data count should have been 0, was %d, "
+					"line %d.\n", count, __LINE__ );
+			return( FALSE );
+			}
 		}
 	if( !destroyEnvelope( cryptEnvelope ) )
 		return( FALSE );
@@ -1461,9 +1598,6 @@ static int envelopePKCDecrypt( BYTE *buffer, const int length,
 							   const CRYPT_HANDLE externalCryptKeyset )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
-	CRYPT_KEYSET cryptKeyset;
-	const C_STR keysetName;
-	const C_STR password;
 	int count, status;
 
 	assert( ( keyFileType != KEYFILE_NONE && \
@@ -1476,28 +1610,40 @@ static int envelopePKCDecrypt( BYTE *buffer, const int length,
 		return( FALSE );
 	if( keyFileType != KEYFILE_NONE )
 		{
-		keysetName = getKeyfileName( keyFileType, TRUE );
-		password = getKeyfilePassword( keyFileType );
+		CRYPT_KEYSET cryptKeyset;
+		const C_STR keysetName = getKeyfileName( keyFileType, TRUE );
+
+		/* Add the decryption keyset */
 		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, 
 								  CRYPT_KEYSET_FILE, keysetName, 
 								  CRYPT_KEYOPT_READONLY );
 		if( cryptStatusError( status ) )
 			return( FALSE );
+		status = addEnvInfoNumeric( cryptEnvelope, 
+									CRYPT_ENVINFO_KEYSET_DECRYPT, 
+									cryptKeyset );
+		cryptKeysetClose( cryptKeyset );
 		}
 	else
 		{
-		cryptKeyset = externalCryptKeyset;
-		password = NULL;
+		/* We're using a device to handle decryption keys */
+		status = addEnvInfoNumeric( cryptEnvelope, 
+									CRYPT_ENVINFO_KEYSET_DECRYPT, 
+									externalCryptKeyset );
 		}
-	status = addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_KEYSET_DECRYPT, 
-								cryptKeyset );
-	if( keyFileType != KEYFILE_NONE )
-		cryptKeysetClose( cryptKeyset );
 	if( status <= 0 )
 		return( FALSE );
 
 	/* Push in the data */
-	count = pushData( cryptEnvelope, buffer, length, password, 0 );
+	if( keyFileType != KEYFILE_NONE )
+		{
+		const C_STR password = getKeyfilePassword( keyFileType );
+
+		count = pushData( cryptEnvelope, buffer, length, password, 
+						  paramStrlen( password ) );
+		}
+	else
+		count = pushData( cryptEnvelope, buffer, length, NULL, 0 );
 	if( cryptStatusError( count ) )
 		return( FALSE );
 	count = popData( cryptEnvelope, buffer, BUFFER_SIZE );
@@ -1579,51 +1725,49 @@ static int envelopePKCCrypt( const char *dumpFileName,
 		keyID = ( keyFileType == KEYFILE_PGP ) ? \
 				TEXT( "test" ) : getKeyfileUserID( keyFileType, FALSE );
 		}
-	printf( "Testing %spublic-key encrypted enveloping",
-			( formatType == CRYPT_FORMAT_PGP ) ? \
+	fprintf( outputStream, "Testing %spublic-key encrypted enveloping",
+			 ( formatType == CRYPT_FORMAT_PGP ) ? \
 				( ( keyFileType == KEYFILE_PGP ) ? "PGP " : "OpenPGP " ) : "" );
 	if( useDatasize && ( formatType != CRYPT_FORMAT_PGP ) && \
 		!( useRecipient || useMultipleKeyex || useDirectKey ) )
-		printf( " with datasize hint" );
-	printf( " using " );
-	printf( ( keyFileType == KEYFILE_PGP ) ? \
+		fprintf( outputStream, " with datasize hint" );
+	fprintf( outputStream, " using " );
+	fprintf( outputStream, ( keyFileType == KEYFILE_PGP ) ? \
 				( ( formatType == CRYPT_FORMAT_PGP ) ? \
 					"PGP key" : "raw public key" ) : \
 			  "X.509 cert" );
 	if( useRecipient && !useAltAlgo )
-		printf( " and recipient info" );
+		fprintf( outputStream, " and recipient info" );
 	if( useMultipleKeyex )
-		printf( " and additional keying info" );
+		fprintf( outputStream, " and additional keying info" );
 	if( useAltAlgo )
-		printf( " and alt.encr.algo" );
+		fprintf( outputStream, " and alt.encr.algo" );
 	if( useDirectKey )
-		printf( " and direct key add" );
-	puts( "..." );
+		fprintf( outputStream, " and direct key add" );
+	fputs( "...", outputStream );
 
 	/* Open the keyset and either get the public key explicitly (to make sure
 	   that this version works) or leave the keyset open to allow it to be
 	   added to the envelope */
 	if( keyFileType != KEYFILE_NONE )
 		{
-		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, 
-								  CRYPT_KEYSET_FILE, keysetName, 
-								  CRYPT_KEYOPT_READONLY );
-		if( cryptStatusError( status ) )
+		if( useRecipient )
 			{
-			printf( "Couldn't open keyset '%s', status %d, line %d.\n", 
-					keysetName, status, __LINE__ );
-			return( FALSE );
-			}
-		if( !useRecipient )
-			{
-			status = cryptGetPublicKey( cryptKeyset, &cryptKey, 
-										CRYPT_KEYID_NAME, keyID );
-			cryptKeysetClose( cryptKeyset );
+			status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, 
+									  CRYPT_KEYSET_FILE, keysetName, 
+									  CRYPT_KEYOPT_READONLY );
 			if( cryptStatusError( status ) )
 				{
-				puts( "Read of public key from file keyset failed." );
+				printf( "Couldn't open keyset '%s', status %d, line %d.\n", 
+						keysetName, status, __LINE__ );
 				return( FALSE );
 				}
+			}
+		else
+			{
+			status = getPublicKey( &cryptKey, keysetName, keyID );
+			if( cryptStatusError( status ) )
+				return( FALSE );
 			}
 		}
 	else
@@ -1688,8 +1832,8 @@ static int envelopePKCCrypt( const char *dumpFileName,
 						"should have failed,\nline %d.\n", __LINE__ );
 				return( FALSE );
 				}
-			puts( "  (The above message indicates that the test condition "
-				  "was successfully\n   checked)." );
+			fputs( "  (The above message indicates that the test condition "
+				   "was successfully\n   checked).", outputStream );
 			}
 
 		if( keyFileType != KEYFILE_NONE )
@@ -1713,7 +1857,7 @@ static int envelopePKCCrypt( const char *dumpFileName,
 		return( FALSE );
 
 	/* Tell them what happened */
-	printf( "Enveloped data has size %d bytes.\n", count );
+	fprintf( outputStream, "Enveloped data has size %d bytes.\n", count );
 	debugDump( dumpFileName, globalBuffer, count );
 
 	/* De-envelope the data and make sure that the result matches what we
@@ -1732,7 +1876,8 @@ static int envelopePKCCrypt( const char *dumpFileName,
 		return( FALSE );
 
 	/* Clean up */
-	puts( "Enveloping of public-key encrypted data succeeded.\n" );
+	fputs( "Enveloping of public-key encrypted data succeeded.\n", 
+		   outputStream );
 	return( TRUE );
 	}
 
@@ -1753,6 +1898,8 @@ int testEnvelopePKCCrypt( void )
 			return( FALSE );	/* PGP format */
 		if( !envelopePKCCrypt( "env_pkc.pgp", TRUE, KEYFILE_PGP, TRUE, FALSE, FALSE, FALSE, CRYPT_FORMAT_PGP, CRYPT_UNUSED, CRYPT_UNUSED ) )
 			return( FALSE );	/* PGP format, recipient */
+		if( !envelopePKCCrypt( "env_pkc.pgp", TRUE, KEYFILE_PGP, FALSE, FALSE, FALSE, TRUE, CRYPT_FORMAT_PGP, CRYPT_UNUSED, CRYPT_UNUSED ) )
+			return( FALSE );	/* PGP format, decrypt key provided directly */
 		if( !envelopePKCCrypt( "env_pkca.pgp", TRUE, KEYFILE_PGP, TRUE, FALSE, TRUE, FALSE, CRYPT_FORMAT_PGP, CRYPT_UNUSED, CRYPT_UNUSED ) )
 			return( FALSE );	/* PGP format, recipient, nonstandard bulk encr.algo */
 		}
@@ -1780,6 +1927,98 @@ int testEnvelopePKCCryptEx( const CRYPT_CONTEXT cryptContext,
 #endif
 	return( envelopePKCCrypt( "env_pkc", TRUE, KEYFILE_NONE, FALSE, FALSE, FALSE, FALSE, CRYPT_FORMAT_CRYPTLIB, cryptContext, decryptKeyset ) );
 	}						/* Datasize, raw key */
+
+#if defined( _MSC_VER ) && ( _MSC_VER == 1200 ) && !defined( NDEBUG )
+
+/* Perform an iterated envelope/deenvelope test to catch errors that only 
+   occur in a small subset of runs.  This is used to check for problems in 
+   data-dependant operations, e.g. leading-zero truncation which only crops 
+   up in 1/256 runs. 
+   
+   Since this is quite time-consuming and a single test applies to all 
+   versions and builds of the code, we only peform it for VC++ 6.0 debug
+   builds */
+
+#define NO_ITERS	1000
+
+static int envelopePKCIterated( const CRYPT_FORMAT_TYPE formatType )
+	{
+	CRYPT_CONTEXT cryptPubKey, cryptPrivKey;
+	int i, status;
+
+	printf( "Testing %d iterations of %s enveloping to check for "
+			"pad/trunc.errors...\n", NO_ITERS,
+			( formatType == CRYPT_FORMAT_CRYPTLIB ) ? "cryptlib" : "PGP" );
+	status = getPublicKey( &cryptPubKey, 
+						   getKeyfileName( KEYFILE_X509, FALSE ), 
+						   getKeyfileUserID( KEYFILE_X509, FALSE ) );
+	assert( cryptStatusOK( status ) );
+	status = getPrivateKey( &cryptPrivKey, 
+							getKeyfileName( KEYFILE_X509, FALSE ), 
+							getKeyfileUserID( KEYFILE_X509, FALSE ),
+							getKeyfilePassword( KEYFILE_X509 ) );
+	assert( cryptStatusOK( status ) );
+	outputStream = fopen( "nul:", "w" );
+	assert( outputStream != NULL );
+	for( i = 0; i < NO_ITERS; i++ )
+		{
+		CRYPT_ENVELOPE cryptEnvelope;
+		int count, status;
+
+		printf( "%d.\r", i );
+
+		/* Envelope the data */
+		status = createEnvelope( &cryptEnvelope, formatType );
+		assert( status == TRUE );
+		status = addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_PUBLICKEY, 
+									cryptPubKey );
+		assert( status == TRUE );
+		cryptSetAttribute( cryptEnvelope, CRYPT_ENVINFO_DATASIZE,
+						   ENVELOPE_TESTDATA_SIZE );
+		count = pushData( cryptEnvelope, ENVELOPE_TESTDATA,
+						  ENVELOPE_TESTDATA_SIZE, NULL, 0 );
+		assert( !cryptStatusError( count ) );
+		count = popData( cryptEnvelope, globalBuffer, BUFFER_SIZE );
+		assert( !cryptStatusError( count ) );
+		destroyEnvelope( cryptEnvelope );
+
+		/* De-envelope the data */
+		status = createDeenvelope( &cryptEnvelope );
+		assert( status == TRUE );
+		status = pushData( cryptEnvelope, globalBuffer, count, NULL, 
+						   cryptPrivKey );
+		if( cryptStatusError( status ) )
+			{
+			printf( "\nFailed, iteration = %d.\n", i );
+			debugDump( "r:/out.der", globalBuffer, count );
+			destroyEnvelope( cryptEnvelope );
+			return( FALSE );
+			}
+		count = popData( cryptEnvelope, globalBuffer, BUFFER_SIZE );
+		assert( !cryptStatusError( count ) );
+		destroyEnvelope( cryptEnvelope );
+		}
+	outputStream = stdout;
+	cryptDestroyContext( cryptPubKey );
+	cryptDestroyContext( cryptPrivKey );
+	
+	printf( "Tested %d iterations of %s PKC enveloping.\n", NO_ITERS,
+			( formatType == CRYPT_FORMAT_CRYPTLIB ) ? "cryptlib" : "PGP" );
+	return( TRUE );
+	}
+
+int testEnvelopePKCIterated( void )
+	{
+	if( !envelopePKCIterated( CRYPT_FORMAT_CRYPTLIB ) )
+		return( FALSE );
+	return( envelopePKCIterated( CRYPT_FORMAT_PGP ) );
+	}
+#else
+int testEnvelopePKCIterated( void )
+	{
+	return( TRUE );
+	}
+#endif /* VC++ 6.0 */
 
 /* Test each encryption algorithm */
 
@@ -1870,6 +2109,104 @@ int testEnvelopePKCCryptAlgo( void )
 		return( FALSE );
 	return( TRUE );
 	}
+
+/* Test PKC-encrypted enveloping with multiple recipients */
+
+static int envelopePKCCryptMulti( const char *dumpFileName,
+								  const BOOLEAN useKeyFile,
+								  const int recipientNo,
+								  const CRYPT_FORMAT_TYPE formatType )
+	{
+	CRYPT_ENVELOPE cryptEnvelope;
+	CRYPT_HANDLE cryptKey1, cryptKey2;
+	int count, status;
+
+	if( !keyReadOK )
+		{
+		puts( "Couldn't find key files, skipping test of public-key "
+			  "encrypted enveloping..." );
+		return( TRUE );
+		}
+	printf( "Testing %spublic-key encrypted enveloping with multiple recipients,\n",
+			( formatType == CRYPT_FORMAT_PGP ) ? "PGP " : "" );
+	printf( "  recipient %d to decrypt", recipientNo );
+	puts( "..." );
+
+	/* Open the keysets and get the two public keys */
+	status = getPublicKey( &cryptKey1, 
+						   getKeyfileName( KEYFILE_X509, FALSE ), 
+						   getKeyfileUserID( KEYFILE_X509, FALSE ) );
+	if( cryptStatusOK( status ) )
+		{
+		status = getPublicKey( &cryptKey2, 
+							   getKeyfileName( KEYFILE_X509_ALT, FALSE ), 
+							   getKeyfileUserID( KEYFILE_X509_ALT, FALSE ) );
+		}
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	/* Create the envelope, push in the keys and data, pop the enveloped 
+	   result, and destroy the envelope */
+	if( !createEnvelope( &cryptEnvelope, formatType ) )
+		return( FALSE );
+	if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_PUBLICKEY,
+							cryptKey1 ) )
+		return( FALSE );
+	if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_PUBLICKEY,
+							cryptKey2 ) )
+		return( FALSE );
+	cryptDestroyObject( cryptKey1 );
+	cryptDestroyObject( cryptKey2 );
+	cryptSetAttribute( cryptEnvelope, CRYPT_ENVINFO_DATASIZE,
+					   ENVELOPE_TESTDATA_SIZE );
+	count = pushData( cryptEnvelope, ENVELOPE_TESTDATA,
+					  ENVELOPE_TESTDATA_SIZE, NULL, 0 );
+	if( cryptStatusError( count ) )
+		return( FALSE );
+	count = popData( cryptEnvelope, globalBuffer, BUFFER_SIZE );
+	if( cryptStatusError( count ) )
+		return( FALSE );
+	if( !destroyEnvelope( cryptEnvelope ) )
+		return( FALSE );
+
+	/* Tell them what happened */
+	printf( "Enveloped data has size %d bytes.\n", count );
+	debugDump( dumpFileName, globalBuffer, count );
+
+	/* De-envelope the data and make sure that the result matches what we
+	   pushed */
+	count = envelopePKCDecryptDirect( globalBuffer, count, 
+									  ( recipientNo == 1 ) ? KEYFILE_X509 : \
+															 KEYFILE_X509_ALT );
+	if( count <= 0 )
+		return( FALSE );
+	if( !compareData( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, 
+					  globalBuffer, count ) )
+		return( FALSE );
+
+	/* Clean up */
+	puts( "Enveloping of public-key encrypted data with multiple recipients succeeded.\n" );
+	return( TRUE );
+	}
+
+int testEnvelopePKCCryptMulti( void )
+	{
+	if( cryptQueryCapability( CRYPT_ALGO_IDEA, NULL ) == CRYPT_ERROR_NOTAVAIL )
+		{
+		puts( "Skipping raw public-key and PGP enveloping, which requires "
+			  "the IDEA cipher to\nbe enabled.\n" );
+		}
+	else
+		{
+		if( !envelopePKCCryptMulti( "env_pkc_mp", FALSE, 1, CRYPT_FORMAT_PGP ) )
+			return( FALSE );	/* PGP format, multiple recip, key #1 decrypts */
+		if( !envelopePKCCryptMulti( "env_pkc_mp", FALSE, 2, CRYPT_FORMAT_PGP ) )
+			return( FALSE );	/* PGP format, multiple recip, key #2 decrypts */
+		}
+	if( !envelopePKCCryptMulti( "env_pkc_m", FALSE, 1, CRYPT_FORMAT_CRYPTLIB ) )
+		return( FALSE );	/* Multiple recipients, key #1 decrypts */
+	return( envelopePKCCryptMulti( "env_pkc_m", FALSE, 2, CRYPT_FORMAT_CRYPTLIB ) );
+	}						/* Multiple recipients, key #2 decrypts */
 
 /****************************************************************************
 *																			*
@@ -2023,6 +2360,16 @@ static int envelopeSigCheck( BYTE *buffer, const int length,
 	if( !getSigCheckResult( cryptEnvelope, sigContext, TRUE, FALSE ) )
 		return( FALSE );
 
+	/* If we're testing the automatic upgrade of the envelope hash function
+	   to a stronger one, make sure that the hash algorithm was upgraded */
+	if( keyFileType == KEYFILE_X509_ALT )
+		{
+		/* There's no easy way to retrieve the hash algorithm used for 
+		   signing from the envelope since it's a low-level internal 
+		   attribute, so the only way to verify that the algorithm upgrade 
+		   was successful is by running dumpasn1 on the output data file */
+		}
+
 	/* If we supplied the sig-checking key, make sure that it's handled
 	   correctly by the envelope.  We shouldn't be able to read it back from
 	   a PGP envelope, and from a cryptlib/CMS/SMIME envelope we should get
@@ -2063,7 +2410,8 @@ static int envelopeSigCheck( BYTE *buffer, const int length,
 			   key+certificate combination that we pushed in.  Note that the 
 			   following will result in an error message being printed in
 			   addEnvInfoNumeric() */
-			createEnvelope( &testEnvelope, CRYPT_FORMAT_CRYPTLIB );
+			if( !createEnvelope( &testEnvelope, CRYPT_FORMAT_CRYPTLIB ) )
+				return( FALSE );
 			if( addEnvInfoNumeric( testEnvelope, CRYPT_ENVINFO_SIGNATURE,
 								   sigCheckContext ) )
 				{
@@ -2094,11 +2442,13 @@ static int envelopeSign( const void *data, const int dataLength,
 						 const BOOLEAN useDatasize,
 						 const BOOLEAN useCustomHash, 
 						 const BOOLEAN useSuppliedKey,
+						 const CRYPT_CONTENT_TYPE contentType,
 						 const CRYPT_FORMAT_TYPE formatType )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CONTEXT cryptContext = DUMMY_INIT;
+	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
 	int count, status;
 
 	if( !keyReadOK )
@@ -2110,17 +2460,25 @@ static int envelopeSign( const void *data, const int dataLength,
 	printf( "Testing %ssigned enveloping%s",
 			( formatType == CRYPT_FORMAT_PGP ) ? "PGP " : \
 			( formatType == CRYPT_FORMAT_SMIME ) ? "S/MIME " : "",
-			( useDatasize && ( formatType != CRYPT_FORMAT_PGP ) ) ? \
+			( useDatasize && formatType != CRYPT_FORMAT_PGP && \
+			  keyFileType != KEYFILE_X509_ALT ) ? \
 			" with datasize hint" : "" );
 	if( useCustomHash )
 		{
 		printf( " %s custom hash",
 				( formatType == CRYPT_FORMAT_PGP ) ? "with" :"and" );
 		}
-	printf( " using %s", 
-			( keyFileType == KEYFILE_OPENPGP_HASH ) ? "raw DSA key" : \
-			( keyFileType == KEYFILE_PGP ) ? "raw public key" : \
-			useSuppliedKey ? "supplied X.509 cert" : "X.509 cert" );
+	if( contentType == CRYPT_CONTENT_NONE )
+		{
+		printf( " using %s", 
+				( keyFileType == KEYFILE_OPENPGP_HASH ) ? "raw DSA key" : \
+				( keyFileType == KEYFILE_PGP ) ? "raw public key" : \
+				useSuppliedKey ? "supplied X.509 cert" : "X.509 cert" );
+		}
+	if( keyFileType == KEYFILE_X509_ALT )
+		printf( " and automatic hash upgrade" );
+	if( contentType != CRYPT_CONTENT_NONE )
+		printf( " and custom content type" );
 	puts( "..." );
 
 	/* Get the private key */
@@ -2142,7 +2500,10 @@ static int envelopeSign( const void *data, const int dataLength,
 		}
 	else
 		{
-		status = getPrivateKey( &cryptContext, USER_PRIVKEY_FILE,
+		filenameFromTemplate( filenameBuffer, USER_PRIVKEY_FILE_TEMPLATE, 2 );
+		status = getPrivateKey( &cryptContext, 
+								( keyFileType == KEYFILE_X509 ) ? \
+									USER_PRIVKEY_FILE : filenameBuffer,
 								USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
 		}
 	if( cryptStatusError( status ) )
@@ -2191,34 +2552,38 @@ static int envelopeSign( const void *data, const int dataLength,
 			  "successfully\n   checked)." );
 		}
 #endif /* 0 */
-	if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
-							cryptContext ) )
-		return( FALSE );
-#if 0	/* 8/7/2012 Removed since it conflicts with the functionality for 
-					setting hash values for detached signatures.  This
-					capability was never documented in the manual so it's
-					unlikely that it was ever used */
-	if( useDatasize && !useCustomHash && \
-		!( keyFileType == KEYFILE_OPENPGP_HASH || keyFileType == KEYFILE_PGP ) && \
-		( formatType != CRYPT_FORMAT_PGP ) )
+	if( contentType != CRYPT_CONTENT_NONE )
 		{
-		CRYPT_CONTEXT hashContext;
-
-		/* Make sure that adding a (pseudo-duplicate) hash action that
-		   duplicates the one already added implicitly by the addition of
-		   the signature key succeeds (internally, nothing is really done
-		   since the hash action is already present) */
-		status = cryptCreateContext( &hashContext, CRYPT_UNUSED, 
-									 CRYPT_ALGO_SHA1 );
-		if( cryptStatusError( status ) )
-			return( FALSE );
-		status = addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_HASH,
-									hashContext );
-		cryptDestroyContext( hashContext );
-		if( status <= 0 )
+		if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_CONTENTTYPE,
+								contentType ) )
 			return( FALSE );
 		}
-#endif /* 0 */
+	if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
+							cryptContext ) )
+		{
+		cryptDestroyContext( cryptContext );
+		cryptDestroyEnvelope( cryptEnvelope );
+		if( formatType == CRYPT_FORMAT_PGP && \
+			contentType != CRYPT_CONTENT_NONE )
+			{
+			puts( "  (This is an expected result since this test verifies "
+				  "rejection of an\n   attempt to set a non-data content "
+				  "type with PGP)." );
+			return( TRUE );
+			}
+		return( FALSE );
+		}
+	else
+		{
+		if( formatType == CRYPT_FORMAT_PGP && \
+			contentType != CRYPT_CONTENT_NONE )
+			{
+			printf( "Addition of custom content type to PGP envelope "
+					"succeeded when it should\nhave failed, line %d.\n", 
+					__LINE__ );
+			return( FALSE );
+			}
+		}
 	if( cryptSetAttribute( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
 						   cryptContext ) != CRYPT_ERROR_INITED )
 		{
@@ -2279,33 +2644,37 @@ int testEnvelopeSign( void )
 		}
 	else
 		{
-		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sign", KEYFILE_PGP, FALSE, FALSE, FALSE, CRYPT_FORMAT_CRYPTLIB ) )
+		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sign", KEYFILE_PGP, FALSE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_CRYPTLIB ) )
 			return( FALSE );	/* Indefinite length, raw key */
-		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sig", KEYFILE_PGP, TRUE, FALSE, FALSE, CRYPT_FORMAT_CRYPTLIB ) )
+		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sig", KEYFILE_PGP, TRUE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_CRYPTLIB ) )
 			return( FALSE );	/* Datasize, raw key */
-		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sig.pgp", KEYFILE_PGP, TRUE, FALSE, FALSE, CRYPT_FORMAT_PGP ) )
-			return( FALSE );	/* PGP format, raw key */
-		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sigd.pgp", KEYFILE_OPENPGP_HASH, TRUE, FALSE, FALSE, CRYPT_FORMAT_PGP ) )
-			return( FALSE );	/* PGP format, raw DSA key */
+		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sigc", KEYFILE_PGP, TRUE, FALSE, FALSE, CRYPT_CONTENT_COMPRESSEDDATA, CRYPT_FORMAT_CRYPTLIB ) )
+			return( FALSE );	/* Datasize, raw key, custom content type */
+		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sig.pgp", KEYFILE_PGP, TRUE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_PGP ) )
+			return( FALSE );	/* PGP format, datasize, raw key */
+		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sigc.pgp", KEYFILE_PGP, TRUE, FALSE, FALSE, CRYPT_CONTENT_COMPRESSEDDATA, CRYPT_FORMAT_PGP ) )
+			return( FALSE );	/* PGP format, datasize, raw key, custom content type */
+		if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_sigd.pgp", KEYFILE_OPENPGP_HASH, TRUE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_PGP ) )
+			return( FALSE );	/* PGP format, datasize, raw DSA key */
 		}
-	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csgn", KEYFILE_X509, FALSE, FALSE, FALSE, CRYPT_FORMAT_CRYPTLIB ) )
+	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csgn", KEYFILE_X509, FALSE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* Indefinite length, certificate */
-	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csg", KEYFILE_X509, TRUE, FALSE, FALSE, CRYPT_FORMAT_CRYPTLIB ) )
+	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csg", KEYFILE_X509, TRUE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* Datasize, certificate */
-	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csgs", KEYFILE_X509, TRUE, FALSE, FALSE, CRYPT_FORMAT_SMIME ) )
+	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csgs", KEYFILE_X509, TRUE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_SMIME ) )
 		return( FALSE );	/* Datasize, certificate, S/MIME semantics */
-	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csg", KEYFILE_X509, TRUE, FALSE, TRUE, CRYPT_FORMAT_CRYPTLIB ) )
+	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csg", KEYFILE_X509, TRUE, FALSE, TRUE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* Datasize, certificate, sigcheck key supplied */
-	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csg.pgp", KEYFILE_X509, TRUE, FALSE, FALSE, CRYPT_FORMAT_PGP ) )
+	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csg.pgp", KEYFILE_X509, TRUE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_PGP ) )
 		return( FALSE );	/* PGP format, certificate */
 #if 0	/* 8/7/2012 Removed since it conflicts with the functionality for 
 					setting hash values for detached signatures.  This
 					capability was never documented in the manual so it's
 					unlikely that it was ever used */
-	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_hsg", KEYFILE_X509, TRUE, TRUE, FALSE, CRYPT_FORMAT_CRYPTLIB ) )
+	if( !envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_hsg", KEYFILE_X509, TRUE, TRUE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* Datasize, certificate, externally-suppl.hash */
 #endif /* 0 */
-	return( envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csg", KEYFILE_X509, TRUE, FALSE, TRUE, CRYPT_FORMAT_CRYPTLIB ) );
+	return( envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csg", KEYFILE_X509, TRUE, FALSE, TRUE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_CRYPTLIB ) );
 	}						/* Externally-supplied key, to test isolation of sig.check key */
 
 static int envelopeAlgoSign( const char *dumpFileName,
@@ -2335,7 +2704,7 @@ static int envelopeAlgoSign( const char *dumpFileName,
 			break;
 
 		case CRYPT_ALGO_ECDSA:
-			if( !loadECDSAContexts( &sigCheckKey, &sigKey ) )
+			if( !loadECDSAContexts( CRYPT_UNUSED, &sigCheckKey, &sigKey ) )
 				return( FALSE );
 			break;
 
@@ -2392,7 +2761,7 @@ static int envelopeAlgoSign( const char *dumpFileName,
 	return( TRUE );
 	}
 
-int testEnvelopeSignAlgo( void )
+int testEnvelopeSignAlgos( void )
 	{
 	if( !envelopeAlgoSign( "env_sig_rsa", CRYPT_ALGO_RSA ) )
 		return( FALSE );
@@ -2402,6 +2771,14 @@ int testEnvelopeSignAlgo( void )
 		!envelopeAlgoSign( "env_sig_ecc", CRYPT_ALGO_ECDSA ) )
 		return( FALSE );
 	return( TRUE );
+	}
+
+/* Test envelope signing with automatic upgrade of the signing algorithm to
+   SHA256 */
+
+int testEnvelopeSignHashUpgrade( void )
+	{
+	return( envelopeSign( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, "env_csgh", KEYFILE_X509_ALT, TRUE, FALSE, FALSE, CRYPT_CONTENT_NONE, CRYPT_FORMAT_CRYPTLIB ) );
 	}
 
 /* Test signed envelope with forced envelope buffer overflow */
@@ -2567,23 +2944,98 @@ int testEnvelopeSignOverflow( void )
 	return( envelopeSignOverflow( buffer, 8192 - 1280, "env_csgo2", CRYPT_FORMAT_SMIME, "signature" ) );
 	}						/* Datasize, certificate, S/MIME semantics */
 
+/* Test the ability to process indefinite-length data with a break at every 
+   byte position in the file */
+
+int testEnvelopeSignIndef( void )
+	{
+	int count, bufPos, status;
+
+	puts( "Testing ability to process indefinite-length data at any byte "
+		  "position..." );
+
+	/* Read the data to be checked */
+	count = readFileData( SMIME_SIG_FILE_INDEF, 
+						  "Indefinite-length signed data", globalBuffer, 
+						  BUFFER_SIZE );
+	if( count <= 0 )
+		return( FALSE );
+
+	/* De-envelope the data, breaking the data quantity at every byte
+	   position */
+	for( bufPos = 1; bufPos < count; bufPos++ )
+		{
+		CRYPT_ENVELOPE cryptEnvelope;
+		int byteCount;
+
+		if( !createDeenvelope( &cryptEnvelope ) )
+			return( FALSE );
+		printf( "Testing byte position %d.\r", bufPos );
+
+		/* Push the first half of the data */
+		status = cryptPushData( cryptEnvelope, globalBuffer, bufPos, 
+								&byteCount );
+		if( cryptStatusError( status ) )
+			{
+			/* If we get an underflow error within the header or trailer 
+			   then everything's OK and we can continue */
+			if( status == CRYPT_ERROR_UNDERFLOW && \
+				( bufPos < 50 || bufPos > 69 ) )
+				{
+				/* We're in the middle of the header or trailer, a 
+				   CRYPT_ERROR_UNDERFLOW is expected if we break at this 
+				   point */
+				}
+			else
+				return( FALSE );
+			}
+		if( byteCount != bufPos )
+			return( FALSE );
+
+		/* Push the second half of the data */
+		status = cryptPushData( cryptEnvelope, globalBuffer + bufPos, 
+								count - bufPos, &byteCount );
+		if( cryptStatusOK( status ) )
+			status = cryptFlushData( cryptEnvelope );
+		if( cryptStatusError( status ) )
+			return( FALSE );
+		if( byteCount != count - bufPos )
+			return( FALSE );
+
+		/* Destroy the envelope.  Since we haven't processed the signed data
+		   we'll get a CRYPT_ERROR_INCOMPLETE, so we ignore any error 
+		   result */
+		( void ) cryptDestroyEnvelope( cryptEnvelope );
+		}
+
+	puts( "Ability to process indefinite-length data at any byte position "
+		  "succeeded.\n" );
+	return( TRUE );
+	}
+
 /* Test authenticated (MACd/authEnc) enveloping */
 
 static int envelopeAuthent( const void *data, const int dataLength,
 							const CRYPT_FORMAT_TYPE formatType,
 							const BOOLEAN useAuthEnc, 
 							const BOOLEAN useDatasize,
+							const BOOLEAN usePKC,
 							const int corruptDataLocation )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	BOOLEAN corruptionDetected = FALSE;
-	int count, integrityLevel;
+	int count, integrityLevel, status;
 
 	printf( "Testing %sauthenticated%s enveloping", 
 			( formatType == CRYPT_FORMAT_PGP ) ? "PGP-format " : "",
 			useAuthEnc ? "+encrypted" : "" );
-	if( useDatasize )
-		printf( " with datasize hint" );
+	if( corruptDataLocation )
+		printf( " with deliberate corruption of data" );
+	else
+		{
+		if( useDatasize )
+			printf( " with datasize hint" );
+		}
 	puts( "..." );
 
 	/* Create the envelope and push in the password after telling the
@@ -2592,10 +3044,54 @@ static int envelopeAuthent( const void *data, const int dataLength,
 		return( FALSE );
 	if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_INTEGRITY,
 							useAuthEnc ? CRYPT_INTEGRITY_FULL : \
-										 CRYPT_INTEGRITY_MACONLY ) || \
-		!addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD,
-						   TEST_PASSWORD, paramStrlen( TEST_PASSWORD ) ) )
+										 CRYPT_INTEGRITY_MACONLY ) )
+		{
+		cryptDestroyEnvelope( cryptEnvelope );
+		if( formatType == CRYPT_FORMAT_PGP && !useAuthEnc )
+			{
+			puts( "  (This is an expected result since this test verifies "
+				  "rejection of an\n   attempt to use a MAC with PGP).\n" );
+			return( TRUE );
+			}
 		return( FALSE );
+		}
+	if( usePKC )
+		{
+		CRYPT_CONTEXT cryptKey;
+
+		status = getPublicKey( &cryptKey, USER_PRIVKEY_FILE, 
+							   USER_PRIVKEY_LABEL );
+		if( cryptStatusError( status ) )
+			return( FALSE );
+		if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_PUBLICKEY,
+								cryptKey ) )
+			{
+			cryptDestroyContext( cryptKey );
+			cryptDestroyEnvelope( cryptEnvelope );
+			if( formatType == CRYPT_FORMAT_CRYPTLIB && !useAuthEnc )
+				{
+				puts( "  (This is an expected result since this test "
+					  "verifies rejection of an\n   attempt to use a PKC "
+					  "with a MAC-only envelope).\n" );
+				return( TRUE );
+				}
+			return( FALSE );
+			}
+		cryptDestroyContext( cryptKey );
+		}
+	else
+		{
+		if( !addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD,
+							   TEST_PASSWORD, paramStrlen( TEST_PASSWORD ) ) )
+			return( FALSE );
+		}
+	if( formatType == CRYPT_FORMAT_PGP && !useAuthEnc )
+		{
+		printf( "Invalid attempt to use MAC-only authentication for "
+				"PGP-enveloped data wasn't\ndetected, line %d.\n", 
+				__LINE__ );
+		return( FALSE );
+		}
 
 	/* Push in the data, pop the enveloped result, and destroy the
 	   envelope */
@@ -2616,8 +3112,9 @@ static int envelopeAuthent( const void *data, const int dataLength,
 	/* Tell them what happened */
 	printf( "Enveloped data has size %d bytes.\n", count );
 	debugDump( ( formatType == CRYPT_FORMAT_PGP ) ? "env_mdc.pgp" : \
-			   useAuthEnc ? "env_authenc" : \
-			   useDatasize ? "env_mac" : "env_macn", globalBuffer, count );
+			   useAuthEnc ? ( usePKC ? "env_authenp" : "env_authenc" ) : \
+			   useDatasize ? "env_mac" : usePKC ? "env_macp" : "env_macn", 
+			   globalBuffer, count );
 
 	/* If we're testing sig.verification, corrupt one of the payload bytes.  
 	   This is a bit tricky because we have to hardcode the location of the
@@ -2629,10 +3126,33 @@ static int envelopeAuthent( const void *data, const int dataLength,
 	/* Create the envelope */
 	if( !createDeenvelope( &cryptEnvelope ) )
 		return( FALSE );
+	if( usePKC )
+		{
+		CRYPT_KEYSET cryptKeyset;
+
+		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, 
+								  CRYPT_KEYSET_FILE, USER_PRIVKEY_FILE, 
+								  CRYPT_KEYOPT_READONLY );
+		if( cryptStatusError( status ) )
+			return( FALSE );
+		if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_KEYSET_DECRYPT, 
+								cryptKeyset ) )
+			return( FALSE );
+		cryptKeysetClose( cryptKeyset );
+		}
 
 	/* Push in the data */
-	count = pushData( cryptEnvelope, globalBuffer, count, 
-					  TEST_PASSWORD, paramStrlen( TEST_PASSWORD ) );
+	if( usePKC )
+		{
+		count = pushData( cryptEnvelope, globalBuffer, count, 
+						  TEST_PRIVKEY_PASSWORD, 
+						  paramStrlen( TEST_PRIVKEY_PASSWORD ) );
+		}
+	else
+		{
+		count = pushData( cryptEnvelope, globalBuffer, count, 
+						  TEST_PASSWORD, paramStrlen( TEST_PASSWORD ) );
+		}
 	if( cryptStatusError( count ) )
 		{
 		if( corruptDataLocation && count == CRYPT_ERROR_SIGNATURE )
@@ -2691,24 +3211,55 @@ static int envelopeAuthent( const void *data, const int dataLength,
 
 int testEnvelopeAuthenticate( void )
 	{
-	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, FALSE, FALSE, FALSE ) )
+	int macAlgo, status;
+
+	/* Find out what the default MAC algorithm is.  This is required because 
+	   the data location that we corrupt changes based on the MAC algorithm 
+	   used */
+	status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_MAC, &macAlgo );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	/* MAC-only envelopes are currently only supported via password (or at 
+	   least shared-key) key management, using a PKC implies encrypt+MAC.
+	   It's also somewhat unclear what the benefits of using a PKC for a MAC
+	   are, so until there's a demand for this we only allow use with
+	   passwords */
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, FALSE, FALSE, FALSE, 0 ) )
 		return( FALSE );	/* Indefinite length */
-	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, FALSE, TRUE, FALSE ) )
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, FALSE, TRUE, FALSE, 0 ) )
 		return( FALSE );	/* Datasize */
-	return( envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, FALSE, TRUE, 175 ) );
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, FALSE, TRUE, TRUE, 0 ) )
+		return( FALSE );	/* Datasize, PKC to check rejection of this format */
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_PGP, FALSE, TRUE, FALSE, 0 ) )
+		return( FALSE );	/* PGP format to check rejection of this format */
+	return( envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, FALSE, TRUE, FALSE, ( macAlgo == CRYPT_ALGO_HMAC_SHA1 ) ? 175 : 208 ) );
 	}						/* Datasize, corrupt data to check sig.verification */
 
 int testEnvelopeAuthEnc( void )
 	{
-	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, FALSE, FALSE ) )
+	int macAlgo, status;
+
+	/* Find out what the default MAC algorithm is.  This is required because 
+	   the data location that we corrupt changes based on the MAC algorithm 
+	   used */
+	status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_MAC, &macAlgo );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, FALSE, FALSE, 0 ) )
 		return( FALSE );	/* Indefinite length */
-	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, TRUE, FALSE ) )
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, TRUE, FALSE, 0 ) )
 		return( FALSE );	/* Datasize */
-	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_PGP, TRUE, TRUE, FALSE ) )
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, TRUE, TRUE, 0 ) )
+		return( FALSE );	/* Datasize, PKC */
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_PGP, TRUE, TRUE, FALSE, 0 ) )
 		return( FALSE );	/* PGP format */
-	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, TRUE, 192 ) )
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_PGP, TRUE, TRUE, TRUE, 0 ) )
+		return( FALSE );	/* PGP format, PKC */
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, TRUE, FALSE, ( macAlgo == CRYPT_ALGO_HMAC_SHA1 ) ? 192 : 260 ) )
 		return( FALSE );	/* Datasize, corrupt payload data to check sig.verification */
-	return( envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, TRUE, 170 ) );
+	return( envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, CRYPT_FORMAT_CRYPTLIB, TRUE, TRUE, FALSE, ( macAlgo == CRYPT_ALGO_HMAC_SHA1 ) ? 170 : 228 ) );
 	}						/* Datasize, corrupt metadata to check sig.verification */
 
 /****************************************************************************
@@ -2780,15 +3331,14 @@ static int displaySigResult( const CRYPT_ENVELOPE cryptEnvelope,
 	return( sigStatus );
 	}
 
-static int cmsEnvelopeSigCheck( const void *signedData,
-								const int signedDataLength,
-								const CRYPT_CONTEXT sigCheckContext,
-								const CRYPT_CONTEXT hashContext,
-								const BOOLEAN detachedSig,
-								const BOOLEAN hasTimestamp,
-								const BOOLEAN checkData,
-								const BOOLEAN mustHaveAttributes,
-								const BOOLEAN checkWrongKey )
+static int cmsEnvelopeSigCheck( const void *signedData, 
+				const int signedDataLength, 
+				const CRYPT_CONTEXT sigCheckContext, 
+				const CRYPT_CONTEXT hashContext, const BOOLEAN detachedSig,
+				const BOOLEAN hasTimestamp, const BOOLEAN checkData,
+				const BOOLEAN mustHaveAttributes, const BOOLEAN checkWrongKey,
+				const BOOLEAN testRefCount )
+
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	int count, status;
@@ -2837,8 +3387,10 @@ static int cmsEnvelopeSigCheck( const void *signedData,
 		if( detachedSig )
 			{
 			if( hashContext == CRYPT_UNUSED )
+				{
 				count = pushData( cryptEnvelope, ENVELOPE_TESTDATA,
 								  ENVELOPE_TESTDATA_SIZE, NULL, 0 );
+				}
 			}
 		else
 			count = popData( cryptEnvelope, globalBuffer, BUFFER_SIZE );
@@ -2926,8 +3478,100 @@ static int cmsEnvelopeSigCheck( const void *signedData,
 							   CRYPT_CURSOR_NEXT ) ) )
 		{
 		/* We can have two, but not three */
-		puts( "Data appears to have (nonexistent) third signature." );
+		printf( "Data appears to have (nonexistent) third signature, "
+				"line %d.\n", __LINE__ );
 		return( FALSE );
+		}
+
+	/* If we're testing the ability to handle reference-counted objects, 
+	   create multiple references to the certificate object in the signed
+	   data and make sure they're accessible */
+	if( testRefCount )
+		{
+		CRYPT_CERTIFICATE cryptCert1, cryptCert2, cryptCert3;
+		int value;
+
+		/* Create three references to the signing certificate */
+		status = cryptGetAttribute( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE, 
+									&cryptCert1 );
+		if( cryptStatusOK( status ) )
+			status = cryptGetAttribute( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE, 
+										&cryptCert2 );
+		if( cryptStatusOK( status ) )
+			status = cryptGetAttribute( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE, 
+										&cryptCert3 );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't retrieve 3 copies of signing certificate from "
+					"envelope, line %d.\n", __LINE__ );
+			return( FALSE );
+			}
+		if( cryptCert1 != cryptCert2 || cryptCert1 != cryptCert3 )
+			{
+			printf( "Multiple-referenced object has different object "
+					"handles, line %d.\n", __LINE__ );
+			return( FALSE );
+			}
+
+		/* Destroy the second reference and make sure that it's still
+		   accessible via both itself and another reference */
+		status = cryptDestroyCert( cryptCert2 );
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptGetAttribute( cryptCert2, CRYPT_CERTINFO_CERTTYPE, 
+										&value );
+			}
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptGetAttribute( cryptCert1, CRYPT_CERTINFO_CERTTYPE, 
+										&value );
+			}
+		if( cryptStatusError( status ) )
+			{
+			printf( "Removing signing certificate reference caused "
+					"consistency failure, line %d.\n", __LINE__ );
+			return( FALSE );
+			}
+
+		/* Destroy the original reference and make sure that it's no longer 
+		   accessible but other references are */
+		status = cryptDestroyCert( cryptCert1 );
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptGetAttribute( cryptCert1, CRYPT_CERTINFO_CERTTYPE, 
+										&value );
+			}
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptGetAttribute( cryptCert3, CRYPT_CERTINFO_CERTTYPE, 
+										&value );
+			}
+		if( cryptStatusError( status ) )
+			{
+			printf( "Removing signing certificate reference caused "
+					"consistency failure, line %d.\n", __LINE__ );
+			return( FALSE );
+			}
+
+		/* Destroy the last reference and make sure that it's now 
+		   inaccessible */
+		status = cryptDestroyCert( cryptCert1 );
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptGetAttribute( cryptCert1, CRYPT_CERTINFO_CERTTYPE, 
+										&value );
+			status = cryptStatusError( status ) ? \
+					 CRYPT_OK : CRYPT_ERROR_FAILED;
+			}
+		if( cryptStatusError( status ) )
+			{
+			printf( "Removing signing certificate reference caused "
+					"consistency failure, line %d.\n", __LINE__ );
+			return( FALSE );
+			}
+
+		/* Remember that everything went OK */
+		status = TRUE;
 		}
 
 	/* Make sure that the result matches what we pushed */
@@ -2946,7 +3590,8 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 				const BOOLEAN useAttributes, const BOOLEAN useExtAttributes,
 				const BOOLEAN detachedSig, const int externalHashLevel,
 				const BOOLEAN useTimestamp, const BOOLEAN useNonDataContent,
-				const BOOLEAN dualSig, const CRYPT_CONTEXT externalSignContext,
+				const BOOLEAN dualSig, const BOOLEAN testRefCount,
+				const CRYPT_CONTEXT externalSignContext,
 				const CRYPT_FORMAT_TYPE formatType )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
@@ -2967,17 +3612,19 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 				dualSig ? "dual signature" : "signed enveloping" );
 	if( useNonDataContent )
 		printf( " of non-data content" );
+	if( testRefCount )
+		printf( " for reference-count capability check" );
 	if( externalHashLevel )
 		{
 		printf( ( externalHashLevel == 1 ) ? \
 				" with externally-supplied hash for verify" : \
 				" with ext-supplied hash for sign and verify" );
 		}
-	if( !isPGP && !useAttributes )
+	if( !isPGP && !( useAttributes || testRefCount ) )
 		printf( " without signing attributes" );
 	if( useDatasize && \
 		!( useNonDataContent || useAttributes || useExtAttributes || \
-		   detachedSig || useTimestamp ) )
+		   detachedSig || useTimestamp || testRefCount ) )
 		{
 		/* Keep the amount of stuff being printed down */
 		printf( " with datasize hint" );
@@ -3018,8 +3665,13 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 	   it now */
 	if( externalHashLevel > 1 )
 		{
-		status = cryptCreateContext( &hashContext, CRYPT_UNUSED,
-									 CRYPT_ALGO_SHA1 );
+		int hashAlgo;
+
+		status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, 
+									&hashAlgo );
+		if( cryptStatusOK( status ) )
+			status = cryptCreateContext( &hashContext, CRYPT_UNUSED,
+										 hashAlgo );
 		if( cryptStatusOK( status ) )
 			status = cryptEncrypt( hashContext, ENVELOPE_TESTDATA,
 								   ENVELOPE_TESTDATA_SIZE );
@@ -3038,18 +3690,24 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 	if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
 							cryptContext ) )
 		return( FALSE );
-	if( dualSig &&
-		!addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
-							cryptContext2 ) )
-		return( FALSE );
-	if( detachedSig && \
-		!addEnvInfoNumeric( cryptEnvelope, 
-							CRYPT_ENVINFO_DETACHEDSIGNATURE, TRUE ) )
-		return( FALSE );
-	if( externalHashLevel > 1 && \
-		!addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_HASH,
-							hashContext ) )
-		return( FALSE );
+	if( dualSig )
+		{
+		if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
+								cryptContext2 ) )
+			return( FALSE );
+		}
+	if( detachedSig )
+		{
+		if( !addEnvInfoNumeric( cryptEnvelope, 
+								CRYPT_ENVINFO_DETACHEDSIGNATURE, TRUE ) )
+			return( FALSE );
+		}
+	if( externalHashLevel > 1 )
+		{
+		if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_HASH,
+								hashContext ) )
+			return( FALSE );
+		}
 	if( ( externalSignContext == CRYPT_UNUSED ) && !isPGP && !isRawCMS )
 		cryptDestroyContext( cryptContext );
 	if( dualSig )
@@ -3162,10 +3820,12 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 
 	/* Push in the data to be signed, unless it's already been processed via
 	   an external hash */
-	if( !( externalHashLevel > 1 ) )
+	if( externalHashLevel < 2 )
 		{
-		status = count = pushData( cryptEnvelope, ENVELOPE_TESTDATA,
-								   ENVELOPE_TESTDATA_SIZE, NULL, 0 );
+		status = pushData( cryptEnvelope, ENVELOPE_TESTDATA,
+						   ENVELOPE_TESTDATA_SIZE, NULL, 0 );
+		if( cryptStatusError( status ) )
+			return( FALSE );
 		}
 	if( !isPGP && !useAttributes )
 		{
@@ -3218,8 +3878,13 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 	   calculate it now */
 	if( externalHashLevel > 0 )
 		{
-		status = cryptCreateContext( &hashContext, CRYPT_UNUSED,
-									 CRYPT_ALGO_SHA1 );
+		int hashAlgo;
+
+		status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, 
+									&hashAlgo );
+		if( cryptStatusOK( status ) )
+			status = cryptCreateContext( &hashContext, CRYPT_UNUSED,
+										 hashAlgo );
 		if( cryptStatusOK( status ) )
 			status = cryptEncrypt( hashContext, ENVELOPE_TESTDATA,
 								   ENVELOPE_TESTDATA_SIZE );
@@ -3236,10 +3901,10 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 	   of useNonDataContent is because we're performing an additional check
 	   of envelope key-handling as part of this particular operation */
 	status = cmsEnvelopeSigCheck( globalBuffer, count,
-								  isPGP || isRawCMS ? cryptContext : CRYPT_UNUSED,
-								  hashContext, detachedSig, useTimestamp, TRUE,
-								  useAttributes, useNonDataContent ? \
-												 TRUE : FALSE );
+					isPGP || isRawCMS ? cryptContext : CRYPT_UNUSED, 
+					hashContext, detachedSig, useTimestamp, TRUE, 
+					useAttributes, useNonDataContent ? TRUE : FALSE, 
+					testRefCount );
 	if( externalHashLevel > 0 )
 		cryptDestroyContext( hashContext );
 	if( isPGP || isRawCMS )
@@ -3265,42 +3930,50 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 
 int testCMSEnvelopeSign( void )
 	{
-	if( !cmsEnvelopeSign( FALSE, FALSE, FALSE, FALSE, 0, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( FALSE, FALSE, FALSE, FALSE, 0, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Minimal (no default S/MIME attributes) */
-	if( !cmsEnvelopeSign( FALSE, TRUE, FALSE, FALSE, 0, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( FALSE, TRUE, FALSE, FALSE, 0, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Standard (default S/MIME signing attributes) */
-	if( !cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, 0, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, 0, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Datasize and attributes */
-	if( !cmsEnvelopeSign( FALSE, TRUE, TRUE, FALSE, 0, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( FALSE, TRUE, TRUE, FALSE, 0, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Extended signing attributes */
-	if( !cmsEnvelopeSign( TRUE, TRUE, TRUE, FALSE, 0, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( TRUE, TRUE, TRUE, FALSE, 0, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Datasize and extended attributes */
-	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, 0, FALSE, TRUE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) );
+	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, 0, FALSE, TRUE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) );
 	}						/* Signing of non-data content */
 
 int testCMSEnvelopeDualSign( void )
 	{
-	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) );
+	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) );
 							/* Standard, with two signatures */
 	}
 
 int testCMSEnvelopeDetachedSig( void )
 	{
-	if( !cmsEnvelopeSign( FALSE, TRUE, FALSE, TRUE, 0, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( FALSE, TRUE, FALSE, TRUE, 0, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Detached sig and attributes */
-	if( !cmsEnvelopeSign( FALSE, TRUE, FALSE, TRUE, 1, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( FALSE, TRUE, FALSE, TRUE, 1, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Detached sig, attributes, externally-suppl.hash for verify */
-	if( !cmsEnvelopeSign( FALSE, TRUE, FALSE, TRUE, 2, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( FALSE, TRUE, FALSE, TRUE, 2, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Detached sig, externally-suppl.hash for sign and verify */
-	if( !cmsEnvelopeSign( TRUE, FALSE, FALSE, TRUE, 1, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_PGP ) )
+	if( !cmsEnvelopeSign( TRUE, FALSE, FALSE, TRUE, 1, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_PGP ) )
 		return( FALSE );	/* Detached sig, data size, externally-suppl.hash for verify, PGP format */
-	return( cmsEnvelopeSign( TRUE, FALSE, FALSE, TRUE, 2, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_PGP ) );
+	return( cmsEnvelopeSign( TRUE, FALSE, FALSE, TRUE, 2, FALSE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_PGP ) );
 	}						/* Detached sig, data size, externally-suppl.hash for sign and verify, PGP format */
 
 int testCMSEnvelopeSignEx( const CRYPT_CONTEXT signContext )
 	{
-	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, signContext, CRYPT_FORMAT_CMS ) );
+	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, signContext, CRYPT_FORMAT_CMS ) );
 	}						/* Datasize, attributes, external signing context */
+
+int testCMSEnvelopeRefCount( void )
+	{
+	/* This isn't so much a signature test as a test of the reference-
+	   counting mechanism in the cryptlib kernel, but it uses a CMS 
+	   signature with associated certificate data for the test */
+	return( cmsEnvelopeSign( TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) );
+	}
 
 int testSessionEnvTSP( void )
 	{
@@ -3308,9 +3981,9 @@ int testSessionEnvTSP( void )
 	   functionality but is called as part of the session tests since full
 	   testing of the TSP handling requires that it be used to timestamp an
 	   S/MIME sig */
-	if( !cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
+	if( !cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) )
 		return( FALSE );	/* Datasize, attributes, timestamp */
-	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CRYPTLIB ) );
+	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CRYPTLIB ) );
 	}						/* Invalid attempt to use attrs.with raw CMS envelope */
 
 static int cmsImportSignedData( const char *fileName, const int fileNo )
@@ -3342,7 +4015,7 @@ static int cmsImportSignedData( const char *fileName, const int fileNo )
 	/* Check the signature on the data */
 	status = cmsEnvelopeSigCheck( bufPtr, count, CRYPT_UNUSED, CRYPT_UNUSED,
 								  FALSE, FALSE, FALSE, 
-								  ( fileNo == 1 ) ? FALSE : TRUE, FALSE );
+								  ( fileNo == 1 ) ? FALSE : TRUE, FALSE, FALSE );
 	if( bufPtr != globalBuffer )
 		free( bufPtr );
 	if( status )
@@ -3393,9 +4066,10 @@ static int cmsEnvelopeDecrypt( const void *envelopedData,
 		return( FALSE );
 
 	/* Push in the data */
+	if( externalPassword == NULL )
+		externalPassword = TEST_PRIVKEY_PASSWORD;
 	count = pushData( cryptEnvelope, envelopedData, envelopedDataLength,
-					  ( externalPassword == NULL ) ? TEST_PRIVKEY_PASSWORD :
-					  externalPassword, 0 );
+					  externalPassword, paramStrlen( externalPassword ) );
 	if( cryptStatusError( count ) )
 		return( FALSE );
 	count = popData( cryptEnvelope, globalBuffer, BUFFER_SIZE );
@@ -3483,28 +4157,11 @@ static int cmsEnvelopeCrypt( const char *dumpFileName,
 		{
 		if( recipientName == NULL )
 			{
-			CRYPT_KEYSET cryptKeyset;
-
 			/* No recipient name, get the public key */
-			status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
-									  CRYPT_KEYSET_FILE, USER_PRIVKEY_FILE,
-									  CRYPT_KEYOPT_READONLY );
+			status = getPublicKey( &cryptKey, USER_PRIVKEY_FILE, 
+								   USER_PRIVKEY_LABEL );
 			if( cryptStatusError( status ) )
-				{
-				printf( "Recipient keyset open failed with status %d, "
-						"line %d.\n", status, __LINE__ );
 				return( FALSE );
-				}
-			status = cryptGetPublicKey( cryptKeyset, &cryptKey, 
-										CRYPT_KEYID_NAME,
-										USER_PRIVKEY_LABEL );
-			cryptKeysetClose( cryptKeyset );
-			if( cryptStatusError( status ) )
-				{
-				printf( "Read of public key from key file failed with "
-						"status %d, line %d.\n", status, __LINE__ );
-				return( FALSE );
-				}
 			}
 		}
 
@@ -4341,9 +4998,10 @@ static void dataImport( void *buffer, const int length,
 						const BOOLEAN resultBad )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
-	int count;
+	int count, status;
 
-	createDeenvelope( &cryptEnvelope );
+	status = createDeenvelope( &cryptEnvelope );
+	assert( status == TRUE );
 	count = pushData( cryptEnvelope, buffer, length, NULL, 0 );
 	if( resultBad )
 		{
@@ -4353,7 +5011,8 @@ static void dataImport( void *buffer, const int length,
 	assert( !cryptStatusError( count ) );
 	count = popData( cryptEnvelope, buffer, length );
 	assert( !cryptStatusError( count ) );
-	destroyEnvelope( cryptEnvelope );
+	status = destroyEnvelope( cryptEnvelope );
+	assert( status == TRUE );
 	}
 
 void xxxDataImport( const char *fileName )
@@ -4390,7 +5049,7 @@ void xxxSignedDataImport( const char *fileName )
 	count = readFileData( fileName, "S/MIME test data", bufPtr, count );
 	assert( count > 0 );
 	status = cmsEnvelopeSigCheck( bufPtr, count, CRYPT_UNUSED, CRYPT_UNUSED, 
-								  FALSE, FALSE, FALSE, FALSE, FALSE );
+								  FALSE, FALSE, FALSE, FALSE, FALSE, FALSE );
 	assert( status > 0 );
 	if( bufPtr != globalBuffer )
 		free( bufPtr );

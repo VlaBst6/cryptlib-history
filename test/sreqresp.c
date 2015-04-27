@@ -163,7 +163,6 @@ static int connectCertstoreClient( void )
 		return( CRYPT_ERROR_FAILED );
 		}
 
-
 	/* Read a present certificate from the keyset using the ASCII email
 	   address */
 	status = cryptGetPublicKey( cryptKeyset, &cryptCert, CRYPT_KEYID_EMAIL,
@@ -380,6 +379,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			{
 			printf( "Couldn't read certificate for RTCS status check, error "
 					"code %d, line %d.\n", status, __LINE__ );
+			puts( "  (Has the testCertManagement() code been run?)." );
 			return( FALSE );
 			}
 
@@ -625,7 +625,7 @@ int testSessionRTCSClientServer( void )
 #elif OCSP_SERVER_NO == 5
   #define OCSP_SERVER_NAME	TEXT( "http://ocsp.verisign.com/ocsp/status" )
 #elif OCSP_SERVER_NO == 7
-  #define OCSP_SERVER_NAME	TEXT( "http://142.176.86.157/ocsp" )
+	#define OCSP_SERVER_NAME	TEXT( "http://142.176.86.157/ocsp" )
 #endif /* OCSP server name kludge */
 
 /* Perform an OCSP test */
@@ -711,6 +711,17 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_NOTAVAIL );
 			}
+		if( status == CRYPT_ERROR_OPEN )
+			{
+			/* This is the first of the loopback tests that requires the 
+			   presence of a certificate store (created by previous tests), 
+			   if we can't open it then we report the issue in a situation-
+			   specific manner */
+			puts( "SVR: Can't open certificate store, have the earlier "
+				  "tests that create this\n     been run?\n" );
+			cryptDestroySession( cryptSession );
+			return( status );
+			}
 		if( cryptStatusOK( status ) )
 			{
 			status = cryptSetAttribute( cryptSession,
@@ -789,9 +800,12 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 		}
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
 #if OCSP_SERVER_NO == 7
-	/* Restore normal certificate processing */
-	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-					   complianceValue );
+	if( !isServer )
+		{
+		/* Restore normal certificate processing */
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   complianceValue );
+		}
 #endif /* OCSP servers that return broken resposnes */
 	if( isServer )
 		printConnectInfo( cryptSession );
@@ -1184,8 +1198,12 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 			localSession ? "local " : "" );
 
 	/* Acquire the init mutex if we're the server */
-	if( localSession && isServer )
-		waitMutex();
+	if( localSession && isServer && waitMutex() == CRYPT_ERROR_TIMEOUT )
+		{
+		printf( "Timed out waiting for server to initialise, line %d.\n",
+				__LINE__ );
+		return( FALSE );
+		}		
 
 	/* Create the TSP session */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, sessionType );

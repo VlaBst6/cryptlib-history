@@ -88,15 +88,28 @@ static const CERT_DATA FAR_BSS sqlCertData[] = {
 enum { READ_OPTION_NORMAL, READ_OPTION_MULTIPLE };
 
 static int checkKeysetCRL( const CRYPT_KEYSET cryptKeyset,
-						   const CRYPT_CERTIFICATE cryptCert )
+						   const CRYPT_CERTIFICATE cryptCert,
+						   const BOOLEAN isCertChain )
 	{
 	int errorLocus, status;
 
 	/* Perform a revocation check against the CRL in the keyset */
-	puts( "Checking certificate against CRL." );
+	printf( "Checking certificate%s against CRL.\n", 
+			isCertChain ? " chain" : "" );
 	status = cryptCheckCert( cryptCert, cryptKeyset );
 	if( cryptStatusOK( status ) )
 		return( TRUE );
+	if( isCertChain )
+		{
+		/* Checking a chain against a keyset doesn't really make sense, so
+		   this should be rejected */
+		if( status == CRYPT_ERROR_PARAM2 )
+			return( TRUE );
+
+		printf( "Check of certificate chain against keyset returned %d, "
+				"should have been %d.\n", status, CRYPT_ERROR_PARAM2 );
+		return( FALSE );
+		}
 	if( status != CRYPT_ERROR_INVALID )
 		{
 		return( extErrorExit( cryptKeyset, "cryptCheckCert() (for CRL in "
@@ -138,6 +151,7 @@ static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CERTIFICATE cryptCert;
+	BOOLEAN isCertChain = FALSE;
 	int value, status;
 
 	/* Open the keyset with a check to make sure this access method exists
@@ -187,11 +201,10 @@ static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 				type, value, __LINE__ );
 		return( FALSE );
 		}
+	if( value == CRYPT_CERTTYPE_CERTCHAIN )
+		isCertChain = TRUE;
 	if( value == CRYPT_CERTTYPE_CERTCHAIN || value == CRYPT_CERTTYPE_CRL )
 		{
-		const BOOLEAN isCertChain = ( value == CRYPT_CERTTYPE_CERTCHAIN ) ? \
-									TRUE : FALSE;
-
 		value = 0;
 		cryptSetAttribute( cryptCert, CRYPT_CERTINFO_CURRENT_CERTIFICATE,
 						   CRYPT_CURSOR_FIRST );
@@ -209,7 +222,7 @@ static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 	if( keysetType != CRYPT_KEYSET_LDAP && \
 		keysetType != CRYPT_KEYSET_HTTP )
 		{
-		if( !checkKeysetCRL( cryptKeyset, cryptCert ) )
+		if( !checkKeysetCRL( cryptKeyset, cryptCert, isCertChain ) )
 			return( FALSE );
 		}
 	cryptDestroyCert( cryptCert );

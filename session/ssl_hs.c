@@ -313,31 +313,40 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* If we're the server then our choice of possible suites is constrained 
 	   by the server key that we're using, figure out what we can use */
-	if( isServer && sessionInfoPtr->privateKey != CRYPT_ERROR )
+	if( isServer )
 		{
-		int pkcAlgo;
-
-		/* To be usable for DH/ECC the server key has to be signature-
-		   capable */
-		status = krnlSendMessage( sessionInfoPtr->privateKey, 
-								  IMESSAGE_CHECK, NULL, 
-								  MESSAGE_CHECK_PKC_SIGN );
-		if( cryptStatusError( status ) )
-			allowDH = allowECC = FALSE;
-
-		/* To be usable for ECC or RSA the server key has to itself be an 
-		   ECC or RSA key */
-		status = krnlSendMessage( sessionInfoPtr->privateKey, 
-								  IMESSAGE_GETATTRIBUTE, &pkcAlgo,
-								  CRYPT_CTXINFO_ALGO );
-		if( cryptStatusError( status ) )
+		if( sessionInfoPtr->privateKey == CRYPT_ERROR )
+			{
+			/* There's no server private key present, we're limited to PSK
+			   suites */
 			allowECC = allowRSA = FALSE;
+			}
 		else
 			{
-			if( !isEccAlgo( pkcAlgo ) )
-				allowECC = FALSE;
-			if( pkcAlgo != CRYPT_ALGO_RSA )
-				allowRSA = FALSE;
+			int pkcAlgo;
+
+			/* To be usable for DH/ECC the server key has to be signature-
+			   capable */
+			status = krnlSendMessage( sessionInfoPtr->privateKey, 
+									  IMESSAGE_CHECK, NULL, 
+									  MESSAGE_CHECK_PKC_SIGN );
+			if( cryptStatusError( status ) )
+				allowDH = allowECC = FALSE;
+
+			/* To be usable for ECC or RSA the server key has to itself be 
+			   an ECC or RSA key */
+			status = krnlSendMessage( sessionInfoPtr->privateKey, 
+									  IMESSAGE_GETATTRIBUTE, &pkcAlgo,
+									  CRYPT_CTXINFO_ALGO );
+			if( cryptStatusError( status ) )
+				allowECC = allowRSA = FALSE;
+			else
+				{
+				if( !isEccAlgo( pkcAlgo ) )
+					allowECC = FALSE;
+				if( pkcAlgo != CRYPT_ALGO_RSA )
+					allowRSA = FALSE;
+				}
 			}
 		}
 
@@ -394,6 +403,38 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 		if( newSuite < SSL_FIRST_VALID_SUITE || newSuite >= SSL_LAST_SUITE )
 			continue;
 
+		/* If it's a signalling suite, handle it specially */
+		if( newSuite >= TLS_SIGNALLING_FIRST && \
+			newSuite <= TLS_SIGNALLING_LAST )
+			{
+			switch( newSuite )
+				{
+				case TLS_FALLBACK_SCSV:
+					/* If the client has fallen back to a lower version and 
+					   has indicated this to us, and if this version is 
+					   lower than what we'd normally be using, abort the
+					   handshake with an insecure-fallback alert */
+					if( isServer && \
+						handshakeInfo->clientOfferedVersion < \
+							sessionInfoPtr->protocolInfo->maxVersion )
+						{
+						handshakeInfo->failAlertType = \
+											TLS_ALERT_INAPPROPRIATE_FALLBACK;
+						retExt( CRYPT_ERROR_NOSECURE,
+								( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
+								  "Client attempted insecure falback from "
+								  "protocol version %d to version %d",
+								  sessionInfoPtr->protocolInfo->maxVersion,
+								  handshakeInfo->clientOfferedVersion ) );
+						}
+					break;
+				}
+
+			/* Signalling suites aren't standard cipher suites so we don't 
+			   try and process anything else that we don't recognise */
+			continue;
+			}
+
 		/* When resuming a cached session the client is required to offer
 		   as one of its suites the original suite that was used.  There's
 		   no good reason for this requirement (it's probable that the spec
@@ -431,6 +472,8 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 #endif /* CONFIG_SUITEB */
 		if( cipherSuiteInfoPtr == NULL )
 			continue;
+		DEBUG_PRINT(( "Offered suite: %s.\n", 
+					  cipherSuiteInfoPtr->description ));
 
 		/* Perform a short-circuit check, if the new suite is inherently 
 		   less-preferred than what we've already got then there's no point 
@@ -482,7 +525,8 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 		   key present and the suite requires a private key then we can't 
 		   use this suite */
 		if( isServer && sessionInfoPtr->privateKey == CRYPT_ERROR && \
-			cipherSuiteInfoPtr->keyexAlgo != CRYPT_ALGO_NONE )
+			( cipherSuiteInfoPtr->keyexAlgo != CRYPT_ALGO_NONE && \
+			  !isKeyxAlgo( cipherSuiteInfoPtr->keyexAlgo ) ) ) 
 			continue;
 
 		/* If the new suite is more preferred (i.e. with a lower index) than 
@@ -498,12 +542,20 @@ static int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr,
 		if( cipherSuiteInfoPtr->flags & CIPHERSUITE_FLAG_ECC )
 			{
 			if( newSuiteIndex < altSuiteIndex )
+				{
 				altSuiteIndex = newSuiteIndex;
+				DEBUG_PRINT(( "Accepted suite: %s.\n", 
+							  cipherSuiteInfoPtr->description ));
+				}
 			}
 		else
 			{
 			if( newSuiteIndex < suiteIndex )
+				{
 				suiteIndex = newSuiteIndex;
+				DEBUG_PRINT(( "Accepted suite: %s.\n", 
+							  cipherSuiteInfoPtr->description ));
+				}
 			}
 		}
 
@@ -606,7 +658,7 @@ int processHelloSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	status = processVersionInfo( sessionInfoPtr, stream,
 								 isServer ? \
 									&handshakeInfo->clientOfferedVersion : \
-									NULL );
+									NULL, FALSE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -756,6 +808,7 @@ int processHelloSSL( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		else
 			{
+#ifdef PREFER_ECC
 			/* If the client has chosen an ECC suite and it hasn't 
 			   subsequently been disabled by an incompatible choice of 
 			   client-selected parameters, switch to the ECC suite.  If the
@@ -768,6 +821,7 @@ int processHelloSSL( INOUT SESSION_INFO *sessionInfoPtr,
 				if( cryptStatusError( status ) )
 					return( status );
 				}
+#endif /* PREFER_ECC */
 
 			/* If we're using an ECC cipher suite (either due to it being 
 			   the only suite available or because it was selected above) 

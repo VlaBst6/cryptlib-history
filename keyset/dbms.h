@@ -338,6 +338,11 @@ int getCertKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID,
 				  IN_LENGTH_SHORT_MIN( 16 ) const int keyIdMaxLen, 
 				  OUT_LENGTH_SHORT_Z int *keyIdLen,
 				  IN_HANDLE const CRYPT_CERTIFICATE iCryptCert );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int getPkiUserKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID, 
+					 IN_LENGTH_SHORT_MIN( 16 ) const int keyIdMaxLen, 
+					 OUT_LENGTH_SHORT_Z int *keyIdLen,
+					 IN_HANDLE const CRYPT_CERTIFICATE iCryptCert );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
 int extractCertData( IN_HANDLE const CRYPT_CERTIFICATE iCryptCert, 
 					 IN_INT const int formatType,

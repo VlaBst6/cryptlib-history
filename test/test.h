@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Test Routines Header File					*
-*						Copyright Peter Gutmann 1995-2012					*
+*						Copyright Peter Gutmann 1995-2014					*
 *																			*
 ****************************************************************************/
 
@@ -89,14 +89,16 @@
 			strncpy( fileName, __FILE__, 1000 ); \
 			fileName[ 999 ] = '\0'; \
 			__atoe( fileName ); \
-			printf( "Kludging " str ", file %s, line %d.\n", fileName, __LINE__ ); \
+			fprintf( outputStream, "Kludging " str ", file %s, line %d.\n", \
+					 fileName, __LINE__ ); \
 			}
 #else
   #define KLUDGE_WARN( str )	\
-			printf( "Kludging " str ", file " __FILE__ ", line %d.\n", __LINE__ );
+			fprintf( outputStream, "Kludging " str ", file " __FILE__ ", \
+					 line %d.\n", __LINE__ );
 #endif /* ASCII vs.EBCDIC strings */
 
-/* Include univerally-needed headers */
+/* Include universally-needed headers */
 
 #if defined( _WIN32_WCE ) && _WIN32_WCE < 400
   #define assert( x )
@@ -225,13 +227,13 @@
 
 #if defined( __MSDOS16__ ) || defined( __WIN16__ )
   #define BUFFER_SIZE			4096
-  #define FILEBUFFER_SIZE		20000
+  #define FILEBUFFER_SIZE		30000
 #elif defined( __QNX__ ) && defined( __WATCOMC__ ) && ( __WATCOMC__ < 1100 )
   #define BUFFER_SIZE			8192
-  #define FILEBUFFER_SIZE		20000
+  #define FILEBUFFER_SIZE		30000
 #else
   #define BUFFER_SIZE			16384
-  #define FILEBUFFER_SIZE		32768
+  #define FILEBUFFER_SIZE		40960
 #endif /* __MSDOS__ && __TURBOC__ */
 #define FILENAME_BUFFER_SIZE	512
 
@@ -350,11 +352,11 @@
   #pragma enum int
 #endif /* QNX and Watcom C */
 
-/* The key size to use for the PKC routines.  This is the minimum allowed by
-   cryptlib, it speeds up the various tests but shouldn't be used in
-   practice */
+/* In some cases we may want to disable the displaying of output, for example
+   if we're wrapping a lower-level test in a higher-level one.  The following
+   variable is used to control where output is sent */
 
-#define PKC_KEYSIZE			512
+extern FILE *outputStream;
 
 /* Since the handling of filenames can get unwieldy when we have large
    numbers of similar files, we use a function to map a filename template
@@ -417,11 +419,26 @@ typedef struct {
    different key files to use.  The following types are handled in the test
    code */
 
-typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
-			   KEYFILE_OPENPGP_HASH, KEYFILE_OPENPGP_AES, 
-			   KEYFILE_OPENPGP_CAST, KEYFILE_OPENPGP_RSA, 
-			   KEYFILE_OPENPGP_MULT, KEYFILE_NAIPGP, 
-			   KEYFILE_OPENPGP_PARTIAL } KEYFILE_TYPE;
+typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_X509_ALT, KEYFILE_PGP, 
+			   KEYFILE_PGP_SPECIAL, KEYFILE_OPENPGP_HASH, 
+			   KEYFILE_OPENPGP_AES, KEYFILE_OPENPGP_CAST, 
+			   KEYFILE_OPENPGP_RSA, KEYFILE_OPENPGP_MULT, KEYFILE_NAIPGP, 
+			   KEYFILE_OPENPGP_PARTIAL, KEYFILE_OPENPGP_BOUNCYCASTLE 
+			 } KEYFILE_TYPE;
+
+/* When we're testing certificate chain handling, we need to deal with 
+   various test certificates.  The following types define which test
+   certificate we're using */
+
+typedef enum {
+	CHAINTEST_NOCERT,			/* No certificate */
+	CHAINTEST_LEAF,				/* Leaf certificate */
+	CHAINTEST_ISSUER,			/* Issuer of leaf (= intermed.CA) */
+	CHAINTEST_ROOT,				/* Root certificate */
+	CHAINTEST_CHAIN,			/* Full certificate chain */
+	CHAINTEST_CHAIN_NOROOT,		/* Chain without root certificate */
+	CHAINTEST_CHAIN_NOLEAF		/* Chain without leaf certificate */
+	} CHAINTEST_CERT_TYPE;
 
 /* The generic password used for password-based encryption, and another one 
    for private key storage */
@@ -470,10 +487,10 @@ typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
    allow remapping in the functions where the secure session tests are
    performed */
 
-#define SSH_USER_NAME			TEXT( "test" )
-#define SSH_PASSWORD			TEXT( "test" )
-#define SSL_USER_NAME			TEXT( "test" )
-#define SSL_PASSWORD			TEXT( "test" )
+#define SSH_USER_NAME			TEXT( "ssh_test_user" )
+#define SSH_PASSWORD			TEXT( "ssh_test_password" )
+#define SSL_USER_NAME			TEXT( "ssl_test_user" )
+#define SSL_PASSWORD			TEXT( "ssl_test_password" )
 #define PKI_SRV_NAME			TEXT( "_pkiboot._tcp.cryptoapps.com" )
 #define TSP_DEFAULTSERVER_NAME	TEXT( "http://timestamping.edelweb.fr/service/tsp" )
 
@@ -499,6 +516,30 @@ typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
 #define DUAL_ENCRYPTKEY_LABEL	TEXT( "Test encryption key" )
 #define SYMMETRIC_KEY_LABEL		TEXT( "Test symmetric key" )
 
+/* The loopback address, used so that we don't inadvertently open up outside 
+   ports.  In order to allow testing against non-cryptlib-loopback and/or 
+   outside clients we optionally allow it to be set to an explicit address.  
+   This can be either an explicit IPv4 localhost (since Windows 7 will bind 
+   to both IPv4 and IPv6 INADDR_ANY addresses when given "localhost" as an 
+   argument and refuses connections on the IPv4 interface, only connecting 
+   on the IPv6 one), or an explicit address for external clients */
+
+#ifdef UNICODE_STRINGS
+  #define LOCAL_HOST_NAME			"localhost"
+  #define NATIVE_LOCAL_HOST_NAME	L"localhost"
+#else
+  #define LOCAL_HOST_NAME			"localhost"
+  #define NATIVE_LOCAL_HOST_NAME	LOCAL_HOST_NAME
+#endif /* UNICODE_STRINGS */
+#if 0
+  #undef LOCAL_HOST_NAME
+  #define LOCAL_HOST_NAME			"127.0.0.1"
+#endif /* 0 */
+#if 0
+  #undef LOCAL_HOST_NAME
+  #define LOCAL_HOST_NAME			"192.168.1.45"
+#endif /* 0 */
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -513,7 +554,7 @@ typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
   #define delayThread( x )
 #endif /* Systems with threading support */
 CRYPT_ALGO_TYPE selectCipher( const CRYPT_ALGO_TYPE algorithm );
-void printHex( const BYTE *value, const int length );
+void printHex( const char *prefix, const BYTE *value, const int length );
 const C_STR getKeyfileName( const KEYFILE_TYPE type,
 							const BOOLEAN isPrivKey );
 const C_STR getKeyfilePassword( const KEYFILE_TYPE type );
@@ -529,6 +570,9 @@ void printExtError( const CRYPT_HANDLE cryptHandle,
 int importCertFile( CRYPT_CERTIFICATE *cryptCert, const C_STR fileName );
 int importCertFromTemplate( CRYPT_CERTIFICATE *cryptCert,
 							const C_STR fileTemplate, const int number );
+int exportCertFile( const char *fileName, 
+					const CRYPT_CERTIFICATE certificate,
+					const CRYPT_CERTFORMAT_TYPE formatType );
 int addCertFields( const CRYPT_CERTIFICATE certificate,
 				   const CERT_DATA *certData, const int lineNo );
 int checkFileAccess( void );
@@ -618,10 +662,17 @@ BOOLEAN loadDSAContexts( const CRYPT_DEVICE cryptDevice,
 						 CRYPT_CONTEXT *signContext );
 BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 							 CRYPT_CONTEXT *decryptContext );
-BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
+BOOLEAN loadDHContexts( const CRYPT_DEVICE cryptDevice,
+						CRYPT_CONTEXT *cryptContext1,
 						CRYPT_CONTEXT *cryptContext2 );
-BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *sigCheckContext,
+BOOLEAN loadECDSAContexts( const CRYPT_DEVICE cryptDevice,
+						   CRYPT_CONTEXT *sigCheckContext,
 						   CRYPT_CONTEXT *signContext );
+BOOLEAN loadECDSAContextsEx( const CRYPT_DEVICE cryptDevice,
+							 CRYPT_CONTEXT *sigCheckContext,
+							 CRYPT_CONTEXT *signContext,
+							 const C_STR sigCheckContextLabel,
+							 const C_STR signContextLabel );
 void destroyContexts( const CRYPT_DEVICE cryptDevice,
 					  CRYPT_CONTEXT cryptContext,
 					  CRYPT_CONTEXT decryptContext );
@@ -654,7 +705,20 @@ int pkiServerInit( CRYPT_CONTEXT *cryptPrivateKey,
 				   CRYPT_KEYSET *cryptCertStore, const C_STR keyFileName,
 				   const C_STR keyLabel, const CERT_DATA *pkiUserData,
 				   const CERT_DATA *pkiUserAltData, 
-				   const CERT_DATA *pkiUserCAData, const char *protocolName );
+				   const CERT_DATA *pkiUserCAData, 
+				   const CERT_DATA *pkiUserRAData, 
+				   const char *protocolName );
+
+/* Function used for testing, in cryptapi.c */
+
+#ifndef NDEBUG
+
+C_RET cryptSetFaultType( C_IN int type );
+C_RET cryptSetMemFaultCount( C_IN int number );
+C_RET cryptSetFuzzData( C_IN CRYPT_SESSION cryptSession, 
+						C_IN void *data, C_IN int dataLength );
+
+#endif /* NDEBUG */
 
 /****************************************************************************
 *																			*
@@ -700,6 +764,7 @@ int pkiServerInit( CRYPT_CONTEXT *cryptPrivateKey,
 	result = ( int ) timeDiff( timeVal ); */
 
 HIRES_TIME timeDiff( HIRES_TIME startTime );
+int timeDisplay( HIRES_TIME time );
 
 #endif /* Windows with MSVC or Unix with gcc */
 
@@ -780,10 +845,14 @@ int testEnvelopePasswordCryptImport( void );
 int testPGPEnvelopePasswordCryptImport( void );
 int testEnvelopePKCCrypt( void );
 int testEnvelopePKCCryptAlgo( void );
+int testEnvelopePKCCryptMulti( void );
+int testEnvelopePKCIterated( void );
 int testPGPEnvelopePKCCryptImport( void );
 int testEnvelopeSign( void );
-int testEnvelopeSignAlgo( void );
+int testEnvelopeSignAlgos( void );
+int testEnvelopeSignHashUpgrade( void );
 int testEnvelopeSignOverflow( void );
+int testEnvelopeSignIndef( void );
 int testPGPEnvelopeSignedDataImport( void );
 int testEnvelopeAuthenticate( void );
 int testEnvelopeAuthEnc( void );
@@ -793,6 +862,7 @@ int testCMSEnvelopePKCCryptImport( void );
 int testCMSEnvelopeSign( void );
 int testCMSEnvelopeDualSign( void );
 int testCMSEnvelopeDetachedSig( void );
+int testCMSEnvelopeRefCount( void );
 int testCMSEnvelopeSignedDataImport( void );
 
 /* Prototypes for functions in certs.c */
@@ -831,6 +901,7 @@ int testBase64CertChainImport( void );
 int testMiscImport( void );
 int testNonchainCert( void );
 int testCertComplianceLevel( void );
+int testCertChainHandling( void );
 int testPathProcessing( void );
 int testPKCS1Padding( void );
 int testCertProcess( void );
@@ -877,11 +948,12 @@ int testSessionSSH_SFTPServer( void );
 int testSessionSSL( void );
 int testSessionSSLLocalSocket( void );
 int testSessionSSLClientCert( void );
-int testSessionSSLSharedKey( void );
 int testSessionSSLServer( void );
 int testSessionSSLServerCached( void );
 int testSessionSSLServerClientCert( void );
 int testSessionTLS( void );
+int testSessionTLSLocalSocket( void );
+int testSessionTLSSharedKey( void );
 int testSessionTLSServer( void );
 int testSessionTLSServerSharedKey( void );
 int testSessionTLS11( void );
@@ -904,6 +976,7 @@ int testSessionTLS12ClientCert( void );
   int testSessionSSHClientServerMultichannel( void );
   int testSessionSSHClientServerDualThread( void );
   int testSessionSSHClientServerMultiThread( void );
+  int testSessionSSHClientServerDebugCheck( void );
   int testSessionSSLClientServer( void );
   int testSessionSSLClientCertClientServer( void );
   int testSessionTLSClientServer( void );
@@ -918,6 +991,7 @@ int testSessionTLS12ClientCert( void );
   int testSessionTLS12ClientCertClientServer( void );
   int testSessionTLSClientServerDualThread( void );
   int testSessionTLSClientServerMultiThread( void );
+  int testSessionSSLClientServerDebugCheck( void );
   int testSessionHTTPCertstoreClientServer( void );
   int testSessionRTCSClientServer( void );
   int testSessionOCSPClientServer( void );
@@ -926,9 +1000,11 @@ int testSessionTLS12ClientCert( void );
   int testSessionSCEPClientServer( void );
   int testSessionSCEPSHA2ClientServer( void );
   int testSessionSCEPCACertClientServer( void );
+  int testSessionSCEPRenewClientServer( void );
   int testSessionCMPClientServer( void );
   int testSessionCMPSHA2ClientServer( void );
   int testSessionCMPPKIBootClientServer( void );
+  int testSessionCMPRAClientServer( void );
   int testSessionCMPFailClientServer( void );
   int testSessionPNPPKIClientServer( void );
   int testSessionPNPPKIDeviceClientServer( void );

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib TCP/IP Interface Routines					*
-*						Copyright Peter Gutmann 1998-2007					*
+*						Copyright Peter Gutmann 1998-2013					*
 *																			*
 ****************************************************************************/
 
@@ -442,7 +442,7 @@ typedef struct {
 	const int errorStringLength;/* Error message */
 	} SOCKETERROR_INFO;
 
-#ifdef __WINDOWS__
+#if defined( __WINDOWS__ )
 
 static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 	{ WSAECONNREFUSED, CRYPT_ERROR_PERMISSION, TRUE,
@@ -488,6 +488,216 @@ static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 #define hostErrorInfo	socketErrorInfo		/* Winsock uses unified error codes */
 
 #define TIMEOUT_ERROR	WSAETIMEDOUT		/* Code for timeout error */
+#define NONBLOCKCONNECT_ERROR WSAECONNREFUSED	/* Code for nonb-conn.error */
+
+#elif defined( __Nucleus__ )
+
+static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
+	{ NU_INVALID_PROTOCOL, CRYPT_OK, TRUE,
+		"NU_INVALID_PROTOCOL: Invalid network protocol", 45 },
+	{ NU_NO_DATA_TRANSFER, CRYPT_OK, TRUE,
+		"NU_NO_DATA_TRANSFER: Data was not written/read during send/receive "
+		"function", 75 },
+	{ NU_NO_PORT_NUMBER, CRYPT_OK, TRUE,
+		"NU_NO_PORT_NUMBER: No local port number was stored in the socket "
+		"descriptor", 75 },
+	{ NU_NO_TASK_MATCH, CRYPT_OK, TRUE,
+		"NU_NO_TASK_MATCH: No task/port number combination existed in the "
+		"task table", 75 },
+	{ NU_NO_SOCKET_SPACE, CRYPT_OK, TRUE,
+		"NU_NO_SOCKET_SPACE: The socket structure list was full when a new "
+		"socket descriptor was requested", 97 },
+	{ NU_NO_ACTION, CRYPT_OK, TRUE,
+		"NU_NO_ACTION: No action was processed by the function", 53 },
+	{ NU_NOT_CONNECTED, CRYPT_OK, TRUE,
+		"NU_NOT_CONNECTED: A connection has been closed by the network", 61 },
+	{ NU_INVALID_SOCKET, CRYPT_OK, TRUE,
+		"NU_INVALID_SOCKET: The socket ID passed in was not in a valid "
+		"range", 67 },
+	{ NU_NO_SOCK_MEMORY, CRYPT_OK, TRUE,
+		"NU_NO_SOCK_MEMORY: Memory allocation failed for internal sockets "
+		"structure", 64 },
+	{ NU_INVALID_ADDRESS, CRYPT_OK, TRUE,
+		"NU_INVALID_ADDRESS: An incomplete address was sent", 50 },
+	{ NU_NO_HOST_NAME, CRYPT_OK, TRUE,
+		"NU_NO_HOST_NAME: No host name specified in a in a connect call "
+		"where a machine was not previously set up", 104 },
+	{ NU_RARP_INIT_FAILED, CRYPT_OK, TRUE,
+		"NU_RARP_INIT_FAILED: During initialization RARP failed", 54 },
+	{ NU_BOOTP_INIT_FAILED, CRYPT_OK, TRUE,
+		"NU_BOOTP_INIT_FAILED: During initialization BOOTP failed", 56 },
+	{ NU_INVALID_PORT, CRYPT_OK, TRUE,
+		"NU_INVALID_PORT: The port number passed in was not in a valid "
+		"range", 67 },
+	{ NU_NO_BUFFERS, CRYPT_OK, TRUE,
+		"NU_NO_BUFFERS: There were no buffers to place the outgoing packet "
+		"in", 68 },
+	{ NU_NOT_ESTAB, CRYPT_OK, TRUE,
+		"NU_NOT_ESTAB: A connection is open but not in an established state", 66 },
+	{ NU_WINDOW_FULL, CRYPT_OK, TRUE,
+		"NU_WINDOW_FULL: The foreign host's in window is full", 52 },
+	{ NU_NO_SOCKETS, CRYPT_OK, TRUE,
+		"NU_NO_SOCKETS: No sockets were specified", 40 },
+	{ NU_NO_DATA, CRYPT_OK, TRUE,
+		"NU_NO_DATA: None of the specified sockets were data ready", 57 },
+	/* NU_Setsockopt()/NU_Getsockopt() errors */
+	{ NU_INVALID_LEVEL, CRYPT_OK, TRUE,
+		"NU_INVALID_LEVEL: The specified level is invalid", 48 },
+	{ NU_INVALID_OPTION, CRYPT_OK, TRUE,
+		"NU_INVALID_OPTION: The specified option is invalid", 50 },
+	{ NU_INVAL, CRYPT_OK, TRUE,
+		"NU_INVAL: General purpose error condition", 41 },
+	{ NU_ACCESS, CRYPT_OK, TRUE,
+		"NU_ACCESS: The attempted operation is not allowed on the socket", 63 },
+	/* Standard socket errors again */
+	{ NU_ADDRINUSE, CRYPT_OK, TRUE,
+		"NU_ADDRINUSE: The IP Multicast membership already exists", 56 },
+	{ NU_HOST_UNREACHABLE, CRYPT_OK, TRUE,
+		"NU_HOST_UNREACHABLE: Host unreachable", 37 },
+	{ NU_MSGSIZE, CRYPT_OK, TRUE,
+		"NU_MSGSIZE: Packet is to large for interface", 44 },
+	{ NU_NOBUFS, CRYPT_OK, TRUE,
+		"NU_NOBUFS: Could not allocate a memory buffer", 45 },
+	{ NU_UNRESOLVED_ADDR, CRYPT_OK, TRUE,
+		"NU_UNRESOLVED_ADDR: The MAC address was not resolved", 52 },
+	{ NU_CLOSING, CRYPT_OK, TRUE,
+		"NU_CLOSING: The other side in a TCP connection has sent a FIN", 61 },
+	{ NU_MEM_ALLOC, CRYPT_OK, TRUE,
+		"NU_MEM_ALLOC: Failed to allocate memory", 39 },
+	{ NU_RESET, CRYPT_OK, TRUE,
+		"NU_RESET: A multicast membership was added and the MAC chip needs "
+		"to be reset", 77 },
+	{ NU_DEVICE_DOWN, CRYPT_OK, TRUE,
+		"NU_DEVICE_DOWN: A device being used by the socket has gone down", 63 },
+	/* DNS errors */
+	{ NU_INVALID_LABEL, CRYPT_OK, TRUE,
+		"NU_INVALID_LABEL: Domain name with an invalid label", 51 },
+	{ NU_FAILED_QUERY, CRYPT_OK, TRUE,
+		"NU_FAILED_QUERY: No response received for a DNS Query", 53 },
+	{ NU_DNS_ERROR, CRYPT_OK, TRUE,
+		"NU_DNS_ERROR: A general DNS error status", 40 },
+	{ NU_NOT_A_HOST, CRYPT_OK, TRUE,
+		"NU_NOT_A_HOST: The host name was not found", 42 },
+	{ NU_INVALID_PARM, CRYPT_OK, TRUE,
+		"NU_INVALID_PARM: A parameter has an invalid value", 49 },
+	{ NU_NO_DNS_SERVER, CRYPT_OK, TRUE,
+		"NU_NO_DNS_SERVER: No DNS server has been registered with the "
+		"stack", 66 },
+	/* Standard socket errors again */
+	{ NU_NO_ROUTE_TO_HOST, CRYPT_OK, TRUE,
+		"NU_NO_ROUTE_TO_HOST: ICMP Destination Unreachable specific "
+		"error", 64 },
+	{ NU_CONNECTION_REFUSED, CRYPT_OK, TRUE,
+		"NU_CONNECTION_REFUSED: ICMP Destination Unreachable specific "
+		"error", 66 },
+	{ NU_MSG_TOO_LONG, CRYPT_OK, TRUE,
+		"NU_MSG_TOO_LONG: ICMP Destination Unreachable specific error", 60 },
+	{ NU_BAD_SOCKETD, CRYPT_OK, TRUE,
+		"NU_BAD_SOCKETD: Socket descriptor is not valid for the current "
+		"operation", 72 },
+	{ NU_BAD_LEVEL, CRYPT_OK, TRUE,
+		"NU_BAD_LEVEL: ???", 17 },
+	{ NU_BAD_OPTION, CRYPT_OK, TRUE,
+		"NU_BAD_OPTION: ???", 18 },
+	/* IPv6 errors */
+	{ NU_DUP_ADDR_FAILED, CRYPT_OK, TRUE,
+		"NU_DUP_ADDR_FAILED: ???", 23 },
+	{ NU_DISCARD_PACKET, CRYPT_OK, TRUE,
+		"NU_DISCARD_PACKET: ???", 22 },
+	/* ICMP errors */
+	{ NU_DEST_UNREACH_ADMIN, CRYPT_OK, TRUE,
+		"NU_DEST_UNREACH_ADMIN: ICMP Destination Unreachable: Packet was "
+		"rejected due to administration reasons", 102 },
+	{ NU_DEST_UNREACH_ADDRESS, CRYPT_OK, TRUE,
+		"NU_DEST_UNREACH_ADDRESS: ICMP Destination Unreachable: Packet was "
+		"rejected because destination address doesn't match an address on "
+		"the node", 139 },
+	{ NU_DEST_UNREACH_PORT, CRYPT_OK, TRUE,
+		"NU_DEST_UNREACH_PORT: ICMP Destination Unreachable: Destination "
+		"port is not listening on the node", 97 },
+	{ NU_TIME_EXCEED_HOPLIMIT, CRYPT_OK, TRUE,
+		"NU_TIME_EXCEED_HOPLIMIT: ICMP Time Exceeded: Packet has exceeded "
+		"the number of hops that it may make", 100 },
+	{ NU_TIME_EXCEED_REASM, CRYPT_OK, TRUE,
+		"NU_TIME_EXCEED_REASM: ICMP Time Exceeded: Packet could not be "
+		"reassembled in the maximum allowable time", 103 },
+	{ NU_PARM_PROB_HEADER, CRYPT_OK, TRUE,
+		"NU_PARM_PROB_HEADER: ICMP Parameter Problem: Packet has an error "
+		"in the IP header", 81 },
+	{ NU_PARM_PROB_NEXT_HDR, CRYPT_OK, TRUE,
+		"NU_PARM_PROB_NEXT_HDR: ICMP Parameter Problem: Packet has an "
+		"invalid next header value in the IPv6 header", 105 },
+	{ NU_PARM_PROB_OPTION, CRYPT_OK, TRUE,
+		"NU_PARM_PROB_OPTION: ICMP Parameter Problem: Invalid option "
+		"specified in the IP header", 86 },
+	{ NU_DEST_UNREACH_NET, CRYPT_OK, TRUE,
+		"NU_DEST_UNREACH_NET: ICMP Destination Unreachable: Network is "
+		"unreachable", 73 },
+	{ NU_DEST_UNREACH_HOST, CRYPT_OK, TRUE,
+		"NU_DEST_UNREACH_HOST: ICMP Destination Unreachable: Host is "
+		"unreachable", 71 },
+	{ NU_DEST_UNREACH_PROT, CRYPT_OK, TRUE,
+		"NU_DEST_UNREACH_PROT: ICMP Destination Unreachable: Protocol is "
+		"not recognized on the node", 90 },
+	{ NU_DEST_UNREACH_FRAG, CRYPT_OK, TRUE,
+		"NU_DEST_UNREACH_FRAG: ICMP Destination Unreachable: Packet "
+		"requires fragmentation but the node does not support "
+		"fragmentation", 125 },
+	{ NU_DEST_UNREACH_SRCFAIL, CRYPT_OK, TRUE,
+		"NU_DEST_UNREACH_SRCFAIL:  ICMP Destination Unreachable: Source "
+		"route failed", 75 },
+	{ NU_PARM_PROB, CRYPT_OK, TRUE,
+		"NU_PARM_PROB: ICMP Parameter Problem: Packet has an error in the "
+		"IP header", 74 },
+	{ NU_SOURCE_QUENCH, CRYPT_OK, TRUE,
+		"NU_SOURCE_QUENCH: ICMP Source Quench: Node is receiving too many "
+		"packets to process", 83 },
+	/* Nonblocking socket operation errors */
+	{ NU_WOULD_BLOCK, CRYPT_OK, TRUE,
+		"NU_WOULD_BLOCK: Socket is non-blocking but blocking is required to "
+		"complete the requested action", 96 },
+	/* TCP Keepalive errors */
+	{ NU_CONNECTION_TIMED_OUT, CRYPT_OK, TRUE,
+		"NU_CONNECTION_TIMED_OUT: Connection has been closed due to TCP "
+		"Keepalive probes not being answered", 98 },
+	/* Nonblocking connect errors */
+	{ NU_IS_CONNECTING, CRYPT_OK, TRUE,
+		"NU_IS_CONNECTING: Socket is non-blocking and the connection is "
+		"being established", 80 },
+	/* Standard socket errors again */
+	{ NU_SOCKET_CLOSED, CRYPT_OK, TRUE,
+		"NU_SOCKET_CLOSED: The specified socket has been closed", 54 },
+	{ NU_TABLE_FULL, CRYPT_OK, TRUE,
+		"NU_TABLE_FULL: ???", 18 },
+	{ NU_NOT_FOUND, CRYPT_OK, TRUE,
+		"NU_NOT_FOUND: ???", 17 },
+	/* IPv6 extension header errors */
+	{ NU_INVAL_NEXT_HEADER, CRYPT_OK, TRUE,
+		"NU_INVAL_NEXT_HEADER: ???", 25 },
+	{ NU_SEND_ICMP_ERROR, CRYPT_OK, TRUE,
+		"NU_SEND_ICMP_ERROR: ???", 23 },
+	/* Multicast errors */
+	{ NU_MULTI_TOO_MANY_SRC_ADDRS, CRYPT_OK, TRUE,
+		"NU_MULTI_TOO_MANY_SRC_ADDRS: Number of source addresses specified "
+		"for multicast IP address filtering exceeds "
+		"MAX_MULTICAST_SRC_ADDR", 131 },
+	{ NU_NOT_A_GROUP_MEMBER, CRYPT_OK, TRUE,
+		"NU_NOT_A_GROUP_MEMBER: Socket is not a member of the multicast "
+		"group specified", 78 },
+	{ NU_TOO_MANY_GROUP_MEMBERS, CRYPT_OK, TRUE,
+		"NU_TOO_MANY_GROUP_MEMBERS: Number of multicast groups has been "
+		"reached", 70 },
+	/* Physical layer errors */
+	{ NU_ETH_CABLE_UNPLUGGED, CRYPT_OK, TRUE,
+		"NU_ETH_CABLE_UNPLUGGED: Ethernet cable is unplugged", 51 },
+	{ NU_ETH_CABLE_PLUGGED_IN, CRYPT_OK, TRUE,
+		"NU_ETH_CABLE_PLUGGED_IN: Ethernet cable has been plugged in", 59 },
+	{ CRYPT_ERROR }, { CRYPT_ERROR }
+	};
+#define hostErrorInfo	socketErrorInfo		/* Nucleus uses unified error codes */
+
+#define TIMEOUT_ERROR	NU_TIMEOUT			/* Code for timeout error */
+#define NONBLOCKCONNECT_ERROR NU_CONNECTION_REFUSED	/* Code for nonb-conn.error */
 
 #else
 
@@ -560,6 +770,7 @@ static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 	};
 
 #define TIMEOUT_ERROR	ETIMEDOUT			/* Code for timeout error */
+#define NONBLOCKCONNECT_ERROR ECONNREFUSED	/* Code for nonb-conn.error */
 
 static const SOCKETERROR_INFO FAR_BSS hostErrorInfo[] = {
 	{ HOST_NOT_FOUND, CRYPT_ERROR_NOTFOUND, TRUE,
@@ -682,7 +893,8 @@ int setSocketError( INOUT NET_STREAM_INFO *netStream,
 	assert( isReadPtr( errorMessage, 16 ) );
 
 	REQUIRES( errorMessageLength > 16 && \
-			  errorMessageLength < MAX_INTLENGTH );
+			  errorMessageLength <= MAX_INTLENGTH_SHORT );
+			  /* MAX_ERRORMESSAGE_SIZE isn't defined at this level */
 	REQUIRES( cryptStatusError( status ) );
 
 	/* Set a cryptlib-supplied socket error message */
@@ -1243,6 +1455,18 @@ void netSignalShutdown( void )
 *																			*
 ****************************************************************************/
 
+/* Disable Nagle on a socket.  In theory this call can fail, but there's not 
+   much that we can do about it, and in any case things will usually keep 
+   working anyway, so we don't try and handle any errors for this situation */
+
+static void disableNagle( const SOCKET netSocket )
+	{
+	static const int trueValue = 1;
+
+	( void ) setsockopt( netSocket, IPPROTO_TCP, TCP_NODELAY,
+						 ( void * ) &trueValue, sizeof( int ) );
+	}
+
 /* Wait for I/O to become possible on a socket.  The particular use of 
    select that we employ here is reasonably optimal under load because we're 
    only asking select() to monitor a single descriptor.  There are a variety 
@@ -1314,6 +1538,26 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 	REQUIRES( timeout >= 0 && timeout < MAX_INTLENGTH );
 	REQUIRES( type > IOWAIT_NONE && type < IOWAIT_LAST );
 
+	/* Check for overflows in FD_SET().  This is an ugly implementation 
+	   issue in which, for sufficiently badly-implemented FD_SET() macros
+	   (and there are plenty of these around), the macro will just take the 
+	   provided socket descriptor and use it to index the fd_set bitmask.
+	   This occurs for the most common implementations under Unix (BSD) and 
+	   BSD-derived embedded OSes, Windows gets it right and uses a bounds-
+	   checked array.  
+	   
+	   The maximum socket descriptor is normally given by FD_SETSIZE, 
+	   typically 64 under Windows (but we don't have to worry this since it 
+	   does FD_SET() right) and 256 or sometimes 1024 under Unix, however 
+	   this can be increased explicitly using setrlimit() or, from the 
+	   shell, 'ulimit -n 512' to make it 512, which will cause an overflow.  
+	   To deal with this, we reject any socket values less than zero (if 
+	   it's a signed variable) or greater than FD_SETSIZE */
+#ifndef __WINDOWS__ 
+	REQUIRES( netStream->netSocket >= 0 && \
+			  netStream->netSocket <= FD_SETSIZE );
+#endif /* !Windows */
+
 	/* Set up the information needed to handle timeouts and wait on the
 	   socket.  If there's no timeout, we wait at least 5ms on the theory
 	   that it isn't noticeable to the caller but ensures that we at least
@@ -1322,12 +1566,13 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 	   The exact wait time depends on the system, but usually it's quantised
 	   to the system timer quantum.  This means that on Unix systems with a
 	   1ms timer resolution the wait time is quantised on a 1ms boundary.
-	   Under Windows NT/2000/XP/Vista it's quantised on a 10ms boundary 
-	   (some early NT systems had a granularity ranging from 7.5 - 15ms but 
-	   all newer systems use 10ms) and for Win95/98/ME it's quantised on a 
-	   55ms boundary.  In other words when performing a select() on a Win95 
-	   box it'll either return immediately or wait some multiple of 55ms 
-	   even with the time set to 1ms.
+	   Under everything newer than early Windows NT systems it's quantised 
+	   on a 10ms boundary (some early NT systems had a granularity ranging 
+	   from 7.5 - 15ms but all newer systems use 10ms) and for Win95/98/ME 
+	   it was quantised on a 55ms boundary.  In other words when performing 
+	   a select() on a Win95 box it would either return immediately or wait 
+	   some multiple of 55ms even with the time set to 1ms, but we don't
+	   have to worry about those Windows versions any more.
 
 	   In theory we shouldn't have to reset either the fds or the timeval
 	   each time through the loop since we're only waiting on one descriptor
@@ -1436,9 +1681,9 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 		/* The select() timed out, exit */
 		errorMessageLength = sprintf_s( errorMessage, 128,
 										"Timeout on %s (select()) after %d "
-										"seconds",
+										"second%s",
 										errorInfo[ type ].errorString, 
-										timeout );
+										timeout, ( timeout > 1 ) ? "s" : "" );
 		return( setSocketError( netStream, errorMessage, errorMessageLength,
 								CRYPT_ERROR_TIMEOUT, FALSE ) );
 		}
@@ -1461,44 +1706,49 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 
 		status = getSocketError( netStream, errorInfo[ type ].status, 
 								 &socketErrorCode );
-		if( socketErrorCode == 0 )
-			{
-			/* If there's a (supposed) exception condition present but no
-			   error information available then this may be a mis-handled
-			   select() timeout.  This can happen with Winsock under
-			   certain circumstances and seems to be related to another
-			   socket-using application performing network I/O at the same 
-			   time as we do the select() wait.  Non-Winsock cases can occur 
-			   because some implementations don't treat a soft timeout as an 
-			   error, and at least one (Tandem) returns EINPROGRESS rather 
-			   than ETIMEDOUT, so we insert a timeout error code ourselves.
-			   Since we're merely updating the extended internal error 
-			   information (we already know what the actual error status
-			   is) we don't need to do anything with the mapError() return 
-			   value.
+		if( socketErrorCode != 0 )
+			return( status );
 
-			   There is one special-case exception for this and that's when
-			   we're waiting on a nonblocking connect, in which case a 
-			   failure to connect due to e.g. an ECONNREFUSED will be 
-			   reported as a select() error (this can happen under Winsock 
-			   in some cases).  Since we can't be sure what the actual 
-			   problem is without adding our own timer handling (a fast
-			   reject would be due to an explicit notification like 
-			   ECONNREFUSED while a slow reject might be an ENETUNREACH
-			   or something similar) we can't report much more than a 
-			   generic open error.  A genuine timeout error should have
-			   been caught by the "wait timed out" code above */
-			if( type == IOWAIT_CONNECT )
-				{
-				( void ) mapError( netStream, 0, FALSE, 
-								   CRYPT_ERROR_OPEN );
-				}
-			else
-				{
-				( void ) mapError( netStream, TIMEOUT_ERROR, FALSE, 
-								   CRYPT_ERROR_TIMEOUT );
-				}
+		/* We got a no-error error code even though there's an exception 
+		   condition present, this typically only happens under Windows.  
+		   The most common case is when we're waiting on a nonblocking 
+		   connect (type = IOWAIT_CONNECT), in which case a failure to 
+		   connect due to e.g. an ECONNREFUSED can be reported as a select() 
+		   error.  This is a bit tricky to report on because we can't be 
+		   sure what the actual problem is without adding our own timer 
+		   handling, in which case a fast reject would be due to an explicit 
+		   notification like ECONNREFUSED while a slow reject might be an 
+		   ENETUNREACH or something similar (a genuine timeout error should 
+		   have been caught by the "wait timed out" code above).  Another
+		   option is to retry the connect as a blocking one to get a genuine
+		   error code, but that defeats the point of using a nonblocking 
+		   connect to deal with problem conditions.
+
+		   The conflict here is between an honest but rather useless 
+		   CRYPT_ERROR_OPEN and a guessed and far more useful, but 
+		   potentially misleading, ECONNREFUSED.  Given that this is an
+		   oddball condition to begin with it's unclear how far we should
+		   go down this rathole, for now we assume an ECONNREFUSED */
+		if( type == IOWAIT_CONNECT )
+			{
+			( void ) mapError( netStream, NONBLOCKCONNECT_ERROR, FALSE, 
+							   CRYPT_ERROR_OPEN );
+			return( status );
 			}
+
+		/* This is probably a mis-handled select() timeout, which can happen 
+		   with Winsock under certain circumstances and seems to be related 
+		   to another socket-using application performing network I/O at the 
+		   same time as we do the select() wait.  Non-Winsock cases can occur 
+		   because some implementations don't treat a soft timeout as an 
+		   error, and at least one (Tandem) returns EINPROGRESS rather than 
+		   ETIMEDOUT, so we insert a timeout error code ourselves.  
+			   
+		   Since we're merely updating the extended internal error 
+		   information (we already know what the actual error status is) we 
+		   don't need to do anything with the mapError() return value */
+		( void ) mapError( netStream, TIMEOUT_ERROR, FALSE, 
+						   CRYPT_ERROR_TIMEOUT );
 		return( status );
 		}
 
@@ -1626,7 +1876,6 @@ static int preOpenSocket( INOUT NET_STREAM_INFO *netStream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int completeOpen( INOUT NET_STREAM_INFO *netStream )
 	{
-	static const int trueValue = 1;
 	SIZE_TYPE intLength = sizeof( int );
 	int value, status;
 
@@ -1695,13 +1944,14 @@ static int completeOpen( INOUT NET_STREAM_INFO *netStream )
 	   recv() (a sign that the other side has closed the connection, see the 
 	   comment in readSocketFunction()) even though the connection is still 
 	   fully open, and in any case there's no real need for a nonblocking  
-	   socket since we have select() handling timeouts/blocking for us */
-	setsockopt( netStream->netSocket, IPPROTO_TCP, TCP_NODELAY,
-				( void * ) &trueValue, sizeof( int ) );
+	   socket since we have select() handling timeouts/blocking for us.
+	   
+	   In theory these calls can fail, but there's not much that we can do 
+	   about it, and in any case things will usually keep working anyway, so
+	   we don't try and handle any errors for this situation */
+	disableNagle( netStream->netSocket );
 	setSocketBlocking( netStream->netSocket );
 
-	/* We've completed the connection, mark the stream as ready for use */
-/*	netStream->xxx = zzz; */
 	return( CRYPT_OK );
 	}
 
@@ -1943,7 +2193,12 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 	   intercept it and substitute a custom error string.  Note that when
 	   we make the listen socket blocking again, we also have to make the
 	   newly-created ephemeral socket blocking, since it inherits its
-	   attributes from the listen socket */
+	   attributes from the listen socket.
+	   
+	   In addition to all of the blocking/nonblocking shenanigans, we also 
+	   need to disable Nagle on the accepted socket.  This may or may not
+	   be necessary depending on the sockets implementation, we always
+	   explicitly set it to be on the safe side */
 	setSocketNonblocking( listenSocket );
 	netSocket = accept( listenSocket, ( struct sockaddr * ) &clientAddr,
 						&clientAddrLen );
@@ -1982,6 +2237,12 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 						  &netStream->clientAddressLen, 
 						  &netStream->clientPort );
 
+	/* Turn off Nagle, since we do our own optimised TCP handling.  In 
+	   theory this call can fail, but there's not much that we can do about 
+	   it, and in any case things will usually keep working anyway, so we 
+	   don't try and handle any errors for this situation */
+	disableNagle( netSocket );
+
 	/* We've got a new connection, add the socket to the pool.  Since this
 	   was created externally to the pool we don't use newSocket() to create 
 	   a new socket but only add the existing socket */
@@ -1998,10 +2259,6 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 		}
 	netStream->netSocket = netSocket;
 	netStream->listenSocket = listenSocket;
-
-	/* Turn off Nagle, since we do our own optimised TCP handling */
-	setsockopt( netStream->netSocket, IPPROTO_TCP, TCP_NODELAY,
-				( void * ) &trueValue, sizeof( int ) );
 
 	return( CRYPT_OK );
 	}
@@ -2045,7 +2302,7 @@ static int openSocketFunction( INOUT NET_STREAM_INFO *netStream,
 		}
 
 	ENSURES( hostName != NULL && \
-			 ( hostNameLen > 0 && hostNameLen < MAX_INTLENGTH ) );
+			 ( hostNameLen > 0 && hostNameLen <= MAX_DNS_SIZE ) );
 
 	/* It's a client stream, perform a two-part nonblocking open.  Currently
 	   the two portions are performed back-to-back, in the future we can
@@ -2152,14 +2409,9 @@ static int checkSocketFunction( INOUT NET_STREAM_INFO *netStream )
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
 	/* Check that we've been passed a valid network socket, and that it's
-	   blocking socket */
+	   blocking socket.  getSocketNonblockingStatus() is a complex macro
+	   that tries to return the non-blocking status as a boolean */
 	getSocketNonblockingStatus( netStream->netSocket, value );
-	if( isSocketError( value ) )
-		{
-		int dummy;
-
-		return( getSocketError( netStream, CRYPT_ARGERROR_NUM1, &dummy ) );
-		}
 	if( value )
 		{
 		return( setSocketError( netStream, "Socket is non-blocking", 22,
@@ -2212,8 +2464,8 @@ static int checkSocketFunction( INOUT NET_STREAM_INFO *netStream )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int readSocketFunction( INOUT STREAM *stream, 
 							   OUT_BUFFER( maxLength, *length ) BYTE *buffer, 
-							   IN_LENGTH const int maxLength, 
-							   OUT_LENGTH int *length, 
+							   IN_DATALENGTH const int maxLength, 
+							   OUT_DATALENGTH_Z int *length, 
 							   IN_FLAGS_Z( TRANSPORT ) const int flags )
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
@@ -2221,7 +2473,8 @@ static int readSocketFunction( INOUT STREAM *stream,
 	BYTE *bufPtr = buffer;
 	const int timeout = ( flags & TRANSPORT_FLAG_NONBLOCKING ) ? 0 : \
 						( flags & TRANSPORT_FLAG_BLOCKING ) ? \
-						max( 30, netStream->timeout ) : netStream->timeout;
+						max( NET_TIMEOUT_READ, netStream->timeout ) : \
+						netStream->timeout;
 	int bytesToRead, byteCount = 0, iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -2229,7 +2482,7 @@ static int readSocketFunction( INOUT STREAM *stream,
 	assert( isWritePtr( length, sizeof( int ) ) );
 
 	REQUIRES_S( stream->type == STREAM_TYPE_NETWORK );
-	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
+	REQUIRES_S( maxLength > 0 && maxLength < MAX_BUFFER_SIZE );
 	REQUIRES_S( ( ( flags & TRANSPORT_FLAG_NONBLOCKING ) && \
 					timeout == 0 ) || \
 				( !( flags & TRANSPORT_FLAG_NONBLOCKING ) && \
@@ -2302,16 +2555,47 @@ static int readSocketFunction( INOUT STREAM *stream,
 			}
 		if( bytesRead <= 0 )
 			{
-			/* Under some odd circumstances (Winsock bugs when using non-
-			   blocking sockets, or calling select() with a timeout of 0),
-			   recv() can return zero bytes without an EOF condition being
-			   present, even though it should return an error status if this
-			   happens (this could also happen under very old SysV
-			   implementations using O_NDELAY for nonblocking I/O).  To try
-			   and catch this we check for a restartable read due to
-			   something like an interrupted system call and retry the read
-			   if it is.  Unfortunately this doesn't catch the Winsock zero-
-			   delay bug but it may catch problems in other implementations.
+			/* Under some odd circumstances (bugs in older versions of 
+			   Winsock when using non-blocking sockets, or calling select() 
+			   with a timeout of 0), recv() can return zero bytes without an 
+			   EOF condition being present, even though it should return an 
+			   error status if this happens (this could also happen under 
+			   very old SysV implementations using O_NDELAY for nonblocking 
+			   I/O).  
+			   
+			   One situation in which we can legitimately get this (although
+			   the status is misleading) is when we don't get an ACK for a 
+			   previous data send.  If we get here before the ACK timeout 
+			   occurs then we won't get the ECONNABORTED but instead get 
+			   recv() == 0 (exactly how we can get recv() == 0 due to the 
+			   lack of ACK but not an ECONNABORTED at the same point remains 
+			   a mystery).  
+			   
+			   An example of a situation in which we can get an ECONNABORTED 
+			   is when the client sends an HTTP POST to the server, which 
+			   looks at the HTTP request header, rejects it (e.g. due to 
+			   excessive content length, which cryptlib will do in order to 
+			   avoid being DoS'ed by the other side), and sends back an 
+			   error response and closes the connection without trying to 
+			   read the body of the request.  The connection is now half-
+			   closed, with the client still writing the HTTP body to its 
+			   side of the connection, which means that it gets buffered in 
+			   the TCP stack but not sent.  At this point the client tries 
+			   to read the HTTP response, but in the meantime the outgoing 
+			   retransmission of the buffered data has failed and the TCP 
+			   stack on the client shuts down the connection.  This means 
+			   that the HTTP response that the server sent is never read, 
+			   and the client gets an ECONNABORTED.
+
+			   Dealing with this particular situation is quite difficult, 
+			   see the comment in the code block for handling 
+			   byteCount == 0 at the end of this function.
+			   
+			   To try and catch the more general situation we check for a 
+			   restartable read due to something like an interrupted system 
+			   call and retry the read if it is.  This doesn't catch the 
+			   Winsock zero-delay bug but it may catch problems in other 
+			   implementations.
 
 			   Unfortunately this doesn't work under all circumstances
 			   either.  If the connection is genuinely closed select() will
@@ -2335,12 +2619,12 @@ static int readSocketFunction( INOUT STREAM *stream,
 				}
 #endif /* 0 */
 
-			/* Once this Winsock bug hits, we've fallen and can't get up any
-			   more.  WSAGetLastError() reports no error, select() reports
-			   data available for reading, and recv() reports zero bytes
-			   read.  If the following is used, the code will loop endlessly
-			   (or at least until the loop iteration watchdog triggers) 
-			   waiting for data that can never be read */
+			/* Once we encounter this problem, we've fallen and can't get up 
+			   any more.  WSAGetLastError() reports no error, select() 
+			   reports data available for reading, and recv() reports zero 
+			   bytes read.  If the following is used, the code will loop 
+			   endlessly (or at least until the loop iteration watchdog 
+			   triggers) waiting for data that can never be read */
 #if 0	/* See above comment */
 			getSocketError( stream, CRYPT_ERROR_READ, &dummy );
 			status = ioWait( stream, 0, 0, IOWAIT_READ );
@@ -2356,8 +2640,8 @@ static int readSocketFunction( INOUT STREAM *stream,
 		bufPtr += bytesRead;
 		bytesToRead -= bytesRead;
 		byteCount += bytesRead;
-		ENSURES_S( bytesToRead >= 0 && bytesToRead < MAX_INTLENGTH );
-		ENSURES_S( byteCount > 0 && byteCount < MAX_INTLENGTH );
+		ENSURES_S( bytesToRead >= 0 && bytesToRead < MAX_BUFFER_SIZE );
+		ENSURES_S( byteCount > 0 && byteCount < MAX_BUFFER_SIZE );
 
 		/* Remember that we've got some data, used for error diagnosis (see
 		   the long comment above) */
@@ -2394,7 +2678,25 @@ static int readSocketFunction( INOUT STREAM *stream,
 		{
 		/* We didn't get anything because the other side closed the
 		   connection.  We report this is a read-complete status rather than
-		   a read error since it isn't necessarily a real error */
+		   a read error since it isn't necessarily a real error.
+		   
+		   One situation in which we can get this is when we don't get an 
+		   ACK for a previous data send, however if we get here before the 
+		   ACK timeout occurs then we won't get the ECONNABORTED/
+		   WSAECONNABORTED but instead get recv() == 0.  Getting the 
+		   ECONNABORTED is quite difficult, just adding a delay won't work
+		   so we need to wait and then perform a second read.  Because this
+		   is somewhat system-specific, we make it Windows-only for now */
+#ifdef __WINDOWS__
+		BYTE buffer[ 8 + 8 ];
+		int errorCode;
+
+		Sleep( 500 );
+		( void ) recv( netStream->netSocket, buffer, 8, 0 );
+		getSocketError( netStream, CRYPT_ERROR_READ, &errorCode );
+		if( errorCode == WSAECONNABORTED )
+			return( CRYPT_ERROR_COMPLETE );
+#endif /* __WINDOWS__ */
 		return( setSocketError( netStream, 
 								"No data was read because the remote system "
 								"closed the connection (recv() == 0)", 78,
@@ -2408,8 +2710,8 @@ static int readSocketFunction( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int writeSocketFunction( INOUT STREAM *stream, 
 								IN_BUFFER( length ) const BYTE *buffer, 
-								IN_LENGTH const int maxLength, 
-								OUT_LENGTH_Z int *length,
+								IN_DATALENGTH const int maxLength, 
+								OUT_DATALENGTH_Z int *length,
 								IN_FLAGS_Z( TRANSPORT ) const int flags )
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
@@ -2417,7 +2719,8 @@ static int writeSocketFunction( INOUT STREAM *stream,
 	const BYTE *bufPtr = buffer;
 	const int timeout = ( flags & TRANSPORT_FLAG_NONBLOCKING ) ? 0 : \
 						( flags & TRANSPORT_FLAG_BLOCKING ) ? \
-						max( 30, netStream->timeout ) : netStream->timeout;
+						max( NET_TIMEOUT_WRITE, netStream->timeout ) : \
+						netStream->timeout;
 	int bytesToWrite, byteCount = 0, iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -2425,7 +2728,7 @@ static int writeSocketFunction( INOUT STREAM *stream,
 	assert( isWritePtr( length, sizeof( int ) ) );
 
 	REQUIRES_S( stream->type == STREAM_TYPE_NETWORK );
-	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
+	REQUIRES_S( maxLength > 0 && maxLength < MAX_BUFFER_SIZE );
 	REQUIRES_S( ( ( flags & TRANSPORT_FLAG_NONBLOCKING ) && \
 					timeout == 0 ) || \
 				( !( flags & TRANSPORT_FLAG_NONBLOCKING ) && \
@@ -2447,17 +2750,18 @@ static int writeSocketFunction( INOUT STREAM *stream,
 	   blocking socket if they couldn't get required mbufs so that even if 
 	   select() indicated that the socket was writeable, an actual attempt 
 	   to write would return an error since there were no mbufs available.  
-	   Under Win95 select() can fail to block on a non-blocking socket, so 
-	   that the send() returns EWOULDBLOCK.  One possible reason (related to 
-	   the mbuf problem) is that another thread may grab memory between the 
-	   select() and the send() so that there's no buffer space available 
-	   when send() needs it, although this should really return WSAENOBUFS 
-	   rather than WSAEWOULDBLOCK.  There's also a known bug in Win95 (and 
-	   possibly Win98 as well, Q177346) under which a select() indicates 
+	   Under Win95 select() could fail to block on a non-blocking socket, 
+	   so that the send() would return EWOULDBLOCK.  One possible reason 
+	   (related to the mbuf problem) for this was that another thread couled 
+	   have grabed memory between the select() and the send() so that there 
+	   was no buffer space available when the send() needed it, although 
+	   this should really have returned WSAENOBUFS rather than 
+	   WSAEWOULDBLOCK.  There was also a known bug in Win95 (and possibly 
+	   Win98 as well, Q177346) under which a select() would indicate 
 	   writeability but send() returns EWOULDBLOCK.  Another select() 
 	   executed after the failed send() then causes select() to suddenly 
-	   realise that the socket is non-writeable (accidit in puncto, quod 
-	   non seperatur in anno).  Finally, in some cases send() can return an 
+	   realise that the socket is non-writeable (accidit in puncto, quod non 
+	   seperatur in anno).  Finally, in some cases send() can return an 
 	   error but WSAGetLastError() indicates that there's no error, so we 
 	   treat it as noise and try again */
 	status = setMonoTimer( &timerInfo, timeout );
@@ -2522,8 +2826,8 @@ static int writeSocketFunction( INOUT STREAM *stream,
 		bufPtr += bytesWritten;
 		bytesToWrite -= bytesWritten;
 		byteCount += bytesWritten;
-		ENSURES_S( bytesToWrite >= 0 && bytesToWrite < MAX_INTLENGTH );
-		ENSURES_S( byteCount > 0 && byteCount < MAX_INTLENGTH );
+		ENSURES_S( bytesToWrite >= 0 && bytesToWrite < MAX_BUFFER_SIZE );
+		ENSURES_S( byteCount > 0 && byteCount < MAX_BUFFER_SIZE );
 		}
 	ENSURES_S( iterationCount < FAILSAFE_ITERATIONS_MAX );
 	*length = byteCount;

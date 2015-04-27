@@ -281,13 +281,16 @@ static int readPacketHeader( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int pgpReadShortLength( INOUT STREAM *stream, 
-						OUT_LENGTH int *length, 
+						OUT_LENGTH_SHORT_Z int *length, 
 						IN_BYTE const int ctb )
 	{
 	long localLength;
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	/* Clear return value */
+	*length = 0;
 
 	status = pgpReadLength( stream, &localLength, ctb, 0, 
 							MAX_INTLENGTH_SHORT, FALSE );
@@ -344,7 +347,8 @@ int pgpReadPartialLength( INOUT STREAM *stream,
    length) */
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int pgpWriteLength( INOUT STREAM *stream, IN_LENGTH const long length )
+int pgpWriteLength( INOUT STREAM *stream, 
+					IN_LENGTH const long length )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	

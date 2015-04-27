@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Kernel Interface Header File 				*
-*						Copyright Peter Gutmann 1992-2011					*
+*						Copyright Peter Gutmann 1992-2013					*
 *																			*
 ****************************************************************************/
 
@@ -100,7 +100,7 @@ typedef enum {
 	OBJECT_TYPE_DEVICE,				/* Crypto device */
 	OBJECT_TYPE_SESSION,			/* Secure session */
 	OBJECT_TYPE_USER,				/* User object */
-	OBJECT_TYPE_LAST				/* Last object type */
+	OBJECT_TYPE_LAST				/* Last possible object type */
 	} OBJECT_TYPE;
 
 /* Object subtypes.  The subtype names aren't needed by the kernel (it just 
@@ -280,7 +280,7 @@ typedef enum {
 	MESSAGE_USER_TRUSTMGMT				&value			action */
 
 typedef enum {
-	MESSAGE_NONE,				/* No message */
+	MESSAGE_NONE,				/* No message type */
 
 	/* Control messages to externally visible objects (the internal versions 
 	   are defined further down).  These messages are handled directly by 
@@ -413,7 +413,7 @@ typedef enum {
 /* The properties that MESSAGE_COMPARE can compare */
 
 typedef enum {
-	MESSAGE_COMPARE_NONE,			/* No comparison */
+	MESSAGE_COMPARE_NONE,			/* No comparison type */
 	MESSAGE_COMPARE_HASH,			/* Compare hash/MAC value */
 	MESSAGE_COMPARE_ICV,			/* Compare ICV value */
 	MESSAGE_COMPARE_KEYID,			/* Compare key IDs */
@@ -421,6 +421,7 @@ typedef enum {
 	MESSAGE_COMPARE_KEYID_OPENPGP,	/* Compare OpenPGP key IDs */
 	MESSAGE_COMPARE_SUBJECT,		/* Compare subject */
 	MESSAGE_COMPARE_ISSUERANDSERIALNUMBER,	/* Compare iAndS */
+	MESSAGE_COMPARE_SUBJECTKEYIDENTIFIER,	/* Compare subjectKeyIdentifier */
 	MESSAGE_COMPARE_FINGERPRINT_SHA1,/* Compare cert.fingerprint */
 	MESSAGE_COMPARE_FINGERPRINT_SHA2,/* Compare fingerprint, SHA2 */
 	MESSAGE_COMPARE_FINGERPRINT_SHAng,/* Compare fingerprint, SHAng */
@@ -443,7 +444,7 @@ typedef enum {
 typedef enum {
 	/* Standard checks, for which the object must be initialised in a state 
 	   to perform this operation */
-	MESSAGE_CHECK_NONE,				/* No check */
+	MESSAGE_CHECK_NONE,				/* No check type */
 	MESSAGE_CHECK_PKC,				/* Public or private key context */
 	MESSAGE_CHECK_PKC_PRIVATE,		/* Private key context */
 	MESSAGE_CHECK_PKC_ENCRYPT,		/* Public encryption context */
@@ -492,7 +493,7 @@ typedef enum {
 /* The notifications that a MESSAGE_CHANGENOTIFY can deliver */
 
 typedef enum {
-	MESSAGE_CHANGENOTIFY_NONE,		/* No notification */
+	MESSAGE_CHANGENOTIFY_NONE,		/* No notification type */
 	MESSAGE_CHANGENOTIFY_STATE,		/* Object should save/rest.int.state */
 	MESSAGE_CHANGENOTIFY_OBJHANDLE,	/* Object cloned, handle changed */
 	MESSAGE_CHANGENOTIFY_OWNERHANDLE,	/* Object cloned, owner handle changed */
@@ -502,7 +503,7 @@ typedef enum {
 /* The operations that a MESSAGE_USER_USERMGMT can perform */
 
 typedef enum {
-	MESSAGE_USERMGMT_NONE,			/* No operation */
+	MESSAGE_USERMGMT_NONE,			/* No operation type */
 	MESSAGE_USERMGMT_ZEROISE,		/* Zeroise users */
 	MESSAGE_USERMGMT_LAST			/* Last possible operation type */
 	} MESSAGE_USERMGMT_TYPE;
@@ -510,7 +511,7 @@ typedef enum {
 /* The operations that a MESSAGE_USER_TRUSTMGMT can perform */
 
 typedef enum {
-	MESSAGE_TRUSTMGMT_NONE,			/* No operation */
+	MESSAGE_TRUSTMGMT_NONE,			/* No operation type */
 	MESSAGE_TRUSTMGMT_ADD,			/* Add trusted cert */
 	MESSAGE_TRUSTMGMT_DELETE,		/* Delete trusted cert */
 	MESSAGE_TRUSTMGMT_CHECK,		/* Check trust status of cert */
@@ -521,7 +522,7 @@ typedef enum {
 /* Options for the MESSAGE_SETDEPENDENT message */
 
 typedef enum {
-	SETDEP_OPTION_NONE,				/* No option */
+	SETDEP_OPTION_NONE,				/* No option type */
 	SETDEP_OPTION_NOINCREF,			/* Don't inc.dep.objs reference count */
 	SETDEP_OPTION_INCREF,			/* Increment dep.objs reference count */
 	SETDEP_OPTION_LAST				/* Last possible option type */
@@ -692,7 +693,7 @@ extern const int messageValueCursorPrevious, messageValueCursorLast;
    the two are distinct */
 
 typedef enum {
-	MECHANISM_NONE,				/* No mechanism */
+	MECHANISM_NONE,				/* No mechanism type */
 	MECHANISM_ENC_PKCS1,		/* PKCS #1 en/decrypt */
 	MECHANISM_ENC_PKCS1_PGP,	/* PKCS #1 using PGP formatting */
 	MECHANISM_ENC_PKCS1_RAW,	/* PKCS #1 returning uninterpreted data */
@@ -712,7 +713,7 @@ typedef enum {
 	MECHANISM_PRIVATEKEYWRAP_PGP2,	/* PGP 2.x private key wrap */
 	MECHANISM_PRIVATEKEYWRAP_OPENPGP_OLD,/* Legacy OpenPGP private key wrap */
 	MECHANISM_PRIVATEKEYWRAP_OPENPGP,/* OpenPGP private key wrap */
-	MECHANISM_LAST				/* Last valid mechanism type */
+	MECHANISM_LAST				/* Last possible mechanism type */
 	} MECHANISM_TYPE;
 
 /* A structure to hold information needed by the key export/import mechanism. 
@@ -918,7 +919,17 @@ typedef struct {
    the system object, but it can also be used to create contexts in hardware 
    devices.  In addition to the creation parameters we also pass in the 
    owner's user object to be stored with the object data for use when 
-   needed */
+   needed.
+   
+   For the create-indirect certificate case, the arguments are:
+
+	arg1		Certificate object type.
+	arg2		Optional certificate object ID type, used as an indicator of 
+				the primary object in a collection like a certificate chain 
+				or set.
+	arg3		Optional KEYMGMT_FLAGs.
+	strArg1		Certificate object data.
+	strArg2		Optional certificate object ID (see arg2) */
 
 typedef struct {
 	CRYPT_HANDLE cryptHandle;	/* Handle to created object */
@@ -927,7 +938,7 @@ typedef struct {
 	BUFFER_OPT_FIXED( strArgLen1 ) \
 	const void *strArg1;
 	BUFFER_OPT_FIXED( strArgLen2 ) \
-	const void *strArg2;	/* String args */
+	const void *strArg2;		/* String args */
 	int strArgLen1, strArgLen2;
 	} MESSAGE_CREATEOBJECT_INFO;
 
@@ -947,6 +958,24 @@ typedef struct {
 		( createObjectInfo )->strArg1 = ( data ); \
 		( createObjectInfo )->strArgLen1 = ( dataLen ); \
 		( createObjectInfo )->arg1 = ( type ); \
+		}
+
+#define setMessageCreateObjectIndirectInfoEx( createObjectInfo, data, dataLen, type, options ) \
+		{ \
+		memset( createObjectInfo, 0, sizeof( MESSAGE_CREATEOBJECT_INFO ) ); \
+		( createObjectInfo )->cryptHandle = CRYPT_ERROR; \
+		( createObjectInfo )->cryptOwner = CRYPT_ERROR; \
+		( createObjectInfo )->strArg1 = ( data ); \
+		( createObjectInfo )->strArgLen1 = ( dataLen ); \
+		( createObjectInfo )->arg1 = ( type ); \
+		( createObjectInfo )->arg3 = ( options ); \
+		}
+
+#define updateMessageCreateObjectIndirectInfo( createObjectInfo, idType, id, idLength ) \
+		{ \
+		( createObjectInfo )->arg2 = ( idType ); \
+		( createObjectInfo )->strArg2 = ( id ); \
+		( createObjectInfo )->strArgLen2 = ( idLength ); \
 		}
 
 /* Key management messages, used to set, get and delete keys.  The item type, 
@@ -999,23 +1028,26 @@ typedef enum {
 	KEYMGMT_ITEM_REVOCATIONINFO,/* Access revocation info/CRL */
 	KEYMGMT_ITEM_KEYMETADATA,	/* Access key metadata for dummy ctx.*/
 	KEYMGMT_ITEM_DATA,			/* Other data (for PKCS #15 tokens) */
-	KEYMGMT_ITEM_LAST			/* Last item type */
+	KEYMGMT_ITEM_LAST			/* Last possible item type */
 	} KEYMGMT_ITEM_TYPE;
 
-#define KEYMGMT_FLAG_NONE			0x0000	/* No flag */
+#define KEYMGMT_FLAG_NONE			0x0000	/* No flag type */
 #define KEYMGMT_FLAG_CHECK_ONLY		0x0001	/* Perform existence check only */
 #define KEYMGMT_FLAG_LABEL_ONLY		0x0002	/* Get key label only */
 #define KEYMGMT_FLAG_UPDATE			0x0004	/* Update existing (allow dups) */
-#define KEYMGMT_FLAG_DATAONLY_CERT	0x0008	/* Create data-only certs */
-#define KEYMGMT_FLAG_USAGE_CRYPT	0x0010	/* Prefer encryption key */
-#define KEYMGMT_FLAG_USAGE_SIGN		0x0020	/* Prefer signature key */
-#define KEYMGMT_FLAG_GETISSUER		0x0040	/* Get issuing PKI user for cert */
-#define KEYMGMT_FLAG_INITIALOP		0x0080	/* Initial cert issue operation */
-#define KEYMGMT_FLAG_MAX			0x00FF	/* Maximum possible flag value */
+#define KEYMGMT_FLAG_DATAONLY_CERT	0x0008	/* Create data-only certificate */
+#define KEYMGMT_FLAG_CERT_AS_CERTCHAIN 0x010 /* Force creation of cert.chain
+												even if single cert.present */
+#define KEYMGMT_FLAG_USAGE_CRYPT	0x0020	/* Prefer encryption key */
+#define KEYMGMT_FLAG_USAGE_SIGN		0x0040	/* Prefer signature key */
+#define KEYMGMT_FLAG_GETISSUER		0x0080	/* Get issuing PKI user for cert */
+#define KEYMGMT_FLAG_INITIALOP		0x0100	/* Initial cert issue operation */
+#define KEYMGMT_FLAG_MAX			0x01FF	/* Maximum possible flag value */
 
 #define KEYMGMT_MASK_USAGEOPTIONS	( KEYMGMT_FLAG_USAGE_CRYPT | \
 									  KEYMGMT_FLAG_USAGE_SIGN )
 #define KEYMGMT_MASK_CERTOPTIONS	( KEYMGMT_FLAG_DATAONLY_CERT | \
+									  KEYMGMT_FLAG_CERT_AS_CERTCHAIN | \
 									  KEYMGMT_FLAG_USAGE_CRYPT | \
 									  KEYMGMT_FLAG_USAGE_SIGN )
 typedef struct {
@@ -1188,7 +1220,7 @@ BOOLEAN krnlIsExiting( void );
 typedef enum {
 	SEMAPHORE_NONE,					/* No semaphore */
 	SEMAPHORE_DRIVERBIND,			/* Async driver bind */
-	SEMAPHORE_LAST					/* Last semaphore */
+	SEMAPHORE_LAST					/* Last possible semaphore */
 	} SEMAPHORE_TYPE;
 
 typedef enum {
@@ -1196,7 +1228,7 @@ typedef enum {
 	MUTEX_SCOREBOARD,				/* Session scoreboard */
 	MUTEX_SOCKETPOOL,				/* Network socket pool */
 	MUTEX_RANDOM,					/* Randomness subsystem */
-	MUTEX_LAST						/* Last mutex */
+	MUTEX_LAST						/* Last possible mutex */
 	} MUTEX_TYPE;
 
 /* Execute a function in a background thread.  This takes a pointer to the 

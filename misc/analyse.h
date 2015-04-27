@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Source Analysis Header File 					*
-*						Copyright Peter Gutmann 1997-2011					*
+*						Copyright Peter Gutmann 1997-2013					*
 *																			*
 ****************************************************************************/
 
@@ -51,7 +51,24 @@
    in attribute SAL and appears to be used, or at least it's defined as 
    atributes rather than just being no-oped out */
 
-#include <specstrings.h>
+#if VC_GE_2013( _MSC_VER )
+  #include <sal.h>
+#else
+  #include <specstrings.h>
+#endif /* Different SAL headers acorss VC++ versions */
+
+/* SAL has changed over time, the initial version (VS 2005) was declspec 
+SAL, then VS 2010 introduced attribute SAL (later renamed attribute
+SAL 1.0) and VS 2012 introduced attribute SAL 2.0.  To deal with
+these changes we use the following macros */
+
+#ifdef __ATTR_SAL				/* Attribute SAL */
+  #if _SAL_VERSION >= 20
+	#define ATTRIBUTE_SAL_20
+  #else
+	#define ATTRIBUTE_SAL_10
+  #endif /* Attribute SAL 1.0 vs 2.0 */
+#endif /* __ATTR_SAL */
 
 /* Function return value information.  RETVAL_xxx annotations simply indicate
    what the function returns, CHECK_RETVAL_xxx indicates that the caller must
@@ -80,40 +97,41 @@
    pointer version that's no-oped out in attribute SAL but left in in 
    declspec SAL */
 
-#ifdef __ATTR_SAL				/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_10 ) || defined( ATTRIBUTE_SAL_20 )
 
 #define CHECK_RETVAL			_Check_return_ \
-								_Success_( result == CRYPT_OK )
+								_Success_( return == CRYPT_OK )
 #define CHECK_RETVAL_BOOL		_Check_return_ \
-								_Success_( result == TRUE )
+								_Success_( return == TRUE )
 #define CHECK_RETVAL_ENUM( name ) \
 								_Check_return_ \
-								_Success_( result >= name##_NONE && result < name##_LAST )
+								_Success_( return >= name##_NONE && return < name##_LAST )
 #define CHECK_RETVAL_LENGTH		_Check_return_ \
-								_Success_( result >= 0 && result <= MAX_INTLENGTH - 1 )
+								_Success_( return >= 0 && return <= MAX_INTLENGTH - 1 )
 #define CHECK_RETVAL_PTR		_Check_return_ \
-								_Success_( result != NULL )
+								_Ret_maybenull_ \
+								_Success_( return != NULL )
 #define CHECK_RETVAL_RANGE( low, high ) \
 								_Check_return_ \
-								_Success_( result >= ( low ) && result <= ( high ) )
+								_Success_( return >= ( low ) && return <= ( high ) )
 #define CHECK_RETVAL_SPECIAL	_Check_return_ \
-								_Success_( result == CRYPT_OK || result == OK_SPECIAL )
+								_Success_( return == CRYPT_OK || return == OK_SPECIAL )
 #define CHECK_RETVAL_STRINGOP( length ) \
 								_Check_return_ \
-								_Success_( result >= 0 )
+								_Success_( return >= 0 )
 
-#define CHECK_RETVAL_FNPTR
-#define CHECK_RETVAL_BOOL_FNPTR
-#define CHECK_RETVAL_LENGTH_FNPTR
-#define CHECK_RETVAL_PTR_FNPTR
-#define CHECK_RETVAL_SPECIAL_FNPTR
+#define CHECK_RETVAL_FNPTR		CHECK_RETVAL
+#define CHECK_RETVAL_BOOL_FNPTR	CHECK_RETVAL_BOOL
+#define CHECK_RETVAL_LENGTH_FNPTR	CHECK_RETVAL_LENGTH
+#define CHECK_RETVAL_PTR_FNPTR	CHECK_RETVAL_PTR
+#define CHECK_RETVAL_SPECIAL_FNPTR	CHECK_RETVAL_SPECIAL
 
-#define RETVAL					_Success_( result == CRYPT_OK )
-#define RETVAL_BOOL				_Success_( result == TRUE )
-#define RETVAL_RANGE( low, high ) _Success_( result >= ( low ) && result <= ( high ) )
-#define RETVAL_SPECIAL			_Success_( result == CRYPT_OK || result == OK_SPECIAL )
+#define RETVAL					_Success_( return == CRYPT_OK )
+#define RETVAL_BOOL				_Success_( return == TRUE )
+#define RETVAL_RANGE( low, high ) _Success_( return >= ( low ) && return <= ( high ) )
+#define RETVAL_SPECIAL			_Success_( return == CRYPT_OK || return == OK_SPECIAL )
 
-#define RETVAL_FNPTR
+#define RETVAL_FNPTR			RETVAL
 
 #else							/* Declspec SAL */
 
@@ -178,10 +196,10 @@
    given rather than reporting its own status.  In this case returning an
    error code indicates success */
 
-#ifdef __ATTR_SAL				/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_10 ) || defined( ATTRIBUTE_SAL_20 )
 
 #define CHECK_RETVAL_ERROR		_Check_return_ \
-								_Success_( result < CRYPT_OK - 1 )
+								_Success_( return < CRYPT_OK - 1 )
 
 #else							/* Declspec SAL */
 
@@ -204,7 +222,20 @@
    bound is explicitly zero or when it's set on error to xyz_NONE, which 
    would normally be an invalid value for the non-_Z parameter */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define IN_INT					_In_range_( 1, MAX_INTLENGTH - 1 ) 
+#define IN_INT_OPT				_In_range_( CRYPT_UNUSED, MAX_INTLENGTH - 1 ) 
+#define IN_INT_Z				_In_range_( 0, MAX_INTLENGTH - 1 ) 
+#define IN_INT_SHORT			_In_range_( 1, MAX_INTLENGTH_SHORT - 1 ) 
+#define IN_INT_SHORT_Z			_In_range_( 0, MAX_INTLENGTH_SHORT - 1 ) 
+
+#define OUT_INT					_Out_range_( 1, MAX_INTLENGTH - 1 ) 
+#define OUT_INT_Z				_Out_range_( 0, MAX_INTLENGTH - 1 ) 
+#define OUT_INT_SHORT_Z			_Out_range_( 0, MAX_INTLENGTH_SHORT - 1 ) 
+#define OUT_OPT_INT_Z			_Out_range_( 0, MAX_INTLENGTH - 1 ) 
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define IN_INT					_In_ _In_range_( 1, MAX_INTLENGTH - 1 ) 
 #define IN_INT_OPT				_In_ _In_range_( CRYPT_UNUSED, MAX_INTLENGTH - 1 ) 
@@ -253,7 +284,49 @@
    We also allow an OPT suffix to indicate the use of don't-care values, 
    typically CRYPT_UNUSED */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define IN_ALGO					_In_range_( CRYPT_ALGO_NONE + 1, CRYPT_ALGO_LAST - 1 )
+#define IN_ALGO_OPT				_In_range_( CRYPT_ALGO_NONE, CRYPT_ALGO_LAST - 1 )
+#define IN_ATTRIBUTE			_In_range_( CRYPT_ATTRIBUTE_NONE + 1, CRYPT_IATTRIBUTE_LAST - 1 )
+#define IN_ATTRIBUTE_OPT		_In_range_( CRYPT_ATTRIBUTE_NONE, CRYPT_IATTRIBUTE_LAST - 1 )
+#define IN_BYTE					_In_range_( 0, 0xFF )
+#define IN_CHAR					_In_range_( 0, 0x7F )
+#define IN_ERROR				_In_range_( MAX_ERROR, -1 )
+#define IN_HANDLE				_In_range_( SYSTEM_OBJECT_HANDLE, MAX_OBJECTS - 1 )
+#define IN_HANDLE_OPT			_In_range_( CRYPT_UNUSED, MAX_OBJECTS - 1 )
+#define IN_KEYID				_In_range_( CRYPT_KEYID_NONE + 1, CRYPT_KEYID_LAST - 1 )
+#define IN_KEYID_OPT			_In_range_( CRYPT_KEYID_NONE, CRYPT_KEYID_LAST - 1 )
+#define IN_MESSAGE				_In_range_( MESSAGE_NONE + 1, IMESSAGE_LAST - 1 )
+#define IN_MODE					_In_range_( CRYPT_MODE_NONE + 1, CRYPT_MODE_LAST - 1 )
+#define IN_MODE_OPT				_In_range_( CRYPT_MODE_NONE, CRYPT_MODE_LAST - 1 )
+#define IN_PORT					_In_range_( 22, 65535L )
+#define IN_PORT_OPT				_In_range_( CRYPT_UNUSED, 65535L )
+#define IN_RANGE( min, max )	_In_range_( ( min ), ( max ) )
+#define IN_RANGE_FIXED( value )	_In_range_( ( value ), ( value ) )
+#define IN_STATUS				_In_range_( MAX_ERROR, CRYPT_OK )
+
+#define INOUT_HANDLE			_In_range_( SYSTEM_OBJECT_HANDLE, MAX_OBJECTS - 1 ) \
+								_Out_range_( SYSTEM_OBJECT_HANDLE, MAX_OBJECTS - 1 )
+#define INOUT_RANGE( min, max )	_In_range_( ( min ), ( max ) ) \
+								_Out_range_( ( min ), ( max ) )
+
+#define OUT_ALGO_Z				_Out_range_( CRYPT_ALGO_NONE, CRYPT_ALGO_LAST - 1 )
+#define OUT_OPT_ALGO_Z			_Out_range_( CRYPT_ALGO_NONE, CRYPT_ALGO_LAST - 1 )
+#define OUT_ATTRIBUTE_Z			_Out_range_( CRYPT_ATTRIBUTE_NONE, CRYPT_IATTRIBUTE_LAST - 1 )
+#define OUT_OPT_ATTRIBUTE_Z		_Out_range_( CRYPT_ATTRIBUTE_NONE, CRYPT_IATTRIBUTE_LAST - 1 )
+#define OUT_BOOL				_Out_range_( FALSE, TRUE )
+#define OUT_OPT_BOOL			_Out_range_( FALSE, TRUE )
+#define OUT_OPT_BYTE			_Out_range_( 0, 0xFF )
+#define OUT_ERROR				_Out_range_( MAX_ERROR, -1 )
+#define OUT_HANDLE_OPT			_Out_range_( CRYPT_ERROR, MAX_OBJECTS - 1 )
+#define OUT_OPT_HANDLE_OPT		_Out_range_( SYSTEM_OBJECT_HANDLE, MAX_OBJECTS - 1 )
+#define OUT_PORT_Z				_Out_range_( 0, 65535L )
+#define OUT_RANGE( min, max )	_Out_range_( ( min ), ( max ) )
+#define OUT_OPT_RANGE( min, max ) _Out_range_( ( min ), ( max ) )
+#define OUT_STATUS				_Out_range_( MAX_ERROR, CRYPT_OK )
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define IN_ALGO					_In_ _In_range_( CRYPT_ALGO_NONE + 1, CRYPT_ALGO_LAST - 1 )
 #define IN_ALGO_OPT				_In_ _In_range_( CRYPT_ALGO_NONE, CRYPT_ALGO_LAST - 1 )
@@ -354,21 +427,67 @@
 	LENGTH_MIN		As LENGTH but lower bound is user-specified.
 	LENGTH_Z		As LENGTH but lower bound may be zero.
 
+	DATALENGTH		Value must be between 1 and MAX_BUFFER_SIZE - 1
+	DATALENGTH_Z	As DATALENGTH but lower bound may be zero.
+
 	LENGTH_SHORT	As LENGTH but upper bound is MAX_INTLENGTH_SHORT - 1 
 					rather than MAX_INTLENGTH - 1.
 	LENGTH_SHORT_MIN As LENGTH_SHORT but lower bound is user-specified.
-	LENGTH_SHORT_Z	As LENGTH_SHORT but lower bound may be non-zero.
+	LENGTH_SHORT_Z	As LENGTH_SHORT but lower bound may be zero.
 
    In addition to these we allow the OPT specifier and OPT and Z suffixes as
    before */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define IN_LENGTH				_In_range_( 1, MAX_INTLENGTH - 1 )
+#define IN_LENGTH_OPT			_In_range_( CRYPT_UNUSED, MAX_INTLENGTH - 1 )
+#define IN_LENGTH_FIXED( size )	_In_range_( ( size ), ( size ) )
+#define IN_LENGTH_MIN( min )	_In_range_( ( min ), MAX_INTLENGTH - 1 )
+#define IN_LENGTH_Z				_In_range_( 0, MAX_INTLENGTH - 1 )
+
+#define IN_DATALENGTH			_In_range_( 1, MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_OPT		_In_range_( CRYPT_UNUSED, MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_MIN( min ) _In_range_( ( min ), MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_Z			_In_range_( 0, MAX_BUFFER_SIZE - 1 )
+
+#define IN_LENGTH_SHORT			_In_range_( 1, MAX_INTLENGTH_SHORT - 1 )
+#define IN_LENGTH_SHORT_OPT		_In_range_( CRYPT_UNUSED, MAX_INTLENGTH_SHORT - 1 )
+/* This really is a _OPT and not a _INDEF in 
+the one place where it's used */
+#define IN_LENGTH_SHORT_MIN( min ) _In_range_( ( min ) , MAX_INTLENGTH_SHORT - 1 )
+#define IN_LENGTH_SHORT_Z		_In_range_( 0, MAX_INTLENGTH_SHORT - 1 )
+
+#define INOUT_LENGTH_Z			_In_range_( 0, MAX_INTLENGTH - 1 ) \
+								_Out_range_( 0, MAX_INTLENGTH - 1 )
+#define INOUT_LENGTH_SHORT_Z	_In_range_( 0, MAX_INTLENGTH_SHORT - 1 ) \
+								_Out_range_( 0, MAX_INTLENGTH_SHORT - 1 )
+
+#define OUT_LENGTH				_Out_range_( 1, MAX_INTLENGTH - 1 )
+#define OUT_LENGTH_MIN( min )	_Out_range_( ( min ), MAX_INTLENGTH - 1 )
+#define OUT_OPT_LENGTH_MIN( min ) _Out_range_( ( min ), MAX_INTLENGTH - 1 )
+#define OUT_LENGTH_Z			_Out_range_( 0, MAX_INTLENGTH - 1 )
+#define OUT_OPT_LENGTH_Z		_Out_range_( 0, MAX_INTLENGTH - 1 )
+
+#define OUT_DATALENGTH			_Out_range_( 1, MAX_BUFFER_SIZE - 1 )
+#define OUT_DATALENGTH_Z		_Out_range_( 0, MAX_BUFFER_SIZE - 1 )
+
+#define OUT_LENGTH_SHORT		_Out_range_( 1, MAX_INTLENGTH_SHORT - 1 )
+#define OUT_LENGTH_SHORT_Z		_Out_range_( 0, MAX_INTLENGTH_SHORT - 1 )
+#define OUT_OPT_LENGTH_SHORT_Z	_Out_range_( 0, MAX_INTLENGTH_SHORT - 1 )
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define IN_LENGTH				_In_ _In_range_( 1, MAX_INTLENGTH - 1 )
 #define IN_LENGTH_OPT			_In_ _In_range_( CRYPT_UNUSED, MAX_INTLENGTH - 1 )
 #define IN_LENGTH_FIXED( size )	_In_ _In_range_( ( size ), ( size ) )
 #define IN_LENGTH_MIN( min )	_In_ _In_range_( ( min ), MAX_INTLENGTH - 1 )
 #define IN_LENGTH_Z				_In_ _In_range_( 0, MAX_INTLENGTH - 1 )
+
+#define IN_DATALENGTH			_In_ _In_range_( 1, MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_OPT		_In_ _In_range_( CRYPT_UNUSED, MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_MIN( min ) _In_ _In_range_( ( min ), MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_Z			_In_ _In_range_( 0, MAX_BUFFER_SIZE - 1 )
 
 #define IN_LENGTH_SHORT			_In_ _In_range_( 1, MAX_INTLENGTH_SHORT - 1 )
 #define IN_LENGTH_SHORT_OPT		_In_ _In_range_( CRYPT_UNUSED, MAX_INTLENGTH_SHORT - 1 )
@@ -390,6 +509,9 @@
 #define OUT_LENGTH_Z			_Out_ _Out_range_( 0, MAX_INTLENGTH - 1 )
 #define OUT_OPT_LENGTH_Z		_Out_opt_ _Out_range_( 0, MAX_INTLENGTH - 1 )
 
+#define OUT_DATALENGTH			_Out_ _Out_range_( 1, MAX_BUFFER_SIZE - 1 )
+#define OUT_DATALENGTH_Z		_Out_ _Out_range_( 0, MAX_BUFFER_SIZE - 1 )
+
 #define OUT_LENGTH_SHORT		_Out_ _Out_range_( 1, MAX_INTLENGTH_SHORT - 1 )
 #define OUT_LENGTH_SHORT_Z		_Out_ _Out_range_( 0, MAX_INTLENGTH_SHORT - 1 )
 #define OUT_OPT_LENGTH_SHORT_Z	_Out_opt_ _Out_range_( 0, MAX_INTLENGTH_SHORT - 1 )
@@ -401,6 +523,11 @@
 #define IN_LENGTH_FIXED( size )	__in __in_range( ( size ), ( size ) )
 #define IN_LENGTH_MIN( min )	__in __in_range( ( min ), MAX_INTLENGTH - 1 )
 #define IN_LENGTH_Z				__in __in_range( 0, MAX_INTLENGTH - 1 )
+
+#define IN_DATALENGTH			__in __in_range( 1, MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_OPT		__in __in_range( CRYPT_UNUSED, MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_MIN( min ) __in __in_range( ( min ), MAX_BUFFER_SIZE - 1 )
+#define IN_DATALENGTH_Z			__in __in_range( 0, MAX_BUFFER_SIZE - 1 )
 
 #define IN_LENGTH_SHORT			__in __in_range( 1, MAX_INTLENGTH_SHORT - 1 )
 #define IN_LENGTH_SHORT_OPT		__in __in_range( CRYPT_UNUSED, MAX_INTLENGTH_SHORT - 1 )
@@ -421,6 +548,9 @@
 #define OUT_OPT_LENGTH_MIN( min ) __out_opt __out_range( ( min ), MAX_INTLENGTH - 1 )
 #define OUT_LENGTH_Z			__out __out_range( 0, MAX_INTLENGTH - 1 )
 #define OUT_OPT_LENGTH_Z		__out_opt __out_range( 0, MAX_INTLENGTH - 1 )
+
+#define OUT_DATALENGTH_Z		__out __out_range( 1, MAX_BUFFER_SIZE - 1 )
+#define OUT_DATALENGTH_Z		__out __out_range( 0, MAX_BUFFER_SIZE - 1 )
 
 #define OUT_LENGTH_SHORT		__out __out_range( 1, MAX_INTLENGTH_SHORT - 1 )
 #define OUT_LENGTH_SHORT_Z		__out __out_range( 0, MAX_INTLENGTH_SHORT - 1 )
@@ -459,7 +589,34 @@
 
    In addition to these we allow the OPT specifier and Z suffix as before */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define IN_LENGTH_ATTRIBUTE		_In_range_( 1, MAX_ATTRIBUTE_SIZE )
+#define IN_LENGTH_DNS			_In_range_( 1, MAX_DNS_SIZE )
+#define IN_LENGTH_DNS_Z			_In_range_( 0, MAX_DNS_SIZE )
+#define IN_LENGTH_ERRORMESSAGE	_In_range_( 1, MAX_ERRORMESSAGE_SIZE )
+#define IN_LENGTH_HASH			_In_range_( 16, CRYPT_MAX_HASHSIZE )
+#define IN_LENGTH_INDEF			_In_range_( CRYPT_UNUSED, MAX_INTLENGTH - 1 )
+#define IN_LENGTH_IV			_In_range_( 1, CRYPT_MAX_IVSIZE )
+#define IN_LENGTH_IV_Z			_In_range_( 0, CRYPT_MAX_IVSIZE )
+#define IN_LENGTH_KEY			_In_range_( MIN_KEYSIZE, CRYPT_MAX_KEYSIZE )
+#define IN_LENGTH_KEYID			_In_range_( MIN_NAME_LENGTH, MAX_ATTRIBUTE_SIZE )
+#define IN_LENGTH_KEYID_Z		_In_range_( 0, MAX_ATTRIBUTE_SIZE )
+#define IN_LENGTH_NAME			_In_range_( MIN_NAME_LENGTH, MAX_ATTRIBUTE_SIZE )
+#define IN_LENGTH_NAME_Z		_In_range_( 0, MAX_ATTRIBUTE_SIZE )
+#define IN_LENGTH_OID			_In_range_( 7, MAX_OID_SIZE )
+#define IN_LENGTH_PKC			_In_range_( 1, CRYPT_MAX_PKCSIZE )
+#define IN_LENGTH_PKC_Z			_In_range_( 0, CRYPT_MAX_PKCSIZE )
+#define IN_LENGTH_TEXT			_In_range_( 1, CRYPT_MAX_TEXTSIZE )
+#define IN_LENGTH_TEXT_Z		_In_range_( 0, CRYPT_MAX_TEXTSIZE )
+
+#define OUT_LENGTH_DNS_Z		_Out_range_( 0, MAX_DNS_SIZE )
+#define OUT_OPT_LENGTH_HASH_Z	_Out_range_( 0, CRYPT_MAX_HASHSIZE )
+#define OUT_LENGTH_PKC_Z		_Out_range_( 0, CRYPT_MAX_PKCSIZE )
+#define OUT_LENGTH_INDEF		_Out_range_( CRYPT_UNUSED, MAX_INTLENGTH - 1 )
+#define OUT_OPT_LENGTH_INDEF	_Out_range_( CRYPT_UNUSED, MAX_INTLENGTH - 1 )
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define IN_LENGTH_ATTRIBUTE		_In_ _In_range_( 1, MAX_ATTRIBUTE_SIZE )
 #define IN_LENGTH_DNS			_In_ _In_range_( 1, MAX_DNS_SIZE )
@@ -528,7 +685,17 @@
    value may also be ANY_TAG (a don't-care value) or the hidden NO_TAG used 
    to handle reading of data when the tag has already been processed */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define IN_TAG					_In_range_( DEFAULT_TAG, MAX_TAG_VALUE - 1 )
+#define IN_TAG_EXT				_In_range_( ANY_TAG, MAX_TAG_VALUE - 1 )
+#define IN_TAG_ENCODED			_In_range_( NO_TAG, MAX_TAG )
+#define IN_TAG_ENCODED_EXT		_In_range_( ANY_TAG, MAX_TAG )
+
+#define OUT_TAG_Z				_Out_range_( 0, MAX_TAG_VALUE - 1 )
+#define OUT_TAG_ENCODED_Z		_Out_range_( 0, MAX_TAG )
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define IN_TAG					_In_ _In_range_( DEFAULT_TAG, MAX_TAG_VALUE - 1 )
 #define IN_TAG_EXT				_In_ _In_range_( ANY_TAG, MAX_TAG_VALUE - 1 )
@@ -560,7 +727,18 @@
    We also allow an OPT suffix to indicate the use of don't-care values, 
    denoted by xxx_NONE */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define IN_ENUM( name )			_In_range_( name##_NONE + 1, name##_LAST - 1 )
+#define IN_ENUM_OPT( name )		_In_range_( name##_NONE, name##_LAST - 1 )
+
+#define INOUT_ENUM( name )		_In_range_( name##_NONE + 1, name##_LAST - 1 ) \
+								_Out_range_( name##_NONE + 1, name##_LAST - 1 )
+
+#define OUT_ENUM( name )		_Out_range_( name##_NONE + 1, name##_LAST - 1 )
+#define OUT_ENUM_OPT( name )	_Out_range_( name##_NONE, name##_LAST - 1 )
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define IN_ENUM( name )			_In_ _In_range_( name##_NONE + 1, name##_LAST - 1 )
 #define IN_ENUM_OPT( name )		_In_ _In_range_( name##_NONE, name##_LAST - 1 )
@@ -590,7 +768,17 @@
    relies on the flag definition being bracketed by xxx_FLAG_NONE and 
    xxx_FLAG_MAX */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define IN_FLAGS( name )		_In_range_( 1, name##_FLAG_MAX )
+#define IN_FLAGS_Z( name )		_In_range_( name##_FLAG_NONE, name##_FLAG_MAX )
+
+#define INOUT_FLAGS( name )		_In_range_( name##_FLAG_NONE, name##_FLAG_MAX ) \
+								_Out_range_( name##_FLAG_NONE, name##_FLAG_MAX )
+
+#define OUT_FLAGS_Z( name )		_Out_range_( name##_FLAG_NONE, name##_FLAG_MAX )
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define IN_FLAGS( name )		_In_ _In_range_( 1, flags##_FLAG_MAX )
 #define IN_FLAGS_Z( name )		_In_ _In_range_( flags##_FLAG_NONE, flags##_FLAG_MAX )
@@ -618,14 +806,36 @@
 	OUT_BUFFER		For filling of { buffer, maxLength, *length } values.
 
 	INOUT_BUFFER_FIXED For in-place processing of { buffer, length } values, 
-					e.g.filtering control chars in a string.
+					e.g. filtering control chars in a string.
 	OUT_BUFFER_FIXED For filling of { buffer, length } values.
 
    In addition to these we allow the OPT specifier as before */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
 
-/* Attribute SAL doesn't have any definitions covering various types of 
+#define IN_BUFFER( count )				_In_reads_bytes_( count )
+#define IN_BUFFER_C( count )			_In_reads_bytes_( count )
+#define IN_BUFFER_OPT( count )			_In_reads_bytes_opt_( count )
+#define IN_BUFFER_OPT_C( count )		_In_reads_bytes_opt_( count )
+
+#define INOUT_BUFFER( max, count )		_In_reads_bytes_( max ) \
+										_Out_writes_bytes_to_( max, count )
+#define INOUT_BUFFER_C( max, count )	_In_reads_bytes_( max ) \
+										_Out_writes_bytes_to_( max, count )
+#define INOUT_BUFFER_FIXED( count )		_Inout_updates_bytes_all_( count )
+#define INOUT_BUFFER_OPT( max, count )	_Inout_updates_bytes_to_opt_( max, count )
+
+#define OUT_BUFFER( max, count )		_Out_writes_bytes_to_( max, count ) 
+#define OUT_BUFFER_C( max, count )		_Out_writes_bytes_to_( max, count ) 
+#define OUT_BUFFER_OPT( max, count )	_Out_writes_bytes_to_opt_( max, count ) 
+#define OUT_BUFFER_OPT_C( max, count )	_Out_writes_bytes_to_opt_( max, count ) 
+#define OUT_BUFFER_FIXED( count )		_Out_writes_bytes_all_( count )
+#define OUT_BUFFER_FIXED_C( count )		_Out_writes_bytes_all_( count )
+#define OUT_BUFFER_OPT_FIXED( count )	_Out_writes_bytes_all_opt_( count )
+
+#elif defined( ATTRIBUTE_SAL_10 )
+
+/* Attribute SAL 1.0 doesn't have any definitions covering various types of 
    ( max, count ) declarations so we have to define them ourselves */
 
 #define _Inout_bytecap_post_bytecount_(cap,count)		_Pre_valid_bytecap_(cap) \
@@ -640,43 +850,43 @@
 #define _Out_opt_bytecap_post_bytecount_c_(cap,count)	_Pre_opt_bytecap_(cap) _Pre_invalid_ \
 														_Post_bytecount_c_(count)
 
-#define IN_BUFFER( count )		_In_bytecount_( count )
-#define IN_BUFFER_C( count )	_In_bytecount_c_( count )
-#define IN_BUFFER_OPT( count )	_In_opt_bytecount_( count )
-#define IN_BUFFER_OPT_C( count ) _In_opt_bytecount_c_( count )
+#define IN_BUFFER( count )				_In_bytecount_( count )
+#define IN_BUFFER_C( count )			_In_bytecount_c_( count )
+#define IN_BUFFER_OPT( count )			_In_opt_bytecount_( count )
+#define IN_BUFFER_OPT_C( count )		_In_opt_bytecount_c_( count )
 
-#define INOUT_BUFFER( max, count ) _Inout_bytecap_post_bytecount_( max, count )
-#define INOUT_BUFFER_C( max, count ) _Inout_bytecap_post_bytecount_c_( max, count )
-#define INOUT_BUFFER_FIXED( count ) _Inout_bytecount_( count )
-#define INOUT_BUFFER_OPT( max, count ) _Inout_opt_bytecap_( max, count )
+#define INOUT_BUFFER( max, count )		_Inout_bytecap_post_bytecount_( max, count )
+#define INOUT_BUFFER_C( max, count )	_Inout_bytecap_post_bytecount_c_( max, count )
+#define INOUT_BUFFER_FIXED( count )		_Inout_bytecount_( count )
+#define INOUT_BUFFER_OPT( max, count )	_Inout_opt_bytecap_( max, count )
 
-#define OUT_BUFFER( max, count ) _Out_bytecap_post_bytecount_( max, count ) 
-#define OUT_BUFFER_C( max, count ) _Out_bytecap_post_bytecount_c_( max, count ) 
-#define OUT_BUFFER_OPT( max, count ) _Out_opt_bytecap_post_bytecount_( max, count ) 
-#define OUT_BUFFER_OPT_C( max, count ) _Out_opt_bytecap_post_bytecount_c_( max, count ) 
-#define OUT_BUFFER_FIXED( count ) _Out_bytecapcount_( count )
-#define OUT_BUFFER_FIXED_C( count ) _Out_bytecapcount_c_( count )
-#define OUT_BUFFER_OPT_FIXED( count ) _Out_opt_bytecapcount_( count )
+#define OUT_BUFFER( max, count )		_Out_bytecap_post_bytecount_( max, count ) 
+#define OUT_BUFFER_C( max, count )		_Out_bytecap_post_bytecount_c_( max, count ) 
+#define OUT_BUFFER_OPT( max, count )	_Out_opt_bytecap_post_bytecount_( max, count ) 
+#define OUT_BUFFER_OPT_C( max, count )	_Out_opt_bytecap_post_bytecount_c_( max, count ) 
+#define OUT_BUFFER_FIXED( count )		_Out_bytecapcount_( count )
+#define OUT_BUFFER_FIXED_C( count )		_Out_bytecapcount_c_( count )
+#define OUT_BUFFER_OPT_FIXED( count )	_Out_opt_bytecapcount_( count )
 
 #else							/* Declspec SAL */
 
-#define IN_BUFFER( count )		__in_bcount( count )
-#define IN_BUFFER_C( count )	__in_bcount( count )
-#define IN_BUFFER_OPT( count )	__in_bcount_opt( count )
-#define IN_BUFFER_OPT_C( count ) __in_bcount_opt( count )
+#define IN_BUFFER( count )				__in_bcount( count )
+#define IN_BUFFER_C( count )			__in_bcount( count )
+#define IN_BUFFER_OPT( count )			__in_bcount_opt( count )
+#define IN_BUFFER_OPT_C( count )		__in_bcount_opt( count )
 
-#define INOUT_BUFFER( max, count ) __inout_bcount( max, count )
-#define INOUT_BUFFER_C( max, count ) __inout_bcount( max, count )
-#define INOUT_BUFFER_FIXED( count ) __inout_bcount_full( count )
-#define INOUT_BUFFER_OPT( max, count ) __inout_bcount_opt( max, count )
+#define INOUT_BUFFER( max, count )		__inout_bcount( max, count )
+#define INOUT_BUFFER_C( max, count )	__inout_bcount( max, count )
+#define INOUT_BUFFER_FIXED( count )		__inout_bcount_full( count )
+#define INOUT_BUFFER_OPT( max, count )	__inout_bcount_opt( max, count )
 
-#define OUT_BUFFER( max, count ) __out_bcount_part( max, count ) 
-#define OUT_BUFFER_C( max, count ) __out_bcount_part( max, count ) 
-#define OUT_BUFFER_OPT( max, count ) __out_bcount_part_opt( max, count ) 
-#define OUT_BUFFER_OPT_C( max, count ) __out_bcount_part_opt( max, count ) 
-#define OUT_BUFFER_FIXED( count ) __out_bcount_full( count )
-#define OUT_BUFFER_FIXED_C( count ) __out_bcount_full( count )
-#define OUT_BUFFER_OPT_FIXED( count ) __out_bcount_full_opt( count )
+#define OUT_BUFFER( max, count )		__out_bcount_part( max, count ) 
+#define OUT_BUFFER_C( max, count )		__out_bcount_part( max, count ) 
+#define OUT_BUFFER_OPT( max, count )	__out_bcount_part_opt( max, count ) 
+#define OUT_BUFFER_OPT_C( max, count )	__out_bcount_part_opt( max, count ) 
+#define OUT_BUFFER_FIXED( count )		__out_bcount_full( count )
+#define OUT_BUFFER_FIXED_C( count )		__out_bcount_full( count )
+#define OUT_BUFFER_OPT_FIXED( count )	__out_bcount_full_opt( count )
 
 #endif /* Declspec vs. Attribute SAL */
 
@@ -684,7 +894,22 @@
 
 	ARRAY			For { fooType foo[], int fooCount } values */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define IN_ARRAY( count )		_In_reads_( count )
+#define IN_ARRAY_C( count )		_In_reads_( count )
+#define IN_ARRAY_OPT( count )	_In_reads_opt_( count )
+#define IN_ARRAY_OPT_C( count )	_In_reads_opt_( count )
+
+#define INOUT_ARRAY( count )	_Inout_updates_( count )
+#define INOUT_ARRAY_C( count )	_Inout_updates_( count )
+
+#define OUT_ARRAY( count )		_Out_writes_( count )
+#define OUT_ARRAY_C( count )	_Out_writes_( count )
+#define OUT_ARRAY_OPT( count )	_Out_writes_opt_( count )
+#define OUT_ARRAY_OPT_C( count ) _Out_writes_opt_( count )
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define IN_ARRAY( count )		_In_count_( count )
 #define IN_ARRAY_C( count )		_In_count_c_( count )
@@ -730,18 +955,31 @@
    example an I/O buffer that acts as BUFFER on read but BUFFER_FIXED on 
    write */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_20 )
 
-#define ARRAY( max, count )		/* No equivalent in attribute SAL */
-#define ARRAY_FIXED( max )		/* No equivalent in attribute SAL */
-#define BUFFER( max, count )	/* No equivalent in attribute SAL */
-#define BUFFER_OPT( max, count ) /* No equivalent in attribute SAL */
-#define BUFFER_FIXED( max )		/* No equivalent in attribute SAL */
-#define BUFFER_OPT_FIXED( max )	/* No equivalent in attribute SAL */
-#define BUFFER_UNSPECIFIED( max ) /* No equivalent in attribute SAL */
+#define VALUE( min, max )		_Field_range_( ( min ), ( max ) )
+#define ARRAY( max, count )		_Field_size_part_( ( max ), ( count ) )
+#define ARRAY_FIXED( max )		_Field_size_( max )
+#define BUFFER( max, count )	_Field_size_bytes_part_( ( max ), ( count ) )
+#define BUFFER_OPT( max, count ) _Field_size_bytes_part_opt_( ( max ), ( count ) )
+#define BUFFER_FIXED( max )		_Field_size_bytes_( max )
+#define BUFFER_OPT_FIXED( max )	_Field_size_bytes_opt_( max )
+#define BUFFER_UNSPECIFIED( max ) _Field_size_bytes_( max )
+
+#elif defined( ATTRIBUTE_SAL_10 )
+
+#define VALUE( min, max )		/* No equivalent in attribute SAL 1.0 */
+#define ARRAY( max, count )		/* No equivalent in attribute SAL 1.0 */
+#define ARRAY_FIXED( max )		/* No equivalent in attribute SAL 1.0 */
+#define BUFFER( max, count )	/* No equivalent in attribute SAL 1.0 */
+#define BUFFER_OPT( max, count ) /* No equivalent in attribute SAL 1.0 */
+#define BUFFER_FIXED( max )		/* No equivalent in attribute SAL 1.0 */
+#define BUFFER_OPT_FIXED( max )	/* No equivalent in attribute SAL 1.0 */
+#define BUFFER_UNSPECIFIED( max ) /* No equivalent in attribute SAL 1.0 */
 
 #else							/* Declspec SAL */
 
+#define VALUE( min, max )		/* No equivalent in Declspec SAL */
 #define ARRAY( max, count )		__field_ecount_part( ( max ), ( count ) )
 #define ARRAY_FIXED( max )		__field_ecount_full( max )
 #define BUFFER( max, count )	__field_bcount_part( ( max ), ( count ) )
@@ -753,10 +991,18 @@
 #endif /* Declspec vs. Attribute SAL */
 
 /* Memory-allocation functions that allocate and return a block of 
-   initialised memory.  Although this is documented as being usable for 
-   functions that take parameters "void **ptr, int *length', this doesn't 
-   actually work because when you get down to the attribute level you've
-   got 
+   initialised memory */
+
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define OUT_BUFFER_ALLOC( length )		_Outptr_result_bytebuffer_( length )
+#define OUT_BUFFER_ALLOC_OPT( length )	_Outptr_opt_result_bytebuffer_( length )
+
+#elif defined( ATTRIBUTE_SAL_10 )
+
+/* Although this is documented as being usable for functions that take 
+   parameters "void **ptr, int *length', this doesn't actually work because 
+   when you get down to the attribute level you've got 
    "([Pre(ValidElements="*length")] void **ptr, [Pre(Valid=SA_No)]int *length", 
    and since the *length value isn't valid at this point PREfast produces an 
    error 6525 "Invalid size specification".  The way to make it valid is to 
@@ -769,9 +1015,7 @@
    better diagnostics for this than a more generic __deref_out/_Deref_out_, 
    so we just use __deref_out for now */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
-
-#if 0	/* See comment above */
+#if 0
 #define OUT_BUFFER_ALLOC( length )		_Out_capcount_( length )
 #define OUT_BUFFER_ALLOC_OPT( length )	_Out_opt_capcount_( length )
 #else
@@ -792,7 +1036,7 @@
    when we're re-prototyping a non-cryptlib function that doesn't use 
    'const's */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_10 ) || defined( ATTRIBUTE_SAL_20 )
 
 #ifdef IN		/* Defined to no-ops in some versions of windef.h */
   #undef IN
@@ -817,9 +1061,23 @@
 
 #endif /* Declspec vs. Attribute SAL */
 
-/* Pointer annotations */
+/* Pointer annotations:
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+	OUT_PTR			**result, result and *result non-NULL.
+	OUT_OPT_PTR		**result, result non-NULL, *result may be NULL.
+	OUT_OPT_PTR_OPT	**result, result may be NULL, *result may be NULL */
+
+#if defined( ATTRIBUTE_SAL_20 )
+
+#define INOUT_PTR				_Inout_
+								/* There's no 
+								   _Inoutptr_result_nullonfailure_, the 
+								   _Inout_ seems to work though */
+#define OUT_PTR					_Outptr_
+#define OUT_OPT_PTR				_Outptr_result_nullonfailure_
+#define OUT_OPT_PTR_OPT			_Outptr_opt_result_nullonfailure_
+
+#elif defined( ATTRIBUTE_SAL_10 )
 
 #define INOUT_PTR				_Deref_inout_bound_
 								/* There's no _Deref_inout_, the _bound_ 
@@ -845,9 +1103,10 @@
 	IN_STRING		Argument is a null-terminated string.
 	TYPECAST		Type cast, e.g. from void * to struct foo * */
 
-#if VC_GE_2008( _MSC_VER )		/* Attribute SAL */
+#if defined( ATTRIBUTE_SAL_10 ) || defined( ATTRIBUTE_SAL_20 )
 
 #define ANALYSER_HINT( expr )	__analysis_assume( expr )
+#define ANALYSER_HINT_V( expr )	__analysis_assume( expr )
 								/* Attribute SAL has no equivalent for this, 
 								   but __analysis_assume() still works */
 #define CALLBACK_FUNCTION		/* No equivalent in attribute SAL */
@@ -859,6 +1118,7 @@
 #else							/* Declspec SAL */
 
 #define ANALYSER_HINT( expr )	__analysis_assume( expr )
+#define ANALYSER_HINT_V( expr )	__analysis_assume( expr )
 #define CALLBACK_FUNCTION		__callback
 #define FORMAT_STRING			__format_string
 #define IN_STRING				__in_z
@@ -879,8 +1139,10 @@
 #if defined( _MSC_VER ) && defined( _PREFAST_ ) 
   /* The use of the declspec annotation cancels the ability to use attribute 
      SAL, so if we're using that we have to no-op out this definition since
-	 there's no attribute SAL equivalent */
-  #ifdef __ATTR_SAL
+	 there's no attribute SAL 1.0 equivalent */
+  #if defined( ATTRIBUTE_SAL_20 )
+	#define STDC_UNUSED	_Reserved_
+  #elif defined( ATTRIBUTE_SAL_10 )
 	#define STDC_UNUSED
   #else
 	#define STDC_UNUSED	__reserved
@@ -929,6 +1191,18 @@
    parameters and providing an index into the parameter list instead of
    placing it next to the parameter as for STDC_UNUSED.
 
+   (The NULL-pointer problem may be controllable through 
+   -fno-delete-null-pointer-checks, but this is actually present in order to 
+   address a different issue, that code like 
+   'b = a->b; if( a == NULL ) return -1', which will segfault on most 
+   architectures but not ones that don't have memory protection (e.g. ARM7)
+   will never get to the NULL check so it can be deleted (as above, gcc
+   generates code that it knows will segfault instead of warning that 
+   there's a problem).  Since -fno-delete-null-pointer-checks doesn't
+   necessarily apply to STDC_NONNULL_ARG, it's not safe to rely on it, and
+   in any case we want the compiler to warn of erroneous use, not knowingly
+   generate code that segfaults when it's encountered).
+
    For both of these issues the gcc maintainers' response was "not our 
    problem/it's behaving as intended".
    
@@ -940,7 +1214,13 @@
    message thread arguing over why it was OK to do this (see 
    http://gcc.gnu.org/bugzilla/show_bug.cgi?id=30475) rather than actually 
    fixing it (although in this case the lack of tact of the bug submitter 
-   can't have helped either) */
+   can't have helped either).
+   
+   Another case is the totally braindamaged behaviour of -Wshadow, which 
+   took a complaint from no less then Linus Torvalds to get fixed (see 
+   "[PATCH] Don't compare unsigned variable for <0 in sys_prctl()", 
+   http://lkml.org/lkml/2006/11/28/239, and even then it took them six
+   years to fix the problem) */
 
 #define STDC_NONNULL_ARG( argIndex ) \
 		__attribute__(( nonnull argIndex ))
@@ -1022,6 +1302,7 @@ STDC_NONNULL_ARG( ( 1 ) ) \
    analyser, the best that we can do is use an ENSURES() */
 
 #define ANALYSER_HINT( expr )	ENSURES( expr )
+#define ANALYSER_HINT_V( expr )	ENSURES_V( expr )
 
 #endif /* clang/LLVM */
 
@@ -1057,6 +1338,43 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 #endif /* gcc on the test platform */
 
 #endif /* gcc/C'0x */
+
+/****************************************************************************
+*																			*
+*							Coverity Analysis Support 						*
+*																			*
+****************************************************************************/
+
+#ifdef __COVERITY__
+
+/* Coverity's annotations differ from everyone else's in that they're not
+   attributes applied to variables but explicit macros, so instead of:
+
+	foo( IN_STRING char *string )
+
+   they're given as:
+
+	foo( char *string )
+		{
+		ANALYSER_HINT_STRING( string );
+
+   The annotations are documented in Help | Check Reference | Models and 
+   annotations | Primitives for custom models, the ones that we use are:
+
+	ANALYSER_HINT_FORMAT_STRING: The string is a printf-style format string.
+
+	ANALYSER_HINT_STRING: The string must be a null-terminated string.
+
+	ANALYSER_HINT_RECURSIVE_LOCK/UNLOCK: The lock is recursively locked/
+		unlocked.  This is required when cryptlib synthesises recursive 
+		mutexes from Posix non-recursive ones */
+
+#define ANALYSER_HINT_FORMAT_STRING( string )	__coverity_format_string_sink__( string );
+#define ANALYSER_HINT_STRING( string )			__coverity_string_null_sink__( string );
+#define ANALYSER_HINT_RECURSIVE_LOCK( lock )	__coverity_recursive_lock_acquire__( lock );
+#define ANALYSER_HINT_RECURSIVE_UNLOCK( lock )	__coverity_recursive_lock_release__( lock );
+
+#endif /* Coverity */
 
 /****************************************************************************
 *																			*
@@ -1143,6 +1461,10 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 #define IN_LENGTH_FIXED( size )
 #define IN_LENGTH_MIN( min )
 #define IN_LENGTH_Z
+#define IN_DATALENGTH
+#define IN_DATALENGTH_OPT
+#define IN_DATALENGTH_MIN( min )
+#define IN_DATALENGTH_Z
 #define IN_LENGTH_SHORT
 #define IN_LENGTH_SHORT_MIN( min )
 #define IN_LENGTH_SHORT_OPT
@@ -1152,6 +1474,8 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 #define OUT_LENGTH
 #define OUT_LENGTH_Z
 #define OUT_OPT_LENGTH_Z
+#define OUT_DATALENGTH
+#define OUT_DATALENGTH_Z
 #define OUT_LENGTH_SHORT
 #define OUT_OPT_LENGTH_SHORT_Z
 #define OUT_LENGTH_SHORT_Z
@@ -1224,6 +1548,7 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 #define OUT_ARRAY_OPT( count )
 #define OUT_ARRAY_OPT_C( count )
 
+#define VALUE( min, max )
 #define ARRAY( max, count )
 #define ARRAY_FIXED( max )
 #define BUFFER( max, count )
@@ -1249,6 +1574,7 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 
 #ifndef ANALYSER_HINT
   #define ANALYSER_HINT( expr )
+  #define ANALYSER_HINT_V( expr )
 #endif /* ANALYSER_HINT */
 #if defined( __WINCE__ )
   /* The Windows CE SDK defines CALLBACK_FUNCTION itself but the CE version 
@@ -1260,7 +1586,12 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 #define IN_STRING
 #define IN_STRING_OPT
 #define TYPECAST( ctype )
-
+#ifndef ANALYSER_HINT_FORMAT_STRING
+  #define ANALYSER_HINT_FORMAT_STRING( string )
+  #define ANALYSER_HINT_STRING( string )
+  #define ANALYSER_HINT_RECURSIVE_LOCK( lock )
+  #define ANALYSER_HINT_RECURSIVE_UNLOCK( lock )
+#endif /* ANALYSER_HINT_FORMAT_STRING */
 #endif /* No extended analysis support */
 
 #ifndef STDC_NONNULL_ARG

@@ -311,7 +311,7 @@ int updateUserID( INOUT SESSION_INFO *sessionInfoPtr,
 	   non-cryptlib ID for the ir, which must be MAC'd */
 	if( isServer( sessionInfoPtr ) && protocolInfo->userIDsize == 9 )
 		{
-		BYTE encodedUserID[ CRYPT_MAX_TEXTSIZE + 8 ];
+		char encodedUserID[ CRYPT_MAX_TEXTSIZE + 8 ];
 		int encodedUserIDLength;
 
 		status = encodePKIUserValue( encodedUserID, CRYPT_MAX_TEXTSIZE,
@@ -368,7 +368,7 @@ int updateCertID( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 
 	status = addSessionInfoS( &sessionInfoPtr->attributeList,
-							  CRYPT_SESSINFO_SERVER_FINGERPRINT,
+							  CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1,
 							  protocolInfo->certID,
 							  protocolInfo->certIDsize );
 	if( cryptStatusError( status ) )

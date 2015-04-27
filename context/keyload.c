@@ -33,7 +33,6 @@ int attributeToFormatType( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 	{
 	static const MAP_TABLE attributeMapTbl[] = {
 		{ CRYPT_IATTRIBUTE_KEY_SSH, KEYFORMAT_SSH },
-		{ CRYPT_IATTRIBUTE_KEY_SSH1,  KEYFORMAT_SSH1 },
 		{ CRYPT_IATTRIBUTE_KEY_SSL, KEYFORMAT_SSL },
 		{ CRYPT_IATTRIBUTE_KEY_PGP, KEYFORMAT_PGP },
 		{ CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL, KEYFORMAT_PGP },
@@ -538,7 +537,6 @@ int setEncodedKey( INOUT CONTEXT_INFO *contextInfoPtr,
 	REQUIRES( keyType == CRYPT_IATTRIBUTE_KEY_SPKI || \
 			  keyType == CRYPT_IATTRIBUTE_KEY_PGP || \
 			  keyType == CRYPT_IATTRIBUTE_KEY_SSH || \
-			  keyType == CRYPT_IATTRIBUTE_KEY_SSH1 || \
 			  keyType == CRYPT_IATTRIBUTE_KEY_SSL || \
 			  keyType == CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL || \
 			  keyType == CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL );
@@ -948,7 +946,7 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 				return( status );
 			macInfo->saltLength = PKCS5_SALT_SIZE;
 			}
-		contextInfoPtr->ctxConv->keySetupAlgorithm = hmacAlgo;
+		macInfo->keySetupAlgorithm = hmacAlgo;
 		setMechanismDeriveInfo( &mechanismInfo, macInfo->userKey, keySize,
 								keyValue, keyValueLen, 
 								macInfo->keySetupAlgorithm, 

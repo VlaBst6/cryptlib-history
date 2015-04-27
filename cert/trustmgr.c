@@ -76,7 +76,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 static int getCertIdInfo( IN_BUFFER( certObjectLength ) const void *certObject, 
 						  IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
 								const int certObjectLength,
-						  OUT_PTR void **subjectDNptrPtr, 
+						  OUT_OPT_PTR void **subjectDNptrPtr,
 						  OUT_LENGTH_SHORT_Z int *subjectDNsizePtr )
 	{
 	STREAM stream;
@@ -286,8 +286,15 @@ CRYPT_CERTIFICATE getTrustedCert( INOUT TYPECAST( TRUST_INFO ** ) \
 								  &createInfo, OBJECT_TYPE_CERTIFICATE );
 		if( cryptStatusError( status ) )
 			{
-			DEBUG_DIAG(( "Couldn't instantiate trusted certificate" ));
-			assert( DEBUG_WARN );
+			/* If we couldn't instantiate the certificate and it's due to a
+			   problem with the certificate rather than circumstances beyond
+			   our control, warn about the issue since a (supposedly) known-
+			   good certificate shouldn't cause problems on import */
+			if( status != CRYPT_ERROR_MEMORY )
+				{
+				DEBUG_DIAG(( "Couldn't instantiate trusted certificate" ));
+				assert( DEBUG_WARN );
+				}
 			return( status );
 			}
 
@@ -728,7 +735,7 @@ void deleteTrustEntry( INOUT TYPECAST( TRUST_INFO ** ) void *trustInfoPtrPtr,
 /* Initialise and shut down the trust information */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initTrustInfo( OUT_PTR TYPECAST( TRUST_INFO ** ) void **trustInfoPtrPtr )
+int initTrustInfo( OUT_OPT_PTR TYPECAST( TRUST_INFO ** ) void **trustInfoPtrPtr )
 	{
 	TRUST_INFO **trustInfoIndex;
 

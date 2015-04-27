@@ -62,11 +62,21 @@
   #include "osconfig.h"
   #include "blowfish.h"
   #include "bflocl.h"
-  #include "bfpi.h"
 #else
   #include "crypt/osconfig.h"
   #include "crypt/blowfish.h"
   #include "crypt/bflocl.h"
+#endif /* Compiler-specific includes */
+
+#ifdef USE_BLOWFISH
+
+/* bfpi.h declates an enormous static const lookup table, so we need to 
+   include it after we've checked whether we want to build the BF code or
+   not - pcg */
+
+#if defined( INC_ALL )
+  #include "bfpi.h"
+#else
   #include "crypt/bfpi.h"
 #endif /* Compiler-specific includes */
 
@@ -121,4 +131,4 @@ void BF_set_key(BF_KEY *key, int len, const unsigned char *data)
 		p[i+1]=in[1];
 		}
 	}
-
+#endif /* USE_BLOWFISH */

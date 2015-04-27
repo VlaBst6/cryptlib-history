@@ -639,7 +639,7 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	const int privKeyTotalSize = pkcs15infoPtr->privKeyDataSize;
 	void *encryptedKey, *encryptedContent = DUMMY_INIT_PTR;
 	int encryptedContentLength = DUMMY_INIT, macValueLength = DUMMY_INIT;
-	int tag, status;
+	int checksum, tag, status;
 
 	assert( isReadPtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	assert( ( isStorageObject && \
@@ -773,6 +773,8 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 				( status, errorInfo, 
 				  "Invalid encrypted private key data" ) );
 		}
+	ANALYSER_HINT( encryptedContent != NULL );
+	checksum = checksumData( encryptedContent, encryptedContentLength );
 
 	/* Import the session key using the user password */
 	status = importSessionKey( iCryptContext, encryptedKey, queryInfo.size, 
@@ -841,6 +843,15 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 						( status, errorInfo, 
 						  "Couldn't unwrap/import private key" ) );
 			}
+		}
+	if( checksumData( encryptedContent, 
+					  encryptedContentLength ) != checksum )
+		{
+		/* The encrypted private-key data was corrupted between the MAC 
+		   check and when it was decrypted and loaded into the context, we 
+		   can't trust the key */
+		DEBUG_DIAG(( "Encrypted private-key data memory corruption detected" ));
+		return( CRYPT_ERROR_FAILED );
 		}
 
 	return( CRYPT_OK );

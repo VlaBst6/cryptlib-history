@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								cryptlib Header File						*
-*						Copyright Peter Gutmann 1992-2012					*
+*						Copyright Peter Gutmann 1992-2014					*
 *																			*
 ****************************************************************************/
 
@@ -9,9 +9,9 @@
 
 #define _CRYPTLIB_DEFINED
 
-/* The current cryptlib version: 3.4.2 */
+/* The current cryptlib version: 3.4.3 */
 
-#define CRYPTLIB_VERSION	3420
+#define CRYPTLIB_VERSION	3430
 
 /* Fixup for Windows support.  We need to include windows.h for various types
    and prototypes needed for DLL's.  In addition wincrypt.h defines some
@@ -342,19 +342,7 @@ typedef enum {						/* Certificate object types */
 	   types are only visible internally */
 	CRYPT_ICERTTYPE_CMS_CERTSET,	/* CMS SET OF Certificate = cert chain */
 	CRYPT_ICERTTYPE_SSL_CERTCHAIN,	/* SSL certificate chain = cert chain */
-	CRYPT_ICERTTYPE_CTL,			/* Cert.trust list (data-only cert chain) */
 	CRYPT_ICERTTYPE_REVINFO,		/* Revocation info/single CRL entry */
-
-	/* CRYPT_ICERTTYPE_DATAONLY is a special value that doesn't specifically 
-	   contain a data format hint but indicates that the certificate should 
-	   be instantiated without creating a corresponding context to contain 
-	   the associated public key.  This value is used by certs associated 
-	   with private-key objects and by contained in cert chains for which 
-	   only the leaf cert actually needs to have a context instantiated.
-	   Technically this is simply a modifier for CRYPT_CERTTYPE_CERTIFICATE,
-	   but there's no easy way to pass this flag down, so we give it its own
-	   pseudo-type instead */
-	CRYPT_ICERTTYPE_DATAONLY,		/* Data-only cert */
 #endif /* _CRYPT_DEFINED */
 	CRYPT_CERTTYPE_LAST				/* Last possible cert.type */
 #ifdef _CRYPT_DEFINED
@@ -469,7 +457,7 @@ typedef enum {
 	CRYPT_ATTRIBUTE_CURRENT_INSTANCE,	/* Cursor mgt: Instance in attribute list */
 	CRYPT_ATTRIBUTE_BUFFERSIZE,		/* Internal data buffer size */
 
-	/* User internally */
+	/* Used internally */
 	CRYPT_GENERIC_LAST, CRYPT_OPTION_FIRST = 100,
 
 	/****************************/
@@ -591,10 +579,8 @@ typedef enum {
 	CRYPT_CERTINFO_IMMUTABLE,		/* Cert is signed and immutable */
 	CRYPT_CERTINFO_XYZZY,			/* Cert is a magic just-works cert */
 	CRYPT_CERTINFO_CERTTYPE,		/* Certificate object type */
-	CRYPT_CERTINFO_FINGERPRINT,		/* Certificate fingerprints */
-		CRYPT_CERTINFO_FINGERPRINT_MD5 = CRYPT_CERTINFO_FINGERPRINT,
+	CRYPT_CERTINFO_FINGERPRINT_MD5,	/* Certificate fingerprints */
 	CRYPT_CERTINFO_FINGERPRINT_SHA1,
-		CRYPT_CERTINFO_FINGERPRINT_SHA = CRYPT_CERTINFO_FINGERPRINT_SHA1,
 	CRYPT_CERTINFO_FINGERPRINT_SHA2,
 	CRYPT_CERTINFO_FINGERPRINT_SHAng,
 	CRYPT_CERTINFO_CURRENT_CERTIFICATE,/* Cursor mgt: Rel.pos in chain/CRL/OCSP */
@@ -625,6 +611,7 @@ typedef enum {
 	CRYPT_CERTINFO_PKIUSER_ID,		/* PKI user ID */
 	CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD,	/* PKI user issue password */
 	CRYPT_CERTINFO_PKIUSER_REVPASSWORD,		/* PKI user revocation password */
+	CRYPT_CERTINFO_PKIUSER_RA,		/* PKI user is an RA */
 
 	/* X.520 Distinguished Name components.  This is a composite field, the
 	   DN to be manipulated is selected through the addition of a
@@ -1212,7 +1199,7 @@ typedef enum {
 	/* Client/server information */
 	CRYPT_SESSINFO_SERVER_NAME,		/* Server name */
 	CRYPT_SESSINFO_SERVER_PORT,		/* Server port number */
-	CRYPT_SESSINFO_SERVER_FINGERPRINT,/* Server key fingerprint */
+	CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1,/* Server key fingerprint */
 	CRYPT_SESSINFO_CLIENT_NAME,		/* Client name */
 	CRYPT_SESSINFO_CLIENT_PORT,		/* Client port number */
 	CRYPT_SESSINFO_SESSION,			/* Transport mechanism */
@@ -1291,8 +1278,7 @@ typedef enum {
 	CRYPT_IATTRIBUTE_KEYID_OPENPGP,	/* OpenPGP key ID */
 	CRYPT_IATTRIBUTE_KEY_SPKI,		/* SubjectPublicKeyInfo */
 	CRYPT_IATTRIBUTE_KEY_PGP,		/* PGP-format public key */
-	CRYPT_IATTRIBUTE_KEY_SSH,		/* SSH-format public key */
-	CRYPT_IATTRIBUTE_KEY_SSH1,		/* SSHv1-format public key */
+	CRYPT_IATTRIBUTE_KEY_SSH,		/* SSHv2-format public key */
 	CRYPT_IATTRIBUTE_KEY_SSL,		/* SSL-format public key */
 	CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL,/* SubjectPublicKeyInfo w/o trigger */
 	CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL,/* PGP public key w/o trigger */
@@ -1300,6 +1286,7 @@ typedef enum {
 	CRYPT_IATTRIBUTE_DEVICEOBJECT,	/* Device object handle */
 	CRYPT_IATTRIBUTE_DEVICESTORAGEID,/* Storage ID for data in device */
 	CRYPT_IATTRIBUTE_EXISTINGLABEL,	/* Existing label for object in device */
+	CRYPT_IATTRIBUTE_KDFPARAMS,		/* Opt.KDF params for generic-secret */
 	CRYPT_IATTRIBUTE_ENCPARAMS,		/* Encryption params for generic-secret */
 	CRYPT_IATTRIBUTE_MACPARAMS,		/* MAC params for generic-secret */
 	CRYPT_IATTRIBUTE_AAD,			/* AAD for authenticated-encr.modes */
@@ -1322,6 +1309,7 @@ typedef enum {
 	CRYPT_IATTRIBUTE_REVREQUEST,	/* CRMF rev.request added to CRL */
 	CRYPT_IATTRIBUTE_PKIUSERINFO,	/* Additional user info added to cert.req.*/
 	CRYPT_IATTRIBUTE_BLOCKEDATTRS,	/* Template of disallowed attrs.in cert */
+	CRYPT_IATTRIBUTE_REQFROMRA,		/* Cert request came from RA */
 	CRYPT_IATTRIBUTE_AUTHCERTID,	/* Authorising cert ID for a cert/rev.req.*/
 	CRYPT_IATTRIBUTE_ESSCERTID,		/* ESSCertID */
 	CRYPT_IATTRIBUTE_CERTCOPY,		/* Copy of cert object */
@@ -1361,7 +1349,7 @@ typedef enum {
 
 	/* Subrange values used internally for range checking */
 	CRYPT_CERTINFO_FIRST_CERTINFO = CRYPT_CERTINFO_FIRST + 1,
-	CRYPT_CERTINFO_LAST_CERTINFO = CRYPT_CERTINFO_PKIUSER_REVPASSWORD,
+	CRYPT_CERTINFO_LAST_CERTINFO = CRYPT_CERTINFO_PKIUSER_RA,
 		CRYPT_CERTINFO_FIRST_PSEUDOINFO = CRYPT_CERTINFO_SELFSIGNED,
 		CRYPT_CERTINFO_LAST_PSEUDOINFO = CRYPT_CERTINFO_SIGNATURELEVEL,
 	CRYPT_CERTINFO_FIRST_NAME = CRYPT_CERTINFO_COUNTRYNAME,
@@ -1376,6 +1364,20 @@ typedef enum {
 	CRYPT_CERTINFO_LAST_CMS = CRYPT_CERTINFO_LAST - 1,
 	CRYPT_SESSINFO_FIRST_SPECIFIC = CRYPT_SESSINFO_REQUEST,
 	CRYPT_SESSINFO_LAST_SPECIFIC = CRYPT_SESSINFO_TSP_MSGIMPRINT
+
+	/* Point at which private-use values start.  Attribute values sometimes
+	   need to be extended with additional pseudo-values in object-specific
+	   cases, for example the certificate-management code extends the
+	   explicit certificate attributes with additional implicit values used
+	   internally to handle certificates.  In order to allow for these
+	   additional values we place them beyond the private-use value below */
+	, CRYPT_XATTRIBUTE_PRIVATE = 10000
+
+	/* Pseudo-value to make attributes have the same size as integers on
+	   compilers that use variable-size enums.  This is required in order
+	   to make kernel ACL management easier, see the comments with the 
+	   pseudo-ACLs in acl.h for details */
+	, CRYPT_XATTRIBUTE_MAX = INT_MAX - 100
 #endif /* _CRYPT_DEFINED */
 	} CRYPT_ATTRIBUTE_TYPE;
 
@@ -1569,6 +1571,7 @@ typedef enum {
 	CRYPT_IKEYID_KEYID,				/* SubjectKeyIdentifier/internal ID */
 	CRYPT_IKEYID_PGPKEYID,			/* PGP/OpenPGP key ID */
 	CRYPT_IKEYID_CERTID,			/* Certificate hash */
+	CRYPT_IKEYID_SUBJECTID,			/* Hashed subjectName */
 	CRYPT_IKEYID_ISSUERID,			/* Hashed issuerAndSerialNumber */
 	CRYPT_IKEYID_ISSUERANDSERIALNUMBER,	/* issuerAndSerialNumber */
 #endif /* _CRYPT_DEFINED */
@@ -1660,7 +1663,7 @@ typedef enum {
 
 #define CRYPT_MAX_KEYSIZE		256
 
-/* The maximum IV size - 256 bits */
+/* The maximum IV/cipher block size - 256 bits */
 
 #define CRYPT_MAX_IVSIZE		32
 
@@ -1830,7 +1833,7 @@ typedef struct {
 typedef enum {
 	/* Named ECC curves.  Since these need to be mapped to all manner of
 	   protocol- and mechanism-specific identifiers, when updating this list 
-	   grep for occurrences of CRYPT_ECCCURVE_P256 (the most common one) and
+	   grep for occurrences of the string "P256" (the most common one) and 
 	   check whether any related mapping tables need to be updated */
 	CRYPT_ECCCURVE_NONE,		/* No ECC curve type */
 	CRYPT_ECCCURVE_P192,		/* NIST P192/X9.62 P192r1/SECG p192r1 curve */
@@ -1838,6 +1841,9 @@ typedef enum {
 	CRYPT_ECCCURVE_P256,		/* NIST P256/X9.62 P256v1/SECG p256r1 curve */
 	CRYPT_ECCCURVE_P384,		/* NIST P384, SECG p384r1 curve */
 	CRYPT_ECCCURVE_P521,		/* NIST P521, SECG p521r1 */
+	CRYPT_ECCCURVE_BRAINPOOL_P256, /* Brainpool p256r1 */
+	CRYPT_ECCCURVE_BRAINPOOL_P384, /* Brainpool p384r1 */
+	CRYPT_ECCCURVE_BRAINPOOL_P512, /* Brainpool p512r1 */
 	CRYPT_ECCCURVE_LAST			/* Last valid ECC curve type */
 	} CRYPT_ECCCURVE_TYPE;
 

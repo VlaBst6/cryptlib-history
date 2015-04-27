@@ -306,11 +306,13 @@ static int completeCert( INOUT DBMS_INFO *dbmsInfo,
 		char specialCertID[ ENCODED_DBXKEYID_SIZE + 8 ];
 
 		/* Turn the general certID into the form required for special-case
-		   certificate data */
-		memcpy( specialCertID, certID, certIDlength );
-		memcpy( specialCertID,
-				( addType == CERTADD_RENEWAL_COMPLETE ) ? \
+		   certificate data by overwriting the first two bytes with an out-
+		   of-band value */
+		REQUIRES( rangeCheckZ( 0, certIDlength, ENCODED_DBXKEYID_SIZE ) );
+		memcpy( specialCertID, ( addType == CERTADD_RENEWAL_COMPLETE ) ? \
 				KEYID_ESC2 : KEYID_ESC1, KEYID_ESC_SIZE );
+		memcpy( specialCertID + KEYID_ESC_SIZE, certID + KEYID_ESC_SIZE, 
+				certIDlength - KEYID_ESC_SIZE );
 		initBoundData( boundDataPtr );
 		setBoundData( boundDataPtr, 0, specialCertID, certIDlength );
 		status = dbmsUpdate( 
@@ -663,8 +665,13 @@ int caIssueCertComplete( INOUT DBMS_INFO *dbmsInfo,
 		BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
 		char incompleteCertID[ ENCODED_DBXKEYID_SIZE + 8 ];
 
-		memcpy( incompleteCertID, certID, certIDlength );
+		/* Turn the general certID into the form required for special-case
+		   certificate data by overwriting the first two bytes with an out-
+		   of-band value, then delete the object with that ID */
+		REQUIRES( rangeCheckZ( 0, certIDlength, ENCODED_DBXKEYID_SIZE ) );
 		memcpy( incompleteCertID, KEYID_ESC1, KEYID_ESC_SIZE );
+		memcpy( incompleteCertID + KEYID_ESC_SIZE, certID + KEYID_ESC_SIZE, 
+				certIDlength - KEYID_ESC_SIZE );
 		initBoundData( boundDataPtr );
 		setBoundData( boundDataPtr, 0, incompleteCertID, certIDlength );
 		status = dbmsUpdate( 

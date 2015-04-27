@@ -352,8 +352,8 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 #ifdef USE_ERRMSGS
 	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
 #endif /* USE_ERRMSGS */
-	char szSqlState[ SQL_SQLSTATE_SIZE + 8 ];
-	char errorString[ MAX_ERRMSG_SIZE + 8 ];
+	SQLCHAR szSqlState[ SQL_SQLSTATE_SIZE + 8 ];
+	SQLCHAR errorString[ MAX_ERRMSG_SIZE + 1 + 8 ];
 	SQLHANDLE handle;
 	SQLINTEGER dwNativeError = 0;
 	SQLSMALLINT handleType, errorStringLength;
@@ -422,6 +422,11 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 	   with only szSqlState set, in which case we clear the error string */
 	if( errorStringLength > 0 )
 		{
+		/* Since the error string has come from the database source we 
+		   sanitise it before returning it to the caller.  The +1 is for
+		   the '\0' that sanitiseString() adds to the string */
+		sanitiseString( errorString, errorStringLength + 1, 
+						errorStringLength );
 		setErrorString( errorInfo, errorString, errorStringLength );
 		}
 	else
@@ -491,8 +496,8 @@ void debugDiagOdbcError( IN_STRING const char *functionName,
 		  ( errorLevel != SQL_ERRLVL_STMT && \
 			hStmt == SQL_NULL_HSTMT ) );
 
-	( void * ) getErrorInfo( dbmsInfo, errorLevel, hStmt, 
-							 CRYPT_ERROR_INTERNAL );
+	( void ) getErrorInfo( dbmsInfo, errorLevel, hStmt, 
+						   CRYPT_ERROR_INTERNAL );
 	DEBUG_DIAG(( "%s reports: %s.\n", functionName,
 				 getErrorInfoString( &dbmsInfo->errorInfo ) ));
 	}
@@ -763,19 +768,18 @@ static int bindParameters( const SQLHSTMT hStmt,
 		assert( ( boundDataPtr->dataLength == 0 ) || \
 				isReadPtr( boundDataPtr->data, boundDataPtr->dataLength ) );
 
+		REQUIRES( boundDataPtr != NULL );
 		REQUIRES( boundDataPtr->type == BOUND_DATA_STRING || \
 				  boundDataPtr->type == BOUND_DATA_BLOB );
 		REQUIRES( dbmsInfo->hasBinaryBlobs || \
 				  ( !dbmsInfo->hasBinaryBlobs && \
 					boundDataPtr->type == BOUND_DATA_STRING ) );
-		REQUIRES( ( boundDataPtr == NULL ) || \
-				  ( boundDataPtr != NULL && \
-					( boundDataPtr->data == NULL && \
-					  boundDataPtr->dataLength == 0 ) || \
-					( boundDataPtr->data != NULL && \
-					  boundDataPtr->dataLength > 0 && 
-					  boundDataPtr->dataLength < MAX_INTLENGTH_SHORT ) ) );
-					/* Bound data of { NULL, 0 } denotes a null parameter */
+		REQUIRES( ( boundDataPtr->data == NULL && \
+					boundDataPtr->dataLength == 0 ) || \
+				  ( boundDataPtr->data != NULL && \
+					boundDataPtr->dataLength > 0 && 
+					boundDataPtr->dataLength < MAX_INTLENGTH_SHORT ) );
+				  /* Bound data of { NULL, 0 } denotes a null parameter */
 
 		/* Null parameters have to be handled specially.  Note that we have 
 		   to set the ColumnSize parameter (no.6) to a nonzero value (even 
@@ -886,7 +890,8 @@ static int getBlobInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 				 "          to force the use of 64-bit ODBC data types (and "
 				 "report this issue\n          to the ODBC driver vendor so "
 				 "that they can sync the driver and\n          headers)."
-				 "\n\n", ( long ) dummy, sizeof( SQLINTEGER ) );
+				 "\n\n", ( long ) dummy, ( int ) sizeof( SQLINTEGER ) );
+				 /* Cast is nec. because sizeof() can be 32 or 64 bits */
 		}
 #endif /* __UNIX__ */
 	*maxFieldSize = count;
@@ -1351,9 +1356,12 @@ static int openDatabase( INOUT DBMS_STATE_INFO *dbmsInfo,
 	/* Once everything is set up the way that we want it, try to connect to 
 	   a data source and allocate a statement handle */
 	sqlStatus = SQLConnect( dbmsInfo->hDbc,
-							nameInfo.name, ( SQLSMALLINT ) nameInfo.nameLen,
-							nameInfo.user, ( SQLSMALLINT ) nameInfo.userLen,
-							nameInfo.password, ( SQLSMALLINT ) nameInfo.passwordLen );
+							( SQLCHAR * ) nameInfo.name, 
+							( SQLSMALLINT ) nameInfo.nameLen,
+							( SQLCHAR * ) nameInfo.user, 
+							( SQLSMALLINT ) nameInfo.userLen,
+							( SQLCHAR * ) nameInfo.password, 
+							( SQLSMALLINT ) nameInfo.passwordLen );
 	if( !sqlStatusOK( sqlStatus ) )
 		{
 		status = getErrorInfo( dbmsInfo, SQL_ERRLVL_DBC, SQL_NULL_HSTMT,
@@ -1365,8 +1373,10 @@ static int openDatabase( INOUT DBMS_STATE_INFO *dbmsInfo,
 
 	/* Now that the connection is open, allocate the statement handles */
 	for( i = 0; i < NO_CACHED_QUERIES && sqlStatusOK( sqlStatus ); i++ )
+		{
 		sqlStatus = SQLAllocHandle( SQL_HANDLE_STMT, dbmsInfo->hDbc,
 									&dbmsInfo->hStmt[ i ] );
+		}
 	if( !sqlStatusOK( sqlStatus ) )
 		{
 		status = getErrorInfo( dbmsInfo, SQL_ERRLVL_DBC, SQL_NULL_HSTMT,
@@ -1432,12 +1442,12 @@ static int openDatabase( INOUT DBMS_STATE_INFO *dbmsInfo,
 
 /* Fetch data from a query */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 4, 6 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 6 ) ) \
 static int fetchData( const SQLHSTMT hStmt, 
-					  OUT_BUFFER( dataMaxLength, *dataLength ) \
+					  OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
 						char *data,
-					  IN_LENGTH_SHORT const int dataMaxLength, 
-					  OUT_LENGTH_SHORT_Z int *dataLength, 
+					  IN_LENGTH_SHORT_Z const int dataMaxLength, 
+					  OUT_OPT_LENGTH_SHORT_Z int *dataLength, 
 					  IN_ENUM( DBMS_QUERY ) const DBMS_QUERY_TYPE queryType,
 					  INOUT DBMS_STATE_INFO *dbmsInfo )
 	{
@@ -1585,7 +1595,8 @@ static int performQuery( INOUT DBMS_STATE_INFO *dbmsInfo,
 								   &queryLength, command, commandLength );
 			if( cryptStatusError( status ) )
 				return( status );
-			sqlStatus = SQLPrepare( hStmt, query, queryLength );
+			sqlStatus = SQLPrepare( hStmt, ( SQLCHAR * ) query, 
+									queryLength );
 			if( !sqlStatusOK( sqlStatus ) )
 				return( getErrorInfo( dbmsInfo, SQL_ERRLVL_STMT, hStmt,
 									  CRYPT_ERROR_READ ) );
@@ -1752,7 +1763,7 @@ static int performUpdate( INOUT DBMS_STATE_INFO *dbmsInfo,
 						   command, commandLength );
 	if( cryptStatusError( status ) )
 		return( status );
-	sqlStatus = SQLExecDirect( hStmt, query, queryLength );
+	sqlStatus = SQLExecDirect( hStmt, ( SQLCHAR * ) query, queryLength );
 	if( !sqlStatusOK( sqlStatus ) )
 		{
 		/* If we were supposed to begin a transaction but it failed, reset

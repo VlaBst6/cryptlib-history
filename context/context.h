@@ -112,11 +112,11 @@
    if we make sizeof( k ) == sizeof( p ) then this introduced a bias into k
    that eventually leaks the private key (see "The Insecurity of the Digital 
    Signature Algorithm with Partially Known Nonces" by Phong Nguyen and Igor 
-   Shparlinski).  To get around this we generate a k that's slightly larger
-   than required, the following defines the size in bytes of this overflow
-   factor */
+   Shparlinski, or more recently Serge Vaudenay's "Evaluation Report on DSA").  
+   To get around this we generate a k that's somewhat larger than required, 
+   the following defines the size in bytes of this overflow factor */
 
-#define DLP_OVERFLOW_SIZE			bitsToBytes( 32 )
+#define DLP_OVERFLOW_SIZE			bitsToBytes( 64 )
 
 /****************************************************************************
 *																			*
@@ -206,7 +206,7 @@ typedef struct {
 	BIGNUM param6;
 	BIGNUM param7;
 	BIGNUM param8;
-#if defined( USE_ECDH ) || defined( USE_ECDSA ) 
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 	BIGNUM param9;
 	BIGNUM param10;
 #endif /* USE_ECDH || USE_ECDSA */
@@ -219,7 +219,7 @@ typedef struct {
 	EC_GROUP *ecCTX;
 	EC_POINT *ecPoint;
 #endif /* USE_ECDH || USE_ECDSA */
-	int metadataChecksum, checksum;	/* Checksums for key data */
+	int checksum;					/* Checksum for key data */
 
 	/* Temporary workspace values used to avoid having to allocate and
 	   deallocate them on each PKC operation, and to keep better control
@@ -231,7 +231,7 @@ typedef struct {
 	BIGNUM tmp4, tmp5;
 	EC_POINT *tmpPoint;
 #endif /* USE_ECDH || USE_ECDSA */
-	BN_CTX *bnCTX;
+	BN_CTX bnCTX;
 	#define CONTEXT_FLAG_PBO 0x08
 
 	/* If we're using side-channel protection, we also need to store values
@@ -338,8 +338,11 @@ typedef struct {
 	BYTE genericSecret[ CRYPT_MAX_KEYSIZE + 8 ];
 	int genericSecretLength;
 
-	/* Parameter information for the encryption and MAC contexts that are
-	   derived from the generic-secret context */
+	/* Parameter information for the optional KDF and the encryption and MAC 
+	   contexts that are derived from the generic-secret context */
+	BUFFER( CRYPT_MAX_TEXTSIZE, kdfParamSize ) \
+	BYTE kdfParams[ CRYPT_MAX_TEXTSIZE + 8 ];
+	int kdfParamSize;
 	BUFFER( CRYPT_MAX_TEXTSIZE, encAlgoParamSize ) \
 	BYTE encAlgoParams[ CRYPT_MAX_TEXTSIZE + 8 ];
 	int encAlgoParamSize;
@@ -469,8 +472,6 @@ typedef struct CI {
 #define eccParam_qx			param8
 #define eccParam_qy			param9
 #define eccParam_d			param10
-#define eccParam_mont_p		montCTX1
-#define eccParam_mont_n		montCTX2
 
 /* Minimum and maximum permitted lengths for various PKC components.  These
    can be loaded in various ways (read from ASN.1 data, read from 
@@ -662,6 +663,7 @@ int initCheckRSAkey( INOUT CONTEXT_INFO *contextInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int generateRSAkey( INOUT CONTEXT_INFO *contextInfoPtr, 
 					IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) const int keyBits );
+#if defined( USE_ECDSA ) || defined( USE_ECDH )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initCheckECCkey( INOUT CONTEXT_INFO *contextInfoPtr,
 					 const BOOLEAN isECDH );
@@ -672,11 +674,25 @@ int generateECCkey( INOUT CONTEXT_INFO *contextInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int getECCFieldSize( IN_ENUM( CRYPT_ECCCURVE ) const CRYPT_ECCCURVE_TYPE fieldID,
 					 OUT_INT_Z int *fieldSize );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int getECCFieldID( IN_LENGTH_SHORT_MIN( MIN_PKCSIZE_ECC ) \
+						const int fieldSize,
+				   OUT_ENUM_OPT( CRYPT_ECCCURVE ) 
+						CRYPT_ECCCURVE_TYPE *fieldID );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getECCOidTbl( OUT const void /*OID_INFO*/ **oidTblPtr,
+				  OUT_INT_Z int *noOidTblEntries );
+CHECK_RETVAL_PTR \
+const void *getECCOid( IN_ENUM( CRYPT_ECCCURVE ) \
+							const CRYPT_ECCCURVE_TYPE curveType );
+#endif /* USE_ECDSA || USE_ECDH */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int generateBignum( OUT BIGNUM *bn, 
 					IN_LENGTH_SHORT_MIN( 120 ) const int noBits, 
-					IN_BYTE const int high, IN_BYTE const int low );
+					IN_BYTE const int high, IN_BYTE const int low,
+					IN_BUFFER_OPT( seedLength ) const void *seed,
+					IN_LENGTH_SHORT_OPT const int seedLength );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void clearTempBignums( INOUT PKC_INFO *pkcInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -684,11 +700,12 @@ int initContextBignums( INOUT PKC_INFO *pkcInfo,
 						IN_RANGE( 0, 3 ) const int sideChannelProtectionLevel,
 						const BOOLEAN isECC );
 STDC_NONNULL_ARG( ( 1 ) ) \
-void freeContextBignums( INOUT PKC_INFO *pkcInfo, 
-						 IN_FLAGS( CONTEXT ) const int contextFlags );
+void endContextBignums( INOUT PKC_INFO *pkcInfo, 
+						IN_FLAGS( CONTEXT ) const int contextFlags );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int calculateBignumChecksum( INOUT PKC_INFO *pkcInfo, 
-							 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo );
+int checksumContextData( INOUT PKC_INFO *pkcInfo, 
+						 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+						 const BOOLEAN isPrivateKey );
 #endif /* PKC_CONTEXT */
 
 /* Key read/write routines */
@@ -696,7 +713,9 @@ int calculateBignumChecksum( INOUT PKC_INFO *pkcInfo,
 STDC_NONNULL_ARG( ( 1 ) ) \
 void initKeyID( INOUT CONTEXT_INFO *contextInfoPtr );
 STDC_NONNULL_ARG( ( 1 ) ) \
-void initKeyRead( INOUT CONTEXT_INFO *contextInfoPtr );
+void initPrivKeyRead( INOUT CONTEXT_INFO *contextInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initPubKeyRead( INOUT CONTEXT_INFO *contextInfoPtr );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void initKeyWrite( INOUT CONTEXT_INFO *contextInfoPtr );
 

@@ -123,7 +123,7 @@ int setUserAttribute( INOUT USER_INFO *userInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int setUserAttributeS( INOUT USER_INFO *userInfoPtr,
 					   IN_BUFFER( dataLength ) const void *data,
-					   IN_LENGTH const int dataLength,
+					   IN_DATALENGTH const int dataLength,
 					   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int deleteUserAttribute( INOUT USER_INFO *userInfoPtr,
@@ -213,11 +213,11 @@ int prepareConfigData( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO *
 							void *configOptions, 
 					   IN_INT_SHORT const int configOptionsCount, 	
 					   OUT_BUFFER_ALLOC_OPT( *dataLength ) void **dataPtrPtr, 
-					   OUT_LENGTH_Z int *dataLength );
+					   OUT_DATALENGTH_Z int *dataLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int commitConfigData( IN_STRING const char *fileName,
 					  IN_BUFFER_OPT( dataLength ) const void *data, 
-					  IN_LENGTH_Z const int dataLength,
+					  IN_DATALENGTH_Z const int dataLength,
 					  IN_HANDLE_OPT const CRYPT_USER iTrustedCertUserObject );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int deleteConfig( IN_STRING const char *fileName );

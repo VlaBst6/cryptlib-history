@@ -54,6 +54,9 @@ static BOOLEAN formatErrorString( OUT ERROR_INFO *errorInfoPtr,
 	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( format, 4 ) );
 
+	ANALYSER_HINT_STRING( format );
+	ANALYSER_HINT_FORMAT_STRING( format );
+
 	REQUIRES_B( verifyVAList( argPtr ) );
 
 	/* Clear return value */
@@ -386,8 +389,8 @@ int retExtErrFn( IN_ERROR const int status,
 	BOOLEAN errorStringOK;
 	int extErrorStringLength;
 
-	/* Clear return value */
-	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
+	/* We can't clear the return value at this point because errorInfoPtr
+	   could be the same as existingErrorInfoPtr */
 
 	/* This function is typically used when the caller wants to convert 
 	   something like "Low-level error string" into "High-level error 
@@ -412,6 +415,7 @@ int retExtErrFn( IN_ERROR const int status,
 			 extErrorStringLength < MAX_ERRMSG_SIZE );
 
 	/* Format the basic error string */
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 	va_start( argPtr, format );
 	errorStringOK = formatErrorString( errorInfoPtr, format, argPtr );
 	va_end( argPtr );

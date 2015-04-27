@@ -73,13 +73,13 @@ static int readVersion( INOUT STREAM *stream,
 	/* Versions can be represented in one of three ways:
 
 		1. version		  INTEGER
-		2. version		  INTEGER DEFAULT(1)
+		2. version		  INTEGER DEFAULT (1)
 		3. version	[tag] INTEGER DEFAULT (1)
 
 	   To handle this we check for the required tags for versions with 
 	   DEFAULT values and exit if they're not found, setting the version to 
 	   1 first */
-	certInfoPtr->version = 1;
+	certInfoPtr->version = X509_V1;
 	if( tag != DEFAULT_TAG )
 		{
 		if( tag == BER_INTEGER )
@@ -99,13 +99,15 @@ static int readVersion( INOUT STREAM *stream,
 			}
 		}
 
-	/* We've definitely got a version number present, process it */
+	/* We've definitely got a version number present, process it.  Since the
+	   version number is zero-based, we have to adjust the range check and 
+	   value we store by one to compensate for this */
 	status = readShortInteger( stream, &version );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( version < 0 || version > maxVersion )
+	if( version < 0 || version > maxVersion - 1 )
 		return( CRYPT_ERROR_BADDATA );
-	certInfoPtr->version = version + 1;	/* Zero-based */
+	certInfoPtr->version = version + 1;
 
 	return( CRYPT_OK );
 	}
@@ -900,17 +902,6 @@ static int skipCrmfJunk( INOUT STREAM *stream,
 		subject					Name,
 		subjectPublicKeyInfo	SubjectPublicKeyInfo,
 		attributes		  [ 0 ]	SET OF Attribute
-		}
-
-   If extensions are present they are encoded as:
-
-	SEQUENCE {							-- Attribute from X.501
-		OBJECT IDENTIFIER {pkcs-9 14},	--   type
-		SET OF {						--   values
-			SEQUENCE OF {				-- ExtensionReq from CMMF draft
-				<X.509v3 extensions>
-				}
-			}
 		} */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -1219,8 +1210,7 @@ static int readRtcsRequestInfo( INOUT STREAM *stream,
 
 		REQUIRES( innerStartPos > 0 && innerStartPos < MAX_INTLENGTH );
 
-		status = readRtcsRequestEntry( stream, &certValInfo->validityInfo,
-									   certInfoPtr );
+		status = readRtcsRequestEntry( stream, &certValInfo->validityInfo );
 		if( cryptStatusOK( status ) )
 			length -= stell( stream ) - innerStartPos;
 		}
@@ -1437,7 +1427,7 @@ static int readOcspResponseInfo( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	endPos = stell( stream ) + length;
-	status = readVersion( stream, certInfoPtr, CTAG_OP_VERSION, 1 );
+	status = readVersion( stream, certInfoPtr, CTAG_OP_VERSION, 2 );
 	if( cryptStatusError( status ) )
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
 								 status ) );
@@ -1553,7 +1543,10 @@ static int readCmsAttributes( INOUT STREAM *stream,
 		name				Name,			-- Name for CMP
 		encAlgo				AlgorithmIdentifier,-- Algo to encrypt passwords
 		encPW				OCTET STRING,	-- Encrypted passwords
-		attributes			Attributes
+		certAttributes		Attributes		-- Certificate attributes
+		userAttributes		SEQUENCE {		-- PKI user attributes
+			isRA			BOOLEAN OPTIONAL -- Whether user is an RA
+			} OPTIONAL
 		} */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -1639,13 +1632,23 @@ static int readPkiUserInfo( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_WRONGKEY );
 
-	/* Read the user ID and any other attributes */
+	/* Read any attributes */
 	status = readAttributes( stream, &userInfoPtr->attributes,
 							 CRYPT_CERTTYPE_PKIUSER, sMemDataLeft( stream ),
 							 &userInfoPtr->errorLocus,
 							 &userInfoPtr->errorType );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( sMemDataLeft( stream ) > 3 )
+		{
+		status = readSequence( stream, NULL );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( peekTag( stream ) == BER_BOOLEAN )
+			status = readBoolean( stream, &certUserInfo->isRA );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* As used by cryptlib the PKI user information is applied as a template 
 	   to certificates to modify their contents before issue.  This is done 

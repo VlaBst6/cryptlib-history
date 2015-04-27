@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								cryptlib Test Code							*
-*						Copyright Peter Gutmann 1995-2012					*
+*						Copyright Peter Gutmann 1995-2014					*
 *																			*
 ****************************************************************************/
 
@@ -49,9 +49,9 @@
 
 /* Warn about nonstandard build options */
 
-#if defined( CONFIG_SUITEB_TESTS ) && defined( _MSC_VER )
+#if defined( CONFIG_SUITEB_TESTS ) && ( defined( _MSC_VER ) || defined( __GNUC__ ) )
   #pragma message( "  Building Suite B command-line test configuration." )
-#endif /* CONFIG_SUITEB_TESTS with VC++ */
+#endif /* CONFIG_SUITEB_TESTS with VC++/gcc */
 
 /* Whether various keyset tests worked, the results are used later to test
    other routines.  We initially set the key read result to TRUE in case the
@@ -59,6 +59,10 @@
    keys in other tests */
 
 int keyReadOK = TRUE, doubleCertOK = FALSE;
+
+/* The output stream to which diagnostic output is sent */
+
+FILE *outputStream;
 
 /* There are some sizeable (for DOS) data structures used, so we increase the
    stack size to allow for them */
@@ -158,6 +162,7 @@ static void updateConfig( void )
 	const char *driverPath = "psepkcs11.dll";		/* A-Sign */
 	const char *driverPath = "asepkcs.dll";			/* Athena */
 	const char *driverPath = "c:/temp/bpkcs11.dll";	/* Bloomberg */
+	const char *driverPath = "opensc-pkcs11.dll";	/* CardContact (via OpenSC) */
 	const char *driverPath = "cryst32.dll";			/* Chrysalis */
 	const char *driverPath = "c:/program files/luna/cryst201.dll";	/* Chrysalis */
 	const char *driverPath = "pkcs201n.dll";		/* Datakey */
@@ -189,11 +194,12 @@ static void updateConfig( void )
 	const char *driverPath = "smartp11.dll";		/* SmartTrust */
 	const char *driverPath = "SpyPK11.dll";			/* Spyrus */
 #endif /* 0 */
-	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
+//	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
+	const char *driverPath = "opensc-pkcs11.dll";	/* CardContact (via OpenSC) */
 	int status;
 
 	printf( "Updating cryptlib configuration to load PKCS #11 driver\n  "
-			"'%s'\n  as default driver...", driverPath );
+			"'%s' as default driver...", driverPath );
 
 	/* Set the path for a PKCS #11 device driver.  We only enable one of
 	   these at a time to speed the startup time */
@@ -455,50 +461,101 @@ static int processArgs( int argc, char **argv,
    before any of the other tests are run and can be used to handle special-
    case tests that aren't part of the main test suite */
 
+void initDatabaseKeysets( void );	/* Call before calling cert-mgt.code */
+
+#ifndef NDEBUG
+
+static int fuzzSession( const CRYPT_SESSION_TYPE sessionType )
+	{
+	CRYPT_SESSION cryptSession;
+	const BOOLEAN isServer = \
+			( sessionType == CRYPT_SESSION_SSH_SERVER || \
+			  sessionType == CRYPT_SESSION_SSL_SERVER || \
+			  sessionType == CRYPT_SESSION_OCSP_SERVER || \
+			  sessionType == CRYPT_SESSION_TSP_SERVER || \
+			  sessionType == CRYPT_SESSION_CMP_SERVER || \
+			  sessionType == CRYPT_SESSION_SCEP_SERVER ) ? \
+			TRUE : FALSE;
+	int status;
+
+	/* Create the session */
+	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, sessionType );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Set up the various attributes needed to establish a minimal session */
+	if( !isServer )
+		{
+		status = cryptSetAttributeString( cryptSession,
+										  CRYPT_SESSINFO_SERVER_NAME,
+										  "www.example.com", 15 );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	if( isServer )
+		{
+		CRYPT_CONTEXT cryptPrivKey;
+		char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+
+		filenameFromTemplate( filenameBuffer, 
+								  SERVER_PRIVKEY_FILE_TEMPLATE, 1 );
+		status = getPrivateKey( &cryptPrivKey, filenameBuffer, 
+								USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptSetAttribute( cryptSession,
+										CRYPT_SESSINFO_PRIVATEKEY, 
+										cryptPrivKey );
+			cryptDestroyContext( cryptPrivKey );
+			}
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	if( sessionType == CRYPT_SESSION_SSH || \
+		sessionType == CRYPT_SESSION_SSH_SERVER )
+		{
+		status = cryptSetAttributeString( cryptSession,
+										  CRYPT_SESSINFO_USERNAME,
+										  SSH_USER_NAME,
+										  paramStrlen( SSH_USER_NAME ) );
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptSetAttributeString( cryptSession,
+											  CRYPT_SESSINFO_PASSWORD,
+											  SSH_PASSWORD,
+											  paramStrlen( SSH_PASSWORD ) );
+			}
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	status = cryptSetFuzzData( cryptSession, NULL, 0 );
+	cryptDestroySession( cryptSession );
+
+	return( CRYPT_OK );
+	}
+#endif /* NDEBUG */
+
 static void testKludge( const char *argPtr )
 	{
 #if 0
-	testReadCorruptedKey();
-#endif /* 0 */
-
-	/* To test dodgy certificate collections */
+	testSessionTLS11Server();
+	testSessionTLS11Server();
+	testSessionTLS11Server();
+#else
+//	testSessionTLS11ClientServer();
+#endif
+//	fuzzSession( CRYPT_SESSION_SSL );
+//	testBasicCert();
 #if 0
-	int result;
-
-	if( argPtr == NULL )
-		{
-		printf( "Error: Missing argument.\n" );
-		exit( EXIT_FAILURE );
-		}
-	if( *argPtr == '@' )
-		{
-		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-						   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
-		argPtr++;
-		}
-	if( *argPtr == '#' )
-		{
-		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-						   CRYPT_COMPLIANCELEVEL_PKIX_FULL );
-		argPtr++;
-		}
-	result = xxxCertImport( argPtr );
-	cryptEnd();
-	exit( result ? EXIT_SUCCESS : EXIT_FAILURE );
-#endif /* 1 */
+//	--> PKCS #15 read private key + cert
+//	--> PKCS #12 write the same
+#endif
 
 	/* Performance-testing test harness */
 #if 0
 	void performanceTests( const CRYPT_DEVICE cryptDevice );
 
 	performanceTests( CRYPT_UNUSED );
-#endif /* 0 */
-
-	/* Memory diagnostic test harness */
-#if 0
-	testReadFileCertPrivkey();
-	testEnvelopePKCCrypt();		/* Use "Datasize, certificate" */
-	testEnvelopeSign();			/* Use "Datasize, certificate" */
 #endif /* 0 */
 
 	/* Simple (brute-force) server code. NB: Remember to change
@@ -545,7 +602,7 @@ int main( int argc, char **argv )
 	/* Print a general banner to let the user know what's going on */
 	printf( "testlib - cryptlib %d-bit self-test framework.\n", 
 			( int ) sizeof( long ) * 8 );	/* Cast for gcc */
-	puts( "Copyright Peter Gutmann 1995 - 2012." );
+	puts( "Copyright Peter Gutmann 1995 - 2014." );
 	puts( "" );
 
 	/* Skip the program name and process any command-line arguments */
@@ -570,6 +627,16 @@ int main( int argc, char **argv )
 	tzset();
 #endif /* VisualAge C++ */
 
+	/* Set up the output stream to which diagnostic output is sent */
+	outputStream = stdout;
+
+	/* Perform memory-allocation fault injection.  We have to do this before
+	   we call cryptInit() since the init code itself is tested by the
+	   memory fault-injection */
+#ifdef TEST_MEMFAULT
+	testMemFault();
+#endif /* TEST_MEMFAULT */
+
 	/* Initialise cryptlib */
 	printf( "Initialising cryptlib..." );
 	status = cryptInit();
@@ -581,11 +648,11 @@ int main( int argc, char **argv )
 		}
 	puts( "done." );
 
-#ifndef TEST_RANDOM
 	/* In order to avoid having to do a randomness poll for every test run,
 	   we bypass the randomness-handling by adding some junk.  This is only
 	   enabled when cryptlib is built in debug mode so it won't work with 
 	   any production systems */
+#ifndef TEST_RANDOM
   #if defined( __MVS__ ) || defined( __VMCMS__ )
 	#pragma convlit( resume )
 	cryptAddRandom( "xyzzy", 5 );
@@ -721,7 +788,7 @@ errorExit1:
 		}
 
 	cleanExit( EXIT_FAILURE );
-	return( EXIT_FAILURE );			/* Get rid of compiler warnings */
+	return( EXIT_FAILURE );		/* Exists only to get rid of compiler warnings */
 	}
 
 /* PalmOS wrapper for main() */
@@ -790,6 +857,10 @@ TInt E32Dll( TDllReason )
 #undef FALSE
 #undef TRUE
 #undef FAR_BSS
+#ifdef HIRES_FORMAT_SPECIFIER
+  #undef HIRES_FORMAT_SPECIFIER
+  #define HIRES_TIME	HIRES_TIME_ALT	/* Rename typedef'd value */
+#endif /* HIRES_TIME */
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   #pragma convlit( resume )
 #endif /* Resume ASCII use on EBCDIC systems */

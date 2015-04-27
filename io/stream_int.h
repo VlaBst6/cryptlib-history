@@ -113,9 +113,11 @@ typedef enum {
 
 	NFLAG_HTTPPROXY/NFLAG_HTTPTUNNEL: HTTP proxy control flags.  When the 
 		proxy flag is set, HTTP requests are sent as 
-		"GET http://destination-url/location" rather than "GET location".
-		When the tunnel flag is set, HTTP requests are sent as explicit
-		proxy commands "CONNECT http://destiation-url/".
+		"GET http://destination-url/location" (sent to the proxy) rather 
+		than "GET location" (sent directly to the target host).  When the 
+		tunnel flag is set, the initial network connection-establishment 
+		request is sent as an explicit proxy command "CONNECT fqdn:port", 
+		after which normal PDUs for the protocol being tunneled are sent.
 
 		Note that the HTTP tunnel flag is currently never set by anything
 		due to the removal of the SESSION_USEHTTPTUNNEL flag at a higher
@@ -132,9 +134,12 @@ typedef enum {
 
 	NFLAG_ISSERVER: The stream is a server stream (default is client).
 
-	NFLAG_LASTMSG: This is the last message in the exchange, after which any
-		high-level shutdown (for example at the HTTP level) can be 
-		performed.
+	NFLAG_LASTMSGR/NFLAG_LASTMSGR: This is the last message in the exchange.
+		For a last-message read it means that the other side has indicated
+		(for example through an HTTP "Connection: close") that this is the 
+		case.  For a last-message write it means that we should indicate to
+		the other side (for example through an HTTP "Connection: close") 
+		that this is the case.
 
 	NFLAG_USERSOCKET: The network socket was supplied by the user rather 
 		than being created by cryptlib, so some actions such as socket
@@ -148,9 +153,10 @@ typedef enum {
 #define STREAM_NFLAG_HTTPGET	0x0020	/* Allow HTTP GET */
 #define STREAM_NFLAG_HTTPPOST	0x0040	/* Allow HTTP POST */
 #define STREAM_NFLAG_HTTPPOST_AS_GET 0x0080	/* Implement POST as GET */
-#define STREAM_NFLAG_LASTMSG	0x0100	/* Last message in exchange */
-#define STREAM_NFLAG_ENCAPS		0x0200	/* Network transport is encapsulated */
-#define STREAM_NFLAG_FIRSTREADOK 0x0400	/* First data read succeeded */
+#define STREAM_NFLAG_LASTMSGR	0x0100	/* Last message in exchange */
+#define STREAM_NFLAG_LASTMSGW	0x0200	/* Last message in exchange */
+#define STREAM_NFLAG_ENCAPS		0x0400	/* Network transport is encapsulated */
+#define STREAM_NFLAG_FIRSTREADOK 0x0800	/* First data read succeeded */
 #define STREAM_NFLAG_HTTPREQMASK ( STREAM_NFLAG_HTTPGET | STREAM_NFLAG_HTTPPOST | \
 								   STREAM_NFLAG_HTTPPOST_AS_GET )
 										/* Mask for permitted HTTP req.types */
@@ -261,13 +267,13 @@ typedef struct NS {
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *readFunction )( INOUT struct ST *stream, 
 						   OUT_BUFFER( maxLength, *length ) void *buffer, 
-						   IN_LENGTH const int maxLength, 
-						   OUT_LENGTH_Z int *length );
+						   IN_DATALENGTH const int maxLength, 
+						   OUT_DATALENGTH_Z int *length );
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *writeFunction )( INOUT struct ST *stream, 
 							IN_BUFFER( length ) const void *buffer, 
-							IN_LENGTH const int maxLength,
-							OUT_LENGTH_Z int *length );
+							IN_DATALENGTH const int maxLength,
+							OUT_DATALENGTH_Z int *length );
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *transportConnectFunction )( INOUT struct NS *netStream, 
 									   IN_BUFFER_OPT( length ) const char *hostName, 
@@ -279,15 +285,15 @@ typedef struct NS {
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *transportReadFunction )( INOUT struct ST *stream, 
 									OUT_BUFFER( maxLength, *length ) BYTE *buffer, 
-									IN_LENGTH const int maxLength, 
-									OUT_LENGTH_Z int *length, 
+									IN_DATALENGTH const int maxLength, 
+									OUT_DATALENGTH_Z int *length, 
 									IN_FLAGS_Z( TRANSPORT ) \
 									const int flags );
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *transportWriteFunction )( INOUT struct ST *stream, 
 									 IN_BUFFER( length ) const BYTE *buffer, 
-									 IN_LENGTH const int maxLength, 
-									 OUT_LENGTH_Z int *length, 
+									 IN_DATALENGTH const int maxLength, 
+									 OUT_DATALENGTH_Z int *length, 
 									 IN_FLAGS_Z( TRANSPORT ) \
 										const int flags );
 	CHECK_RETVAL_BOOL_FNPTR \
@@ -298,15 +304,15 @@ typedef struct NS {
 	int ( *bufferedTransportReadFunction )( INOUT struct ST *stream, 
 											OUT_BUFFER( maxLength, *length ) \
 												BYTE *buffer, 
-											IN_LENGTH const int maxLength, 
-											OUT_LENGTH_Z int *length, 
+											IN_DATALENGTH const int maxLength, 
+											OUT_DATALENGTH_Z int *length, 
 											IN_FLAGS_Z( TRANSPORT ) \
 											const int flags );
 	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *bufferedTransportWriteFunction )( INOUT struct ST *stream, 
 											 IN_BUFFER( length ) const BYTE *buffer,
-											 IN_LENGTH const int maxLength, 
-											 OUT_LENGTH_Z int *length, 
+											 IN_DATALENGTH const int maxLength, 
+											 OUT_DATALENGTH_Z int *length, 
 											 IN_FLAGS_Z( TRANSPORT ) \
 												const int flags );
 
@@ -339,11 +345,30 @@ typedef void *NET_STREAM_INFO;	/* Dummy for function prototypes */
 		( ( ( stream )->type == STREAM_TYPE_MEMORY ) && \
 		  ( ( stream )->flags & STREAM_MFLAG_VFILE ) )
 
+/* Prototypes for functions in file.c */
+
+#ifdef USE_FILES
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+int fileRead( STREAM *stream, 
+			  OUT_BUFFER( length, *bytesRead ) void *buffer, 
+			  IN_DATALENGTH const int length, 
+			  OUT_DATALENGTH_Z int *bytesRead );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int fileWrite( STREAM *stream, 
+			   IN_BUFFER( length ) const void *buffer, 
+			   IN_DATALENGTH const int length );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int fileFlush( STREAM *stream );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int fileSeek( STREAM *stream, 
+			  IN_DATALENGTH_Z const long position );
+#endif /* USE_FILES */
+
 /* Network URL processing functions in net_url.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int parseURL( OUT URL_INFO *urlInfo, 
-			  IN_BUFFER( urlLen ) const char *url, 
+			  IN_BUFFER( urlLen ) const BYTE *url, 
 			  IN_LENGTH_SHORT const int urlLen,
 			  IN_PORT_OPT const int defaultPort, 
 			  IN_ENUM( URL_TYPE ) const URL_TYPE urlTypeHint,

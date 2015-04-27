@@ -940,7 +940,7 @@ int sNetDisconnect( INOUT STREAM *stream )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sNetParseURL( OUT URL_INFO *urlInfo, 
-				  IN_BUFFER( urlLen ) const char *url, 
+				  IN_BUFFER( urlLen ) const BYTE *url, 
 				  IN_LENGTH_SHORT const int urlLen, 
 				  IN_ENUM_OPT( URL_TYPE ) const URL_TYPE urlTypeHint )
 	{
@@ -1021,7 +1021,7 @@ int sNetDisconnect( INOUT STREAM *stream )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sNetParseURL( INOUT URL_INFO *urlInfo, 
-				  IN_BUFFER( urlLen ) const char *url, 
+				  IN_BUFFER( urlLen ) const BYTE *url, 
 				  IN_LENGTH_SHORT const int urlLen, 
 				  IN_ENUM_OPT( URL_TYPE ) const URL_TYPE urlTypeHint )
 	{

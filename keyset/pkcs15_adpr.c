@@ -27,15 +27,20 @@
 /* #define USE_RSA_EXTRAPARAM */
 
 /* The minimum number of keying iterations to use when deriving a key wrap
-   key from a password */
+   key from a password.  We have to be careful here not to exceed the kernel-
+   enforced MAX_KEYSETUP_ITERATIONS, or any attempt to use that many 
+   iterations will be blocked by the kernel */
 
 #if defined( CONFIG_SLOW_CPU )
-  #define MIN_KEYING_ITERATIONS	800
+  #define MIN_KEYING_ITERATIONS	1000
 #elif defined( CONFIG_FAST_CPU )
-  #define MIN_KEYING_ITERATIONS	20000
+  #define MIN_KEYING_ITERATIONS	50000
 #else
-  #define MIN_KEYING_ITERATIONS	5000
+  #define MIN_KEYING_ITERATIONS	10000
 #endif /* CONFIG_SLOW_CPU */
+#if MIN_KEYING_ITERATIONS > MAX_KEYSETUP_ITERATIONS
+  #error MIN_KEYING_ITERATIONS exceeds MAX_KEYSETUP_ITERATIONS
+#endif /* Sanity chechk of keying iterations */
 
 /****************************************************************************
 *																			*
@@ -122,7 +127,7 @@ int calculatePrivkeyStorage( OUT_BUFFER_ALLOC_OPT( *newPrivKeyDataSize ) \
 											sizeofObject( privKeySize ) + \
 											extraDataSize ) );
 	ENSURES( *newPrivKeyDataSize > 0 && \
-			 *newPrivKeyDataSize < MAX_INTLENGTH );
+			 *newPrivKeyDataSize < MAX_BUFFER_SIZE );
 
 	/* If the new data will fit into the existing storage, we're done */
 	if( *newPrivKeyDataSize <= origPrivKeyDataSize )
@@ -793,8 +798,8 @@ static int writePrivateKey( IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 							IN_LENGTH_SHORT_Z const int origPrivKeyDataSize,
 							OUT_BUFFER_ALLOC_OPT( *newPrivKeyDataSize ) \
 								void **newPrivKeyData,
-							OUT_LENGTH_Z int *newPrivKeyDataSize,
-							OUT_LENGTH_Z int *newPrivKeyOffset, 
+							OUT_DATALENGTH_Z int *newPrivKeyDataSize,
+							OUT_DATALENGTH_Z int *newPrivKeyOffset, 
 							INOUT ERROR_INFO *errorInfo )
 	{
 	MECHANISM_WRAP_INFO mechanismInfo;

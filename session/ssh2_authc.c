@@ -53,15 +53,15 @@
    comment in reportAuthFailure() for details */
 
 static const ALGO_STRING_INFO FAR_BSS algoStringUserauthentPWTbl[] = {
-	{ "password", 8, CRYPT_PSEUDOALGO_PASSWORD },
-	{ "keyboard-interactive", 20, CRYPT_PSEUDOALGO_PAM },
+	{ "password", 8, MK_ALGO( PSEUDOALGO_PASSWORD ) },
+	{ "keyboard-interactive", 20, MK_ALGO( PSEUDOALGO_PAM ) },
 	{ "publickey", 9, CRYPT_ALGO_RSA },
 	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
 	};
 static const ALGO_STRING_INFO FAR_BSS algoStringUserauthentPKCTbl[] = {
 	{ "publickey", 9, CRYPT_ALGO_RSA },
-	{ "password", 8, CRYPT_PSEUDOALGO_PASSWORD },
-	{ "keyboard-interactive", 20, CRYPT_PSEUDOALGO_PAM },
+	{ "password", 8, MK_ALGO( PSEUDOALGO_PASSWORD ) },
+	{ "keyboard-interactive", 20, MK_ALGO( PSEUDOALGO_PAM ) },
 	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, CRYPT_ALGO_NONE }
 	};
 
@@ -538,8 +538,16 @@ static int pamAuthenticate( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		}
 	if( cryptStatusOK( status ) )
+		{
 		status = readString32( &stream, promptBuffer, 
 							   CRYPT_MAX_TEXTSIZE, &promptLength );
+		if( cryptStatusOK( status ) && promptLength <= 0 )
+			{
+			/* We must have at least some sort of prompt given that we 
+			   require num_prompts to be nonzero */
+			status = CRYPT_ERROR_BADDATA;
+			}
+		}
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
@@ -552,7 +560,9 @@ static int pamAuthenticate( INOUT SESSION_INFO *sessionInfoPtr,
 	   authentication.  This assumes that the prompt string begins with the 
 	   word "password" (which always seems to be the case), if it isn't then 
 	   it may be necessary to do a substring search */
-	if( promptLength < 8 || strCompare( promptBuffer, "Password", 8 ) )
+	if( promptLength < 8 || \
+		!strIsPrintable( promptBuffer, promptLength ) || \
+		strCompare( promptBuffer, "Password", 8 ) )
 		{
 		/* The following may produce somewhat inconsistent results in terms
 		   of what it reports because it's unclear what 'name' actually is, 

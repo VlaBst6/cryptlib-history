@@ -41,7 +41,8 @@ static int getDynData( OUT DYNBUF *dynBuf,
 				( isAttribute( messageParam ) || \
 				  isInternalAttribute( messageParam ) ) ) || \
 			  ( message == IMESSAGE_CRT_EXPORT && \
-		 		messageParam == CRYPT_CERTFORMAT_CERTIFICATE ) );
+		 		( messageParam == CRYPT_CERTFORMAT_CERTIFICATE || \
+				  messageParam == CRYPT_CERTFORMAT_CERTCHAIN ) ) );
 
 	/* Clear return values.  Note that we don't use the usual memset() to 
 	   clear the value since the structure contains the storage for the 
@@ -110,7 +111,8 @@ int dynCreateCert( OUT DYNBUF *dynBuf,
 	assert( isWritePtr( dynBuf, sizeof( DYNBUF ) ) );
 
 	REQUIRES( isHandleRangeValid( cryptHandle ) );
-	REQUIRES( formatType == CRYPT_CERTFORMAT_CERTIFICATE );
+	REQUIRES( formatType == CRYPT_CERTFORMAT_CERTIFICATE || \
+			  formatType == CRYPT_CERTFORMAT_CERTCHAIN );
 
 	return( getDynData( dynBuf, cryptHandle, IMESSAGE_CRT_EXPORT, 
 						formatType ) );
@@ -123,7 +125,7 @@ void dynDestroy( INOUT DYNBUF *dynBuf )
 	assert( isWritePtr( dynBuf->data, dynBuf->length ) );
 
 	REQUIRES_V( dynBuf->data != NULL );
-	REQUIRES_V( dynBuf->length > 0 && dynBuf->length < MAX_INTLENGTH );
+	REQUIRES_V( dynBuf->length > 0 && dynBuf->length < MAX_BUFFER_SIZE );
 
 	zeroise( dynBuf->data, dynBuf->length );
 	if( dynBuf->data != dynBuf->dataBuffer )
@@ -396,10 +398,10 @@ void clFreeFn( const char *fileName, const char *fnName,
 
 #ifdef CONFIG_FAULT_MALLOC
 
-static int currentAllocCount = 0, failAllocCount = 8;
+static int currentAllocCount = 0, failAllocCount = 0;
 static BOOLEAN allocFailed = FALSE;
 
-void clFaultSet( const int number )
+void clFaultAllocSetCount( const int number )
 	{
 	currentAllocCount = 0;
 	failAllocCount = number;
@@ -415,20 +417,20 @@ void *clFaultAllocFn( const char *fileName, const char *fnName,
 	if( allocFailed )
 		{
 #ifdef __WIN32__
-		DEBUG_PRINT( "\n<<< Further allocation call from thread %X after "
-					 "previous call failed, called from %s line %d in "
-					 "%s.>>>\n", GetCurrentThreadId(), fnName, lineNo, 
-					 fileName );
+		DEBUG_PRINT(( "\n<<< Further allocation call from thread %X after "
+					  "previous call failed, called from %s line %d in "
+					  "%s.>>>\n", GetCurrentThreadId(), fnName, lineNo, 
+					  fileName ));
 #else
-		DEBUG_PRINT( "\n<<< Further allocation call after previous call "
-					 "failed, called from %s line %d in %s.>>>\n", fnName, 
-					 lineNo, fileName );
+		DEBUG_PRINT(( "\n<<< Further allocation call after previous call "
+					  "failed, called from %s line %d in %s.>>>\n", fnName, 
+					  lineNo, fileName ));
 #endif /* __WIN32__  */
 		if( failAllocCount < 15 )
 			{
-			DEBUG_PRINT( "<<<  (This could be because of a multithreaded "
-						 "init).>>>\n" );
-			DEBUG_PRINT( "\n" );
+			DEBUG_PRINT(( "<<<  (This could be because of a multithreaded "
+						  "init).>>>\n" ));
+			DEBUG_PRINT(( "\n" ));
 			}
 		return( NULL );
 		}
@@ -442,13 +444,13 @@ void *clFaultAllocFn( const char *fileName, const char *fnName,
 
 	/* We've reached the failure count, fail the allocation */
 #ifdef __WIN32__
-	DEBUG_PRINT( "\n<<< Failing allocation call #%d for thread %X, called "
-				 "from %s line %d in %s.>>>\n\n", failAllocCount + 1, 
-				 GetCurrentThreadId(), fnName, lineNo, fileName );
+	DEBUG_PRINT(( "\n<<< Failing allocation call #%d for thread %X, called "
+				  "from %s line %d in %s.>>>\n\n", failAllocCount + 1, 
+				  GetCurrentThreadId(), fnName, lineNo, fileName ));
 #else
-	DEBUG_PRINT( "\n<<< Failing at allocation call #%d, called from %s line "
-				 "%d in %s.>>>\n\n", failAllocCount + 1, fnName, lineNo, 
-				 fileName );
+	DEBUG_PRINT(( "\n<<< Failing at allocation call #%d, called from %s line "
+				  "%d in %s.>>>\n\n", failAllocCount + 1, fnName, lineNo, 
+				  fileName ));
 #endif /* __WIN32__  */
 	allocFailed = TRUE;
 	return( NULL );

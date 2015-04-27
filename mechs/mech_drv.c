@@ -70,16 +70,26 @@ static int prfInit( IN const HASHFUNCTION hashFunction,
 		}
 	else
 		{
-		/* Copy the key to internal storage */
+		/* Copy the key to internal storage.  Note that this has the 
+		   potential to leak a tiny amount of timing information about the
+		   key length, but given the mass of operations that follow this is
+		   unlikely to be significant */
 		memcpy( processedKey, key, keyLength );
 		*processedKeyLength = keyLength;
 		}
 
 	/* Perform the start of the inner hash using the zero-padded key XORed
-	   with the ipad value */
-	memset( hashBuffer, HMAC_IPAD, HMAC_DATASIZE );
-	for( i = 0; i < *processedKeyLength; i++ )
-		hashBuffer[ i ] ^= keyPtr[ i ];
+	   with the ipad value.  This could be done slightly more efficiently, 
+	   but the following sequence of operations minimises timing channels 
+	   leaking the key length */
+	memcpy( hashBuffer, keyPtr, *processedKeyLength );
+	if( *processedKeyLength < HMAC_DATASIZE )
+		{
+		memset( hashBuffer + *processedKeyLength, 0, 
+				HMAC_DATASIZE - *processedKeyLength );
+		}
+	for( i = 0; i < HMAC_DATASIZE; i++ )
+		hashBuffer[ i ] ^= HMAC_IPAD;
 	hashFunction( hashState, NULL, 0, hashBuffer, HMAC_DATASIZE, 
 				  HASH_STATE_START );
 	zeroise( hashBuffer, HMAC_DATASIZE );
@@ -115,10 +125,17 @@ static int prfEnd( IN const HASHFUNCTION hashFunction,
 				  HASH_STATE_END );
 
 	/* Perform the outer hash using the zero-padded key XORed with the opad
-	   value followed by the digest from the inner hash */
-	memset( hashBuffer, HMAC_OPAD, HMAC_DATASIZE );
+	   value followed by the digest from the inner hash.  As with the init
+	   function this could be done slightly more efficiently, but the 
+	   following sequence of operations minimises timing channels leaking 
+	   the key length */
 	memcpy( hashBuffer, processedKey, processedKeyLength );
-	for( i = 0; i < processedKeyLength; i++ )
+	if( processedKeyLength < HMAC_DATASIZE )
+		{
+		memset( hashBuffer + processedKeyLength, 0, 
+				HMAC_DATASIZE - processedKeyLength );
+		}
+	for( i = 0; i < HMAC_DATASIZE; i++ )
 		hashBuffer[ i ] ^= HMAC_OPAD;
 	hashFunction( hashState, NULL, 0, hashBuffer, HMAC_DATASIZE, 
 				  HASH_STATE_START );
@@ -1068,7 +1085,7 @@ int derivePGP( STDC_UNUSED void *dummy,
 
 	REQUIRES( mechanismInfo->iterations >= 0 && \
 			  mechanismInfo->iterations <= MAX_KEYSETUP_HASHSPECIFIER );
-	REQUIRES( byteCount >= 0 && byteCount < MAX_INTLENGTH );
+	REQUIRES( byteCount >= 0 && byteCount < MAX_BUFFER_SIZE );
 
 	/* Clear return value */
 	memset( mechanismInfo->dataOut, 0, mechanismInfo->dataOutLength );

@@ -184,6 +184,7 @@ static int userMessageFunction( INOUT TYPECAST( USER_INFO * ) \
 		if( userInfoPtr->iKeyset != CRYPT_ERROR )
 			krnlSendNotifier( userInfoPtr->iKeyset, IMESSAGE_DECREFCOUNT );
 
+#ifdef USE_KEYSETS
 		/* If we're doing a zeroise, clear any persistent user data.  It's a
 		   bit unclear what to do in case of an error at this point since 
 		   we're in the middle of a shutdown anyway.  We can't really cancel
@@ -192,6 +193,7 @@ static int userMessageFunction( INOUT TYPECAST( USER_INFO * ) \
 		   continue and ignore the failure */
 		if( userInfoPtr->flags & USER_FLAG_ZEROISE )
 			( void ) zeroiseUsers( userInfoPtr );
+#endif /* USE_KEYSETS */
 
 		/* Clean up the trust info and config options */
 		if( userInfoPtr->trustInfoPtr != NULL )
@@ -199,8 +201,10 @@ static int userMessageFunction( INOUT TYPECAST( USER_INFO * ) \
 		if( userInfoPtr->configOptions != NULL )
 			endOptions( userInfoPtr->configOptions, 
 						userInfoPtr->configOptionsCount );
+#ifdef USE_KEYSETS
 		if( userInfoPtr->userIndexPtr != NULL )
 			endUserIndex( userInfoPtr->userIndexPtr );
+#endif /* USE_KEYSETS */
 
 		return( CRYPT_OK );
 		}
@@ -362,7 +366,9 @@ int createUser( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
 	{
 	CRYPT_USER iCryptUser;
 	USER_INFO *userInfoPtr;
+#ifdef USE_KEYSETS
 	char userFileName[ 16 + 8 ];
+#endif /* USE_KEYSETS */
 	int fileRef, initStatus, status;
 
 	assert( isWritePtr( createInfo, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
@@ -463,6 +469,7 @@ fileRef = 0;
 	if( cryptStatusError( initStatus ) || cryptStatusError( status ) )
 		return( cryptStatusError( initStatus ) ? initStatus : status );
 
+#ifdef USE_KEYSETS
 	/* If the user object has a corresponding user info file, read any
 	   stored config options into the object.  We have to do this after
 	   it's initialised because the config data, coming from an external
@@ -481,6 +488,7 @@ fileRef = 0;
 			return( status );
 			}
 		}
+#endif /* USE_KEYSETS */
 	createInfo->cryptHandle = iCryptUser;
 	return( CRYPT_OK );
 	}
@@ -518,6 +526,7 @@ static int createDefaultUserObject( void )
 			return( initStatus );
 		}
 	ENSURES( iUserObject == DEFAULTUSER_OBJECT_HANDLE );
+#ifdef USE_KEYSETS
 	if( cryptStatusOK( initStatus ) )
 		{
 		/* Read the user index.  We make this part of the object init because
@@ -526,6 +535,7 @@ static int createDefaultUserObject( void )
 		   critical enough that we abort the cryptlib init if it fails */
 		initStatus = initUserIndex( &userInfoPtr->userIndexPtr );
 		}
+#endif /* USE_KEYSETS */
 
 	/* We've finished setting up the object-type-specific info, tell the
 	   kernel that the object is ready for use */
@@ -534,6 +544,7 @@ static int createDefaultUserObject( void )
 	if( cryptStatusError( initStatus ) || cryptStatusError( status ) )
 		return( cryptStatusError( initStatus ) ? initStatus : status );
 
+#ifdef USE_KEYSETS
 	/* Read any stored config options into the object.  We have to do this 
 	   after it's initialised because the config data, coming from an 
 	   external (and therefore untrusted) source has to go through the 
@@ -553,6 +564,7 @@ static int createDefaultUserObject( void )
 		DEBUG_PRINT(( "Configuration file read failed with status %d.\n", 
 					  status ));
 		}
+#endif /* USE_KEYSETS */
 
 	/* The object has been initialised, move it into the initialised state */
 	return( krnlSendMessage( iUserObject, IMESSAGE_SETATTRIBUTE, 

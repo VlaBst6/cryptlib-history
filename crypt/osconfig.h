@@ -146,7 +146,7 @@
 	#define RC4_INDEX
 	#define RC4_CHAR
 	#define RC4_CHUNK
-  #elif defined( __ppc__ ) || defined( __powerpc__ )
+  #elif defined( __ppc__ ) || defined( __powerpc ) || defined( __powerpc__ )
 	#ifdef DATA_LITTLEENDIAN
 	  #define L_ENDIAN
 	#else
@@ -598,7 +598,7 @@
 	#if defined( __mb__ )
 	  #define B_ENDIAN
 	  /* Not sure what other options the MicroBlaze build should enable... */
-	#elif defined( __ppc__ )
+	#elif defined( __ppc__ ) || defined( __powerpc ) || defined( __powerpc__ )
 	  #ifdef DATA_LITTLEENDIAN
 		#define L_ENDIAN
 	  #else
@@ -622,7 +622,7 @@
 	#define DES_RISC1
 	#define DES_UNROLL
 	#define RC4_INDEX
-  #elif defined( __ppc__ ) || defined( __powerpc__ )
+  #elif defined( __ppc__ ) || defined( __powerpc ) || defined( __powerpc__ )
 	#ifdef DATA_LITTLEENDIAN
 	  #define L_ENDIAN
 	#else

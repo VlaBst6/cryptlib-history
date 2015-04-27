@@ -5,7 +5,7 @@ Option Explicit
 '*****************************************************************************
 '*                                                                           *
 '*                        cryptlib External API Interface                    *
-'*                       Copyright Peter Gutmann 1997-2012                   *
+'*                       Copyright Peter Gutmann 1997-2014                   *
 '*                                                                           *
 '*                 adapted for Visual Basic Version 6  by W. Gothier         *
 '*****************************************************************************
@@ -15,7 +15,7 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Wed Aug 29 15:34:08 2012, filesize = 97645.
+'"cryptlib.h" dated Sat Oct  4 00:33:32 2014, filesize = 98058.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
@@ -29,7 +29,7 @@ Option Explicit
 
 '-----------------------------------------------------------------------------
 
-  Public Const CRYPTLIB_VERSION As Long = 3410
+  Public Const CRYPTLIB_VERSION As Long = 3430
 
 '****************************************************************************
 '*                                                                           *
@@ -281,7 +281,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_ATTRIBUTE_CURRENT_INSTANCE    ' Cursor mgt: Instance in attribute list 
     CRYPT_ATTRIBUTE_BUFFERSIZE      ' Internal data buffer size 
 
-    ' User internally 
+    ' Used internally 
     CRYPT_GENERIC_LAST
     CRYPT_OPTION_FIRST = 100
 
@@ -406,10 +406,8 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_IMMUTABLE        ' Cert is signed and immutable 
     CRYPT_CERTINFO_XYZZY            ' Cert is a magic just-works cert 
     CRYPT_CERTINFO_CERTTYPE         ' Certificate object type 
-    CRYPT_CERTINFO_FINGERPRINT      ' Certificate fingerprints 
-        CRYPT_CERTINFO_FINGERPRINT_MD5 = CRYPT_CERTINFO_FINGERPRINT
+    CRYPT_CERTINFO_FINGERPRINT_MD5  ' Certificate fingerprints 
     CRYPT_CERTINFO_FINGERPRINT_SHA1
-        CRYPT_CERTINFO_FINGERPRINT_SHA = CRYPT_CERTINFO_FINGERPRINT_SHA1
     CRYPT_CERTINFO_FINGERPRINT_SHA2
     CRYPT_CERTINFO_FINGERPRINT_SHAng
     CRYPT_CERTINFO_CURRENT_CERTIFICATE ' Cursor mgt: Rel.pos in chain/CRL/OCSP 
@@ -440,6 +438,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_PKIUSER_ID       ' PKI user ID 
     CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD    ' PKI user issue password 
     CRYPT_CERTINFO_PKIUSER_REVPASSWORD      ' PKI user revocation password 
+    CRYPT_CERTINFO_PKIUSER_RA       ' PKI user is an RA 
 
 '      X.520 Distinguished Name components.  This is a composite field, the
 '      DN to be manipulated is selected through the addition of a
@@ -1027,7 +1026,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     ' Client/server information 
     CRYPT_SESSINFO_SERVER_NAME      ' Server name 
     CRYPT_SESSINFO_SERVER_PORT      ' Server port number 
-    CRYPT_SESSINFO_SERVER_FINGERPRINT ' Server key fingerprint 
+    CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1 ' Server key fingerprint 
     CRYPT_SESSINFO_CLIENT_NAME      ' Client name 
     CRYPT_SESSINFO_CLIENT_PORT      ' Client port number 
     CRYPT_SESSINFO_SESSION          ' Transport mechanism 
@@ -1364,6 +1363,8 @@ End Enum
   Public Const CRYPT_SSLOPTION_MINVER_TLS12 As Long = &H03
   Public Const CRYPT_SSLOPTION_SUITEB_128 As Long = &H04    ' SuiteB security levels 
   Public Const CRYPT_SSLOPTION_SUITEB_256 As Long = &H08
+  Public Const CRYPT_SSLOPTION_DISABLE_NAMEVERIFY As Long = &H10    ' Disable cert hostname check 
+  Public Const CRYPT_SSLOPTION_DISABLE_CERTVERIFY As Long = &H20    ' Disable certificate check 
 
 '****************************************************************************
 '*                                                                           *
@@ -1375,7 +1376,7 @@ End Enum
 
   Public Const CRYPT_MAX_KEYSIZE As Long = 256
 
-' The maximum IV size - 256 bits 
+' The maximum IV/cipher block size - 256 bits 
 
   Public Const CRYPT_MAX_IVSIZE As Long = 32
 
@@ -1549,7 +1550,7 @@ Public Enum CRYPT_ECCCURVE_TYPE
 
 '      Named ECC curves.  Since these need to be mapped to all manner of
 '      protocol- and mechanism-specific identifiers, when updating this list 
-'      grep for occurrences of CRYPT_ECCCURVE_P256 (the most common one) and
+'      grep for occurrences of the string "P256" (the most common one) and 
 '      check whether any related mapping tables need to be updated 
     CRYPT_ECCCURVE_NONE         ' No ECC curve type 
     CRYPT_ECCCURVE_P192         ' NIST P192/X9.62 P192r1/SECG p192r1 curve 
@@ -1557,6 +1558,9 @@ Public Enum CRYPT_ECCCURVE_TYPE
     CRYPT_ECCCURVE_P256         ' NIST P256/X9.62 P256v1/SECG p256r1 curve 
     CRYPT_ECCCURVE_P384         ' NIST P384, SECG p384r1 curve 
     CRYPT_ECCCURVE_P521         ' NIST P521, SECG p521r1 
+    CRYPT_ECCCURVE_BRAINPOOL_P256  ' Brainpool p256r1 
+    CRYPT_ECCCURVE_BRAINPOOL_P384  ' Brainpool p384r1 
+    CRYPT_ECCCURVE_BRAINPOOL_P512  ' Brainpool p512r1 
     CRYPT_ECCCURVE_LAST         ' Last valid ECC curve type 
     
 

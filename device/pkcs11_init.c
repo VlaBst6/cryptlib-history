@@ -334,8 +334,9 @@ int deviceInitPKCS11( void )
 
 #define keysizeValid( algo ) \
 	( ( algo ) == CRYPT_ALGO_DH || ( algo ) == CRYPT_ALGO_RSA || \
-	  ( algo ) == CRYPT_ALGO_DSA || ( algo ) == CRYPT_ALGO_RC2 || \
-	  ( algo ) == CRYPT_ALGO_RC4 || ( algo ) == CRYPT_ALGO_RC5 )
+	  ( algo ) == CRYPT_ALGO_DSA || ( algo ) == CRYPT_ALGO_ECDSA || \
+	  ( algo ) == CRYPT_ALGO_RC2 || ( algo ) == CRYPT_ALGO_RC4 || \
+	  ( algo ) == CRYPT_ALGO_RC5 )
 #define keysizeInBytes( algo ) \
 	( ( algo ) == CRYPT_ALGO_RC5 )
 
@@ -407,6 +408,10 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 	{ CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA", 3,
 		MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE },
 #endif /* USE_DSA */
+#ifdef USE_ECDSA
+	{ CRYPT_ALGO_ECDSA, bitsToBytes( 0 ), "ECDSA", 5,
+		MIN_PKCSIZE_ECC, bitsToBytes( 256 ), CRYPT_MAX_PKCSIZE_ECC },
+#endif /* USE_ECDSA */
 
 	/* Hier ist der Mast zu ende */
 	{ CRYPT_ERROR }, { CRYPT_ERROR }
@@ -457,10 +462,35 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		assert( DEBUG_WARN );
 		return( NULL );
 		}
-	krnlSendMessage( deviceInfo->ownerHandle, IMESSAGE_GETATTRIBUTE, 
-					 &hardwareOnly, CRYPT_OPTION_DEVICE_PKCS11_HARDWAREONLY );
-	if( hardwareOnly && !( pMechanism.flags & CKF_HW ) )
+	status = krnlSendMessage( deviceInfo->ownerHandle, IMESSAGE_GETATTRIBUTE, 
+							  &hardwareOnly, 
+							  CRYPT_OPTION_DEVICE_PKCS11_HARDWAREONLY );
+	if( cryptStatusOK( status ) && hardwareOnly && \
+		!( pMechanism.flags & CKF_HW ) )
+		{
+		DEBUG_DIAG(( "Skipping mechanism %X, which is only available in "
+					 "software emulation", mechanismInfoPtr->mechanism ));
 		return( NULL );
+		}
+	if( mechanismInfoPtr->requiredFlags != CKF_NONE )
+		{
+		/* Make sure that the driver flags indicate support for the specific 
+		   functionality that we require */
+		if( ( mechanismInfoPtr->requiredFlags & \
+			  pMechanism.flags ) != mechanismInfoPtr->requiredFlags )
+			{
+			DEBUG_DIAG(( "Driver reports that mechanism %X only has "
+						 "capabilities %lX when we require %lX", 
+						 mechanismInfoPtr->mechanism, 
+						 mechanismInfoPtr->requiredFlags & pMechanism.flags,
+						 mechanismInfoPtr->requiredFlags ));
+//////////////////////////////////
+// Kludge to allow it to be used
+//////////////////////////////////
+//			assert( DEBUG_WARN );
+//			return( NULL );
+			}
+		}
 
 	/* Copy across the template for this capability */
 	if( ( capabilityInfo = clAlloc( "getCapability", \
@@ -470,9 +500,8 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 				capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR && \
 				i < FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ); 
 		 i++ );
-	if( i >= FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ) || \
-		capabilityTemplates[ i ].cryptAlgo == CRYPT_ERROR )
-		retIntError_Null();
+	ENSURES_N( i < FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ) );
+	ENSURES_N( capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR );
 	memcpy( capabilityInfo, &capabilityTemplates[ i ],
 			sizeof( CAPABILITY_INFO ) );
 
@@ -492,7 +521,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		if( pMechanism.ulMinKeySize < 0 || \
 			pMechanism.ulMinKeySize >= 10000L )
 			{
-			DEBUG_DIAG(( "Driver reports invalid minimum key size %ld for "
+			DEBUG_DIAG(( "Driver reports invalid minimum key size %lu for "
 						 "%s algorithm", pMechanism.ulMinKeySize,
 						 capabilityInfo->algoName ));
 			assert( DEBUG_WARN );
@@ -501,7 +530,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		if( pMechanism.ulMaxKeySize < 0 || \
 			pMechanism.ulMaxKeySize >= 100000L )
 			{
-			DEBUG_DIAG(( "Driver reports invalid maximum key size %ld for "
+			DEBUG_DIAG(( "Driver reports invalid maximum key size %lu for "
 						 "%s algorithm", pMechanism.ulMaxKeySize,
 						 capabilityInfo->algoName ));
 			assert( DEBUG_WARN );
@@ -544,8 +573,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 	/* Set up the device-specific handlers */
 	capabilityInfo->selfTestFunction = selfTestFunction;
 	capabilityInfo->getInfoFunction = getDefaultInfo;
-	if( cryptAlgo != CRYPT_ALGO_DH && cryptAlgo != CRYPT_ALGO_RSA && \
-		cryptAlgo != CRYPT_ALGO_DSA )
+	if( !isPKC )
 		capabilityInfo->initParamsFunction = initGenericParams;
 	capabilityInfo->endFunction = mechanismInfoPtr->endFunction;
 	capabilityInfo->initKeyFunction = mechanismInfoPtr->initKeyFunction;
@@ -663,6 +691,51 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		capabilityInfo->paramDefaultMech = mechanismInfoPtr->defaultMechanism;
 		}
 
+	/* Some drivers report bizarre combinations of capabilities like (for 
+	   RSA) sign, verify, and decrypt but not encrypt, which will fail later 
+	   sanity checks.  If we run into one of these we force the capabilities 
+	   to be consistent by disabling any for which only partial capabilities
+	   are supported */
+	if( isPkcAlgo( cryptAlgo ) )
+		{
+		if( capabilityInfo->decryptFunction != NULL && \
+			capabilityInfo->encryptFunction == NULL )
+			{
+			DEBUG_DIAG(( "Driver reports decryption but not encryption "
+						 "capability for %s algorithm, disabling "
+						 "encryption", capabilityInfo->algoName ));
+			capabilityInfo->decryptFunction = NULL;
+			}
+		if( capabilityInfo->signFunction != NULL && \
+			capabilityInfo->sigCheckFunction == NULL )
+			{
+			DEBUG_DIAG(( "Driver reports signature-generation but not "
+						 "signature-verification capability for %s "
+						 "algorithm, disabling signing", 
+						 capabilityInfo->algoName ));
+//////////////////////////////////
+// Kludge to allow it to be used
+//////////////////////////////////
+if( cryptAlgo == CRYPT_ALGO_ECDSA )
+capabilityInfo->sigCheckFunction = capabilityInfo->signFunction;
+else
+			capabilityInfo->signFunction = NULL;
+			}
+
+		/* If we've now disabled all capabilities, we can't use this 
+		   algorithm */
+		if( capabilityInfo->decryptFunction == NULL && \
+			capabilityInfo->signFunction == NULL )
+			{
+			DEBUG_DIAG(( "Use of algorithm %s disabled since no consistent "
+						 "set of capabilities is available", 
+						 capabilityInfo->algoName ));
+			clFree( "getCapability", capabilityInfo );
+			assert( DEBUG_WARN );
+			return( NULL );
+			}
+		}
+
 	/* If it's not a conventional encryption algo, we're done */
 	if( !isConvAlgo( cryptAlgo ) )
 		return( ( CAPABILITY_INFO * ) capabilityInfo );
@@ -724,8 +797,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 				retIntError_Null();
 			}
 		}
-	if( iterationCount >= maxMechanisms )
-		retIntError_Null();
+	ENSURES_N( iterationCount < maxMechanisms );
 
 	return( ( CAPABILITY_INFO * ) capabilityInfo );
 	}
@@ -804,9 +876,7 @@ static int getCapabilities( DEVICE_INFO *deviceInfo,
 									   maxMechanisms - i );
 		if( newCapability == NULL )
 			continue;
-		REQUIRES( sanityCheckCapability( newCapability, 
-								isPkcAlgo( newCapability->cryptAlgo ) ? \
-								TRUE : FALSE ) );
+		REQUIRES( sanityCheckCapability( newCapability ) );
 		if( ( newCapabilityList = \
 						clAlloc( "getCapabilities", \
 								 sizeof( CAPABILITY_INFO_LIST ) ) ) == NULL )
@@ -828,11 +898,9 @@ static int getCapabilities( DEVICE_INFO *deviceInfo,
 		while( mechanismInfoPtr[ i + 1 ].cryptAlgo == cryptAlgo && \
 			   i < maxMechanisms )
 			i++;
-		if( i >= maxMechanisms )
-			retIntError();
+		ENSURES( i < maxMechanisms );
 		}
-	if( i >= maxMechanisms )
-		retIntError();
+	ENSURES( i < maxMechanisms );
 
 	return( ( deviceInfo->capabilityInfoList == NULL ) ? CRYPT_ERROR : CRYPT_OK );
 	}
@@ -935,8 +1003,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 					!strCompare( tokenName, tokenInfo.label, tokenNameLength ) )
 					break;
 				}
-			if( tokenSlot >= FAILSAFE_ITERATIONS_MED )
-				retIntError();
+			ENSURES( tokenSlot < FAILSAFE_ITERATIONS_MED );
 			if( tokenSlot >= slotCount )
 				return( CRYPT_ERROR_NOTFOUND );
 			}
@@ -1053,6 +1120,8 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	if( ( pkcs11Info->minPinSize = ( int ) tokenInfo.ulMinPinLen ) < 4 )
 		{
 		/* Some devices report silly PIN sizes */
+		DEBUG_DIAG(( "Driver reports suspicious minimum PIN size %lu, "
+					 "using 4", tokenInfo.ulMinPinLen ));
 		pkcs11Info->minPinSize = 4;
 		}
 	if( ( pkcs11Info->maxPinSize = ( int ) tokenInfo.ulMaxPinLen ) < 4 )
@@ -1062,6 +1131,8 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		   differentiate between 0xFFFFFFFF = bogus value and 0xFFFFFFFF = 
 		   ULONG_MAX we play it safe and set the limit to 8 bytes, which most
 		   devices should be able to handle */
+		DEBUG_DIAG(( "Driver reports suspicious maximum PIN size %lu, "
+					 "using 8", tokenInfo.ulMinPinLen ));
 		pkcs11Info->maxPinSize = 8;
 		}
 	labelPtr = ( char * ) tokenInfo.label;
@@ -1108,9 +1179,11 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 							CKF_RW_SESSION | CKF_SERIAL_SESSION, NULL_PTR, 
 							NULL_PTR, &hSession );
 	if( status == CKR_TOKEN_WRITE_PROTECTED )
+		{
 		status = C_OpenSession( pkcs11Info->slotID, 
 								CKF_SERIAL_SESSION, NULL_PTR, NULL_PTR, 
 								&hSession );
+		}
 	if( status != CKR_OK )
 		{
 		cryptStatus = pkcs11MapError( status, CRYPT_ERROR_OPEN );

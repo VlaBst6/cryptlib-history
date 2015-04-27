@@ -9,6 +9,23 @@
 
 #define _ASN1OID_DEFINED
 
+/* Additional information required when reading a CMS header.  This is
+   pointed to by the extraInfo member of the ASN.1 OID_INFO structure and
+   contains CMS version number information */
+
+typedef struct {
+	const int minVersion;	/* Minimum version number for content type */
+	const int maxVersion;	/* Maximum version number for content type */
+	} CMS_CONTENT_INFO;
+
+#ifdef USE_INT_ASN1
+
+/****************************************************************************
+*																			*
+*									ASN.1 OIDs								*
+*																			*
+****************************************************************************/
+
 /* The cryptlib (strictly speaking DDS) OID arc is as follows:
 
 	1 3 6 1 4 1 3029 = dds
@@ -22,6 +39,8 @@
 						 1 = elgamal
 					   3 = hash
 					   4 = MAC
+					   5 = ECC
+						 1 = curvey25519
 					 2 = mechanism
 					 3 = attribute
 					   1 = PKIX fixes
@@ -95,14 +114,11 @@
 #define OID_RPKI_POLICY			MKOID( "\x06\x08\x2B\x06\x01\x05\x05\x07\x0E\x02" )
 #define OID_ZLIB				MKOID( "\x06\x0B\x2A\x86\x48\x86\xF7\x0D\x01\x09\x10\x03\x08" )
 
-/* Additional information required when reading a CMS header.  This is
-   pointed to by the extraInfo member of the ASN.1 OID_INFO structure and
-   contains CMS version number information */
-
-typedef struct {
-	const int minVersion;	/* Minimum version number for content type */
-	const int maxVersion;	/* Maximum version number for content type */
-	} CMS_CONTENT_INFO;
+/****************************************************************************
+*																			*
+*							ASN.1 Support Functions							*
+*																			*
+****************************************************************************/
 
 /* AlgorithmIdentifier routines.  The reason for the apparently redundant 
    CHECK_RETVAL specifiers on some of the write functions is because they 
@@ -285,4 +301,5 @@ int writeCMSencrHeader( INOUT STREAM *stream,
 						IN_LENGTH_INDEF const long dataSize,
 						IN_HANDLE const CRYPT_CONTEXT iCryptContext );
 
+#endif /* USE_INT_ASN1 */
 #endif /* _ASN1OID_DEFINED */

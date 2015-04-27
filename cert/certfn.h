@@ -19,12 +19,15 @@
 *																			*
 ****************************************************************************/
 
-/* Get information about a DN string */
+/* DN string functions */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int getAsn1StringType( IN_BUFFER( stringLen ) const void *string, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
+int getAsn1StringInfo( IN_BUFFER( stringLen ) const void *string, 
 					   IN_LENGTH_SHORT const int stringLen,
-					   OUT_RANGE( 0, 20 ) int *stringType );
+					   OUT_RANGE( 0, 20 ) int *stringType, 
+					   OUT_TAG_ENCODED_Z int *asn1StringType,
+					   OUT_LENGTH_SHORT_Z int *asn1StringLen,
+					   const BOOLEAN isNativeString );
 
 /* DN manipulation routines */
 
@@ -394,7 +397,9 @@ int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
 					 OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
 						CRYPT_ERRTYPE_TYPE *errorType );
 CHECK_RETVAL \
-int sizeofAttributes( IN_OPT const ATTRIBUTE_PTR *attributePtr );
+int sizeofAttributes( IN_OPT const ATTRIBUTE_PTR *attributePtr,
+					  IN_ENUM_OPT( CRYPT_CERTTYPE ) \
+							const CRYPT_CERTTYPE_TYPE type );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int writeAttributes( INOUT STREAM *stream, 
 					 INOUT ATTRIBUTE_PTR *attributePtr,
@@ -421,11 +426,10 @@ int readAttributes( INOUT STREAM *stream,
 /* Read/write validity information */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofRtcsRequestEntry( INOUT VALIDITY_INFO *rtcsEntry );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int sizeofRtcsRequestEntry( const VALIDITY_INFO *rtcsEntry );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readRtcsRequestEntry( INOUT STREAM *stream, 
-						  INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
-						  INOUT CERT_INFO *certInfoPtr );
+						  INOUT_PTR VALIDITY_INFO **listHeadPtrPtr );
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int writeRtcsRequestEntry( INOUT STREAM *stream, 
 						   const VALIDITY_INFO *rtcsEntry );
@@ -742,7 +746,7 @@ int setAttributeCursor( INOUT CERT_INFO *certInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int importCert( IN_BUFFER( certObjectLength ) const void *certObject, 
-				IN_LENGTH const int certObjectLength,
+				IN_DATALENGTH const int certObjectLength,
 				OUT_HANDLE_OPT CRYPT_CERTIFICATE *certificate,
 				IN_HANDLE const CRYPT_USER iCryptOwner,
 				IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
@@ -754,8 +758,8 @@ int importCert( IN_BUFFER( certObjectLength ) const void *certObject,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
 int exportCert( OUT_BUFFER_OPT( certObjectMaxLength, *certObjectLength ) \
 					void *certObject, 
-				IN_LENGTH const int certObjectMaxLength, 
-				OUT_LENGTH_Z int *certObjectLength,
+				IN_DATALENGTH const int certObjectMaxLength, 
+				OUT_DATALENGTH_Z int *certObjectLength,
 				IN_ENUM( CRYPT_CERTFORMAT ) \
 					const CRYPT_CERTFORMAT_TYPE certFormatType,
 				const CERT_INFO *certInfoPtr );
@@ -807,13 +811,14 @@ BOOLEAN isValidField( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
 
 /* Prototypes for functions in certschk.c */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 7, 8 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 8, 9 ) ) \
 int checkCertDetails( INOUT CERT_INFO *subjectCertInfoPtr,
 					  INOUT_OPT CERT_INFO *issuerCertInfoPtr,
 					  IN_HANDLE_OPT const CRYPT_CONTEXT iIssuerPubKey,
 					  IN_OPT const X509SIG_FORMATINFO *formatInfo,
 					  const BOOLEAN trustAnchorCheck,
 					  const BOOLEAN shortCircuitCheck,
+					  const BOOLEAN basicCheckDone,
 					  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 						CRYPT_ATTRIBUTE_TYPE *errorLocus,
 					  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
@@ -840,6 +845,12 @@ ATTRIBUTE_PTR *findAttributeComponent( const CERT_INFO *certInfoPtr,
 										IN_ATTRIBUTE \
 											const CRYPT_ATTRIBUTE_TYPE certInfoType );
 
+/* Prototypes for functions in comp_pkiu.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int copyPkiUserToCertReq( INOUT CERT_INFO *certInfoPtr,
+						  INOUT CERT_INFO *pkiUserInfoPtr );
+
 /* Prototypes for functions in dn.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -865,7 +876,7 @@ BOOLEAN checkExtensionTables( void );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
 int getCertObjectInfo( INOUT STREAM *stream,
 					   OUT_LENGTH_SHORT_Z int *objectOffset, 
-					   OUT_LENGTH_Z int *objectLength, 
+					   OUT_DATALENGTH_Z int *objectLength, 
 					   OUT_ENUM_OPT( CRYPT_CERTTYPE ) \
 							CRYPT_CERTTYPE_TYPE *objectType,
 					   IN_ENUM( CRYPT_CERTTYPE ) \

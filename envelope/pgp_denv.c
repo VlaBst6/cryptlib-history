@@ -38,13 +38,13 @@ static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 		envelopeInfoPtr->bufPos < 0 || \
 		envelopeInfoPtr->bufPos > envelopeInfoPtr->bufSize || \
 		envelopeInfoPtr->bufSize < MIN_BUFFER_SIZE || \
-		envelopeInfoPtr->bufSize >= MAX_INTLENGTH )
+		envelopeInfoPtr->bufSize >= MAX_BUFFER_SIZE )
 		return( FALSE );
 
 	/* Make sure that the payload size is within bounds */
 	if( envelopeInfoPtr->payloadSize != CRYPT_UNUSED && \
 		( envelopeInfoPtr->payloadSize < 0 || \
-		  envelopeInfoPtr->payloadSize >= MAX_INTLENGTH ) )
+		  envelopeInfoPtr->payloadSize >= MAX_BUFFER_SIZE ) )
 		return( FALSE );
 
 	/* Make sure that the out-of-band buffer state is OK.  The oobDataLeft 
@@ -78,7 +78,8 @@ static int getPacketInfo( INOUT STREAM *stream,
 						  OUT_ENUM_OPT( PGP_PACKET ) PGP_PACKET_TYPE *packetType, 
 						  OUT_LENGTH_Z long *length, 
 						  OUT_OPT_BOOL BOOLEAN *isIndefinite,
-						  IN_LENGTH_SHORT int minPacketSize )
+						  IN_LENGTH_SHORT int minPacketSize,
+						  const BOOLEAN checkPacketDataPresent )
 	{
 	int ctb, version, status;
 
@@ -120,6 +121,11 @@ static int getPacketInfo( INOUT STREAM *stream,
 	if( version > envelopeInfoPtr->version )
 		envelopeInfoPtr->version = version;
 	*packetType = pgpGetPacketType( ctb );
+
+	/* Check that all of the packet data is present in the stream if 
+	   required */
+	if( checkPacketDataPresent && sMemDataLeft( stream ) < *length )
+		return( CRYPT_ERROR_UNDERFLOW );
 
 	/* Extract and return the packet type */
 	return( CRYPT_OK );
@@ -430,14 +436,15 @@ static int processPacketHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( state, sizeof( PGP_DEENV_STATE ) ) );
 
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
-	REQUIRES( streamPos >= 0 && streamPos < MAX_INTLENGTH );
+	REQUIRES( streamPos >= 0 && streamPos < MAX_BUFFER_SIZE );
 
 	/* Read the PGP packet type and figure out what we've got.  If we're at
 	   the start of the data we allow noise packets like PGP_PACKET_MARKER
 	   (with a length of 3), otherwise we only allow standard packets */
 	status = getPacketInfo( stream, envelopeInfoPtr, &packetType, 
 							&packetLength, &isIndefinite,
-							( *state == PGP_DEENVSTATE_NONE ) ? 3 : 8 );
+							( *state == PGP_DEENVSTATE_NONE ) ? 3 : 8, 
+							FALSE );
 	if( cryptStatusError( status ) )
 		{
 		retExt( status,
@@ -818,6 +825,7 @@ static int processPacketDataHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	STREAM headerStream;
 	BYTE buffer[ 32 + 256 + 8 ];	/* Max.data packet header size */
 	PGP_PACKET_TYPE packetType;
+	BOOLEAN isIndefinite;
 	long packetLength;
 	int value, length, status;
 
@@ -938,7 +946,7 @@ static int processPacketDataHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* Read the header information and see what we've got */
 	sMemConnect( &headerStream, buffer, length );
 	status = getPacketInfo( &headerStream, envelopeInfoPtr, &packetType,
-							&packetLength, NULL, 8 );
+							&packetLength, &isIndefinite, 8, FALSE );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &headerStream );
@@ -1117,10 +1125,34 @@ static int processEncryptedPacket( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 *																			*
 ****************************************************************************/
 
+/* Check for a possible soft error when reading data.  This is necessary 
+   because if we're performing a standard data push then the caller expects 
+   to get a CRYPT_OK status with a bytes-copied count, but if they've got as 
+   far as the trailer data then they'll get a CRYPT_ERROR_UNDERFLOW unless 
+   we special-case the handling of the return status.  This is complicated 
+   by the fact that we have to carefully distinguish a CRYPT_ERROR_UNDERFLOW 
+   due to running out of input from a CRYPT_ERROR_UNDERFLOW incurred for any 
+   other reason such as parsing the input data */
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkSoftError( IN_ERROR const int status, 
+							   const BOOLEAN isFlush )
+	{
+	REQUIRES_B( cryptStatusError( status ) );
+
+	/* If it's not a flush and we've run out of data, report it as a soft 
+	   error */
+	if( !isFlush && status == CRYPT_ERROR_UNDERFLOW )
+		return( TRUE );
+		
+	return( FALSE );
+	}
+
 /* Process an MDC packet */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int processMDC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+static int processMDC( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+					   const BOOLEAN isFlush )
 	{
 	ACTION_LIST *actionListPtr;
 	MESSAGE_DATA msgData;
@@ -1135,6 +1167,8 @@ static int processMDC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	if( envelopeInfoPtr->bufPos - \
 			envelopeInfoPtr->dataLeft < PGP_MDC_PACKET_SIZE )
 		{
+		if( checkSoftError( CRYPT_ERROR_UNDERFLOW, isFlush ) )
+			return( OK_SPECIAL );
 		retExt( CRYPT_ERROR_SIGNATURE,
 				( CRYPT_ERROR_SIGNATURE, ENVELOPE_ERRINFO,
 				  "MDC packet is missing or incomplete, expected %d bytes "
@@ -1385,13 +1419,13 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		}
 	envelopeInfoPtr->pgpDeenvState = state;
 
-	ENSURES( streamPos >= 0 && streamPos < MAX_INTLENGTH && \
+	ENSURES( streamPos >= 0 && streamPos < MAX_BUFFER_SIZE && \
 			 envelopeInfoPtr->bufPos - streamPos >= 0 );
 
 	/* Consume the input that we've processed so far by moving everything 
 	   past the current position down to the start of the envelope buffer */
 	remainder = envelopeInfoPtr->bufPos - streamPos;
-	REQUIRES( remainder >= 0 && remainder < MAX_INTLENGTH && \
+	REQUIRES( remainder >= 0 && remainder < MAX_BUFFER_SIZE && \
 			  streamPos + remainder <= envelopeInfoPtr->bufSize );
 	if( remainder > 0 && streamPos > 0 )
 		{
@@ -1413,7 +1447,7 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
-							 STDC_UNUSED const BOOLEAN dummy )
+							 const BOOLEAN isFlush )
 	{
 	CONTENT_LIST *contentListPtr;
 	int iterationCount, status = CRYPT_OK;
@@ -1430,7 +1464,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* If there's an MDC packet present, make sure that the integrity check 
 	   matches */
 	if( envelopeInfoPtr->dataFlags & ENVDATA_HASATTACHEDOOB )
-		return( processMDC( envelopeInfoPtr ) );
+		return( processMDC( envelopeInfoPtr, isFlush ) );
 
 	/* Find the signature information in the content list.  In theory this
 	   could get ugly because there could be multiple one-pass signature
@@ -1457,23 +1491,33 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 		/* Make sure that there's enough data left in the stream to do 
 		   something with.  We require a minimum of 44 bytes, the size
-		   of the DSA signature payload, in the stream */
+		   of the DSA signature payload */
 		if( envelopeInfoPtr->bufPos - \
 				envelopeInfoPtr->dataLeft < PGP_MAX_HEADER_SIZE + 44 )
-			return( CRYPT_ERROR_UNDERFLOW );
+			{
+			return( checkSoftError( CRYPT_ERROR_UNDERFLOW, isFlush ) ? \
+					OK_SPECIAL : CRYPT_ERROR_UNDERFLOW );
+			}
 
 		REQUIRES( moreContentItemsPossible( envelopeInfoPtr->contentList ) );
 
-		/* Read the signature packet at the end of the payload */
+		/* Read the signature packet at the end of the payload.  We set the 
+		   check-data-present flag on the call to getPacketInfo() to ensure 
+		   that we get a CRYPT_ERROR_UNDERFLOW if there's not enough data 
+		   present to process the packet, which means that we can provide 
+		   special-case soft-error handling before we try and read the 
+		   packet data in addContentListItem() */
 		sMemConnect( &stream, envelopeInfoPtr->buffer + envelopeInfoPtr->dataLeft,
 					 envelopeInfoPtr->bufPos - envelopeInfoPtr->dataLeft );
 		status = getPacketInfo( &stream, envelopeInfoPtr, &packetType, 
-								&packetLength, NULL, 8 );
+								&packetLength, NULL, 8, TRUE );
 		if( cryptStatusOK( status ) && packetType != PGP_PACKET_SIGNATURE )
 			status = CRYPT_ERROR_BADDATA;
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
+			if( checkSoftError( status, isFlush ) )
+				return( OK_SPECIAL );
 			retExt( status,
 					( status, ENVELOPE_ERRINFO,
 					  "Invalid PGP signature packet header" ) );

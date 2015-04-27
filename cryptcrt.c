@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Certificate Management Routines				*
-*						Copyright Peter Gutmann 1996-2008					*
+*						Copyright Peter Gutmann 1996-2013					*
 *																			*
 ****************************************************************************/
 
@@ -22,7 +22,7 @@
 
 #define MIN_ASCII_OIDSIZE	7
 
-#ifdef USE_CERTIFICATES
+#if defined( USE_CERTIFICATES )
 
 /****************************************************************************
 *																			*
@@ -158,6 +158,22 @@ static BOOLEAN compareCertInfo( const CERT_INFO *certInfoPtr,
 				return( FALSE );
 
 			return( TRUE );
+			}
+
+		case MESSAGE_COMPARE_SUBJECTKEYIDENTIFIER:
+			{
+			BYTE sKID[ 128 + 8 ];
+			int sKIDlength;
+
+			/* Fetch the certificate's subjectKeyIdentifier and see whether 
+			   it matches what we've been given */
+			status = getCertComponentString( ( CERT_INFO * ) certInfoPtr, 
+											 CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER, 
+											 sKID, 128, &sKIDlength );
+			if( cryptStatusError( status ) )
+				return( FALSE );
+			return( ( sKIDlength == dataLength && \
+					  !memcmp( sKID, data, sKIDlength ) ) ? TRUE : FALSE );
 			}
 
 		case MESSAGE_COMPARE_FINGERPRINT_SHA1:
@@ -377,8 +393,8 @@ static int exportCertData( CERT_INFO *certInfoPtr,
 							const CRYPT_CERTFORMAT_TYPE certFormat,
 						   OUT_BUFFER_OPT( certDataMaxLength, *certDataLength ) \
 							void *certData,
-						   IN_LENGTH_Z const int certDataMaxLength,
-						   OUT_LENGTH_Z int *certDataLength )
+						   IN_DATALENGTH_Z const int certDataMaxLength,
+						   OUT_DATALENGTH_Z int *certDataLength )
 	{
 	int status;
 
@@ -392,7 +408,7 @@ static int exportCertData( CERT_INFO *certInfoPtr,
 	REQUIRES( ( certData == NULL && certDataMaxLength == 0 ) || \
 			  ( certData != NULL && \
 				certDataMaxLength > 0 && \
-				certDataMaxLength < MAX_INTLENGTH ) );
+				certDataMaxLength < MAX_BUFFER_SIZE ) );
 
 	/* Clear return value */
 	*certDataLength = 0;
@@ -530,6 +546,139 @@ int iCryptImportCertIndirect( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
 							   keyID, keyIDlength, options ) );
 	}
 
+/* Check that a given key ID actually corresponds to the certificate that 
+   we've got.  This is used to verify that the certificate that a get-key
+   function has given us is actually the correct one for the key ID that
+   we specified.  Obviously this should be the case, but if the get-key
+   can lie to us and the caller blindly accepts the certificate and uses
+   it they could end up trying to fetch a certificate belonging to A,
+   being fed one belonging to B, and "verify" information from B believing
+   it to be from A.
+
+   This is another oddly-placed function that's placed here mostly because
+   there's nowhere else obvious to put it */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 3 ) ) \
+int iCryptVerifyID( IN_HANDLE const CRYPT_CERTIFICATE iCertificate,
+					IN_ENUM( CRYPT_KEYID ) const CRYPT_KEYID_TYPE keyIDtype,
+					IN_BUFFER( keyIDlength ) const void *keyID, 
+					IN_LENGTH_SHORT const int keyIDlength )
+	{
+	MESSAGE_COMPARE_TYPE compareType;
+	MESSAGE_DATA msgData;
+	int status;
+
+	assert( isReadPtr( keyID, keyIDlength ) );
+
+	REQUIRES( isHandleRangeValid( iCertificate ) );
+	REQUIRES( keyIDtype > CRYPT_KEYID_NONE && keyIDtype < CRYPT_KEYID_LAST );
+	REQUIRES( keyIDlength > 0 && keyIDlength < MAX_INTLENGTH_SHORT );
+
+	switch( keyIDtype )
+		{
+		case CRYPT_KEYID_NAME:
+		case CRYPT_KEYID_URI:
+			/* The definitions of these are sufficiently vague, generally 
+			   being "whatever identifier is commonly associated with the 
+			   certificate", that we can't easily reject a certificate based
+			   on them */
+			return( CRYPT_OK );
+
+		case CRYPT_IKEYID_KEYID:
+			compareType = MESSAGE_COMPARE_KEYID;
+			break;
+
+		case CRYPT_IKEYID_PGPKEYID:
+			/* This key ID has two subtypes, the PGP and the OpenPGP ID.  To
+			   deal with this we try for the PGP one now and then fall back
+			   to a second check with the OpenPGP one if this one fails */
+			compareType = MESSAGE_COMPARE_KEYID_PGP;
+			break;
+
+		case CRYPT_IKEYID_CERTID:
+			/* Some sources (database keysets) truncate the certID to 128 
+			   bits/16 bytes so we have to explicitly read the certID and
+			   then compare that subset that we've been given */
+			if( keyIDlength != KEYID_SIZE )
+				{
+				BYTE buffer[ CRYPT_MAX_HASHSIZE + 8 ];
+
+				setMessageData( &msgData, buffer, CRYPT_MAX_HASHSIZE );
+				status = krnlSendMessage( iCertificate, 
+										  IMESSAGE_GETATTRIBUTE_S, &msgData, 
+										  CRYPT_CERTINFO_FINGERPRINT_SHA1 );
+				if( cryptStatusError( status ) || \
+					msgData.length < keyIDlength || \
+					memcmp( buffer, keyID, keyIDlength ) )
+					return( CRYPT_ERROR_INVALID );
+
+				return( CRYPT_OK );
+				}
+			compareType = MESSAGE_COMPARE_FINGERPRINT_SHA1;
+			break;
+
+		case CRYPT_IKEYID_SUBJECTID:
+		case CRYPT_IKEYID_ISSUERID:
+			{
+			DYNBUF nameDB;
+			BYTE nameHash[ KEYID_SIZE + 8 ];
+			const int idLength = min( keyIDlength, KEYID_SIZE );
+
+			/* Compare the hashed subjectName (used by PKCS #15 files and 
+			   database keysets) or the hashed issuerAndSerialNumber (used by 
+			   PKCS #15 files).  We can't hard-wire in KEYID_SIZE for the
+			   size of the hashed value because some sources use the full
+			   KEYID_SIZE and some truncate it to 128 bits/16 bytes, so we
+			   use the shorter of KEYID_SIZE and the user-provided ID size */
+			status = dynCreate( &nameDB, iCertificate, 
+								( keyIDtype == CRYPT_IKEYID_SUBJECTID ) ? \
+									CRYPT_IATTRIBUTE_SUBJECT : \
+									CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
+			if( cryptStatusError( status ) )
+				return( status );
+			hashData( nameHash, idLength, dynData( nameDB ), 
+					  dynLength( nameDB ) );
+			dynDestroy( &nameDB );
+			return( memcmp( nameHash, keyID, idLength ) ? \
+					CRYPT_ERROR_INVALID : CRYPT_OK );
+			}
+
+		case CRYPT_IKEYID_ISSUERANDSERIALNUMBER:
+			compareType = MESSAGE_COMPARE_ISSUERANDSERIALNUMBER;
+			break;
+
+		default:
+			retIntError();
+		}
+
+	/* Make sure that the key ID that we've been given matches the one in 
+	   the certificate.  What error code to use to indicate a problem is
+	   rather unclear since there's really no way to say "the data source
+	   lied to us about the certificate that it returned", the least
+	   inappropriate code seems to be CRYPT_ERROR_INVALID (in any case since
+	   this situation should never really occur it's not worth losing too
+	   much sleep over it) */
+	setMessageData( &msgData, ( MESSAGE_DATA * ) keyID, keyIDlength );
+	status = krnlSendMessage( iCertificate, IMESSAGE_COMPARE, &msgData, 
+							  compareType );
+	if( cryptStatusOK( status ) )
+		return( CRYPT_OK );
+
+	/* If we were looking for a PGP keyID and the comparison on the OpenPGP
+	   ID failed, fall back to checking the older PGP 2.x ID */
+	if( keyIDtype == CRYPT_IKEYID_PGPKEYID )
+		{
+		status = krnlSendMessage( iCertificate, IMESSAGE_COMPARE, &msgData, 
+								  MESSAGE_COMPARE_KEYID_OPENPGP );
+		if( cryptStatusOK( status ) )
+			return( CRYPT_OK );
+		}
+
+	DEBUG_DIAG(( "Certificate fetched for ID type %d doesn't actually "
+				 "correspond to the given ID", keyIDtype ));
+	return( CRYPT_ERROR_INVALID );
+	}
+
 /****************************************************************************
 *																			*
 *						Certificate Management API Functions				*
@@ -611,7 +760,7 @@ static int processCertAttribute( INOUT CERT_INFO *certInfoPtr,
 				  attribute == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
 				  attribute == CRYPT_ATTRIBUTE_CURRENT || \
 				  attribute == CRYPT_ATTRIBUTE_CURRENT_INSTANCE ||
-				  /* Cert handling control component */
+				  /* Certificate handling control component */
 				  attribute == CRYPT_CERTINFO_TRUSTED_USAGE || \
 				  attribute == CRYPT_CERTINFO_TRUSTED_IMPLICIT || \
 				  attribute == CRYPT_IATTRIBUTE_INITIALISED || 
@@ -620,8 +769,8 @@ static int processCertAttribute( INOUT CERT_INFO *certInfoPtr,
 
 		/* If it's an initialisation message, there's nothing to do (we get 
 		   these when importing a certificate, when the import is complete 
-		   the import code sends this message to move the cert into the high 
-		   state because it's already signed) */
+		   the import code sends this message to move the certificate into 
+		   the high state because it's already signed) */
 		if( attribute == CRYPT_IATTRIBUTE_INITIALISED )
 			return( CRYPT_OK );
 
@@ -667,8 +816,8 @@ static int certificateMessageFunction( INOUT TYPECAST( CERT_INFO * ) \
 		/* Clear the encoded certificate and miscellaneous components if
 		   necessary.  Note that there's no need to clear the associated
 		   encryption context (if any) since this is a dependent object of
-		   the certificate and is destroyed by the kernel when the cert is 
-		   destroyed */
+		   the certificate and is destroyed by the kernel when the 
+		   certificate is destroyed */
 		if( certInfoPtr->certificate != NULL )
 			{
 			zeroise( certInfoPtr->certificate, certInfoPtr->certificateSize );
@@ -823,8 +972,8 @@ static int certificateMessageFunction( INOUT TYPECAST( CERT_INFO * ) \
 
 		if( messageValue == MESSAGE_COMPARE_CERTOBJ )
 			{
-			/* A certificate object compare passes in a cert handle rather 
-			   than data */
+			/* A certificate object compare passes in a certificate handle 
+			   rather than data */
 			return( compareCertInfo( certInfoPtr, messageValue, NULL, 0,
 									 *( ( CRYPT_CERTIFICATE * ) messageDataPtr ) ) ? \
 									 CRYPT_OK : CRYPT_ERROR );
@@ -959,8 +1108,9 @@ int createCertificateInfo( OUT_OPT_PTR CERT_INFO **certInfoPtrPtr,
 			break;
 
 		case CRYPT_CERTTYPE_CERTCHAIN:
-			/* A certificate chain is a special case of a cert (and/or vice 
-			   versa) so it uses the same subtype-specific storage */
+			/* A certificate chain is a special case of a certificate (and/
+			   or vice versa) so it uses the same subtype-specific 
+			   storage */
 			subType = SUBTYPE_CERT_CERTCHAIN;
 			storageSize = sizeof( CERT_CERT_INFO );
 			break;
@@ -1190,7 +1340,7 @@ int createCertificateIndirect( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
 				createInfo->strArgLen2 < MAX_INTLENGTH_SHORT ) );
 	REQUIRES( createInfo->arg3 >= KEYMGMT_FLAG_NONE && \
 			  createInfo->arg3 < KEYMGMT_FLAG_MAX && \
-			  ( createInfo->arg3 & ~KEYMGMT_MASK_USAGEOPTIONS ) == 0 );
+			  ( createInfo->arg3 & ~KEYMGMT_MASK_CERTOPTIONS ) == 0 );
 	REQUIRES( createInfo->arg2 == 0 || createInfo->arg3 == 0 );
 
 	/* Pass the call through to the low-level import function */
@@ -1308,7 +1458,7 @@ C_RET cryptGetCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 		return( CRYPT_ERROR_PARAM1 );
 		}
 
-	/* Lock the currently selected certificate in a cert chain if 
+	/* Lock the currently selected certificate in a certificate chain if 
 	   necessary */
 	if( certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN && \
 		certInfoPtr->cCertCert->chainPos >= 0 )
@@ -1511,6 +1661,179 @@ C_RET cryptDeleteCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 		deleteAttribute( &certInfoPtr->attributes, NULL, attributeListPtr, 
 						 NULL );
 	krnlReleaseObject( certInfoPtr->objectHandle );
+	return( status );
+	}
+
+#elif defined( USE_PSEUDOCERTIFICATES )
+
+/****************************************************************************
+*																			*
+*							Pseudo-Certificate Functions					*
+*																			*
+****************************************************************************/
+
+/* Functions to deal with pseudo-certificates, basic certificate-like 
+   objects that serve purely as containers for encoded certificate data,
+   and as targets for kernel messages for protocols like SSL/TLS and
+   CMS/PKCS #7 that require the use of certificate objects */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int certificateMessageFunction( INOUT TYPECAST( CERT_INFO * ) \
+										void *objectInfoPtr,
+									   IN_MESSAGE const MESSAGE_TYPE message,
+									   void *messageDataPtr,
+									   IN_INT_Z const int messageValue )
+	{
+	CERT_INFO *certInfoPtr = ( CERT_INFO * ) objectInfoPtr;
+
+	assert( isWritePtr( objectInfoPtr, sizeof( CERT_INFO ) ) );
+
+	REQUIRES( message > MESSAGE_NONE && message < MESSAGE_LAST );
+	REQUIRES( ( message == MESSAGE_CRT_SIGCHECK && \
+				messageValue == CRYPT_UNUSED ) || \
+			  ( messageValue >= 0 && messageValue < MAX_INTLENGTH ) );
+
+	if( message == MESSAGE_DESTROY )
+		{
+		/* Clear the encoded certificate if necessary.  This is the only 
+		   certificate component that's used for pseudo-certificates */
+		if( certInfoPtr->certificate != NULL )
+			{
+			zeroise( certInfoPtr->certificate, certInfoPtr->certificateSize );
+			clFree( "certificateMessageFunction", certInfoPtr->certificate );
+			}
+
+		return( CRYPT_OK );
+		}
+	if( message == MESSAGE_GETATTRIBUTE )
+		{
+		int *valuePtr = ( int * ) messageDataPtr;
+
+		/* Used to perform basic object checks on pseudo-certificates */
+		if( messageValue == CRYPT_CERTINFO_IMMUTABLE )
+			{
+			*valuePtr = TRUE;
+			return( CRYPT_OK );
+			}
+		if( messageValue == CRYPT_CERTINFO_CERTTYPE )
+			{
+			*valuePtr = CRYPT_CERTTYPE_CERTIFICATE;
+			return( CRYPT_OK );
+			}
+		}
+	if( message == MESSAGE_SETATTRIBUTE )
+		{
+		/* Needed to handle object initialisation */
+		if( messageValue == CRYPT_IATTRIBUTE_INITIALISED )
+			return( CRYPT_OK );
+		}
+	if( message == MESSAGE_CHECK )
+		{
+		/* Needed to handle making a certificate a dependent object of a 
+		   private key */
+		if( messageValue == MESSAGE_CHECK_PKC_SIGN_AVAIL || \
+			messageValue == MESSAGE_CHECK_PKC_SIGCHECK_AVAIL || \
+			messageValue == MESSAGE_CHECK_PKC_ENCRYPT_AVAIL || \
+			messageValue == MESSAGE_CHECK_PKC_DECRYPT_AVAIL )
+			return( CRYPT_OK );
+
+		/* Needed to handle checking of private keys with certificates 
+		   attached */
+		if( messageValue == MESSAGE_CHECK_PKC_PRIVATE || \
+			messageValue == MESSAGE_CHECK_PKC_DECRYPT || \
+			messageValue == MESSAGE_CHECK_PKC_SIGN )
+			return( CRYPT_OK );
+
+		/* Needed to handle general certificate health checks */
+		if( messageValue == MESSAGE_CHECK_CERTxx )
+			return( CRYPT_OK );
+
+		return( CRYPT_ARGERROR_OBJECT );
+		}
+	if( message == MESSAGE_CRT_EXPORT )
+		{
+		MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
+
+		return( attributeCopy( msgData, certInfoPtr->certificate, 
+							   certInfoPtr->certificateSize ) );
+		}
+
+	/* Nothing else is handled */
+	return( CRYPT_ERROR_NOTAVAIL );
+	}
+
+/* Create a certificate by instantiating it from its encoded form */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int createCertificateIndirect( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
+							   STDC_UNUSED const void *auxDataPtr, 
+							   STDC_UNUSED const int auxValue )
+	{
+	CRYPT_CERTIFICATE iCertificate;
+	CERT_INFO *certInfoPtr;
+	void *certBuffer;
+	int status;
+
+	assert( isWritePtr( createInfo, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
+
+	REQUIRES( auxDataPtr == NULL && auxValue == 0 );
+	REQUIRES( createInfo->arg1 >= CRYPT_CERTTYPE_NONE && \
+			  createInfo->arg1 < CRYPT_CERTTYPE_LAST );
+	REQUIRES( createInfo->strArg1 != NULL );
+	REQUIRES( createInfo->strArgLen1 > 16 && \
+			  createInfo->strArgLen1 < MAX_INTLENGTH ); 
+			  /* May be CMS attribute (short) or a mega-CRL (long ) */
+	REQUIRES( createInfo->arg2 == 0 && createInfo->strArg2 == NULL && \
+			  createInfo->strArgLen2 == 0 );	/* keyID */
+	REQUIRES( createInfo->arg3 >= KEYMGMT_FLAG_NONE && \
+			  createInfo->arg3 < KEYMGMT_FLAG_MAX && \
+			  ( createInfo->arg3 & ~KEYMGMT_MASK_CERTOPTIONS ) == 0 );
+	REQUIRES( createInfo->arg2 == 0 || createInfo->arg3 == 0 );
+
+	/* Allocate a buffer for the encoded certificate data and create and 
+	   initialise the certificate object associated with it */
+	if( ( certBuffer = clAlloc( "createCertificateIndirect", 
+								createInfo->strArgLen1 ) ) == NULL )
+		return( CRYPT_ERROR_MEMORY );
+	status = krnlCreateObject( &iCertificate, ( void ** ) &certInfoPtr, 
+							   sizeof( CERT_INFO ) + sizeof( CERT_CERT_INFO ), 
+							   OBJECT_TYPE_CERTIFICATE, SUBTYPE_CERT_CERT,
+							   CREATEOBJECT_FLAG_NONE, 
+							   DEFAULTUSER_OBJECT_HANDLE, ACTION_PERM_NONE_ALL, 
+							   certificateMessageFunction );
+	if( cryptStatusError( status ) )
+		{
+		clFree( "createCertificateIndirect", certBuffer );
+		return( status );
+		}
+	ANALYSER_HINT( certInfoPtr != NULL );
+	certInfoPtr->objectHandle = iCertificate;
+	certInfoPtr->ownerHandle = DEFAULTUSER_OBJECT_HANDLE;
+	certInfoPtr->type = CRYPT_CERTTYPE_CERTIFICATE;
+	certInfoPtr->cCertCert = ( CERT_CERT_INFO * ) certInfoPtr->storage;
+	certInfoPtr->cCertCert->chainPos = CRYPT_ERROR;
+	certInfoPtr->cCertCert->trustedUsage = CRYPT_ERROR;
+	certInfoPtr->iPubkeyContext = CRYPT_ERROR;
+	certInfoPtr->flags |= CERT_FLAG_DATAONLY;
+	initSelectionInfo( certInfoPtr );
+
+	/* Copy in the certificate object for later use */
+	memcpy( certBuffer, createInfo->strArg1, createInfo->strArgLen1 );
+	certInfoPtr->certificate = certBuffer;
+	certInfoPtr->certificateSize = createInfo->strArgLen1;
+
+	/* We've finished setting up the object-type-specific information, tell 
+	   the kernel that the object is ready for use */
+	status = krnlSendMessage( iCertificate, IMESSAGE_SETATTRIBUTE, 
+							  MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS );
+	if( cryptStatusOK( status ) )
+		{
+		status = krnlSendMessage( iCertificate, IMESSAGE_SETATTRIBUTE,
+								  MESSAGE_VALUE_UNUSED, 
+								  CRYPT_IATTRIBUTE_INITIALISED );
+		}
+	if( cryptStatusOK( status ) )
+		createInfo->cryptHandle = iCertificate;
 	return( status );
 	}
 #endif /* USE_CERTIFICATES */

@@ -57,14 +57,6 @@
   #include "device/pkcs11.h"
 #endif /* Compiler-specific includes */
 
-/* Occasionally we need to read things into host memory from a device in a
-   manner that can't be handled by a dynBuf since the data is coming from a
-   device rather than a cryptlib object.  The following value defines the 
-   maximum size of the on-stack buffer, if the data is larger than this we 
-   dynamically allocate the buffer (this almost never occurs) */
-
-#define MAX_BUFFER_SIZE			1024
-
 /* The use of dynamically bound function pointers vs.statically linked
    functions requires a bit of sleight of hand since we can't give the
    pointers the same names as prototyped functions.  To get around this we
@@ -129,6 +121,7 @@ typedef struct {
 	const CK_MECHANISM_TYPE mechanism;	/* Mechanism type for this algo/mode */
 	const CK_MECHANISM_TYPE keygenMechanism; /* Supplementary keygen mechanism */
 	const CK_MECHANISM_TYPE defaultMechanism;/* Default mechanism for this algo */
+	const CK_FLAGS requiredFlags;		/* Required flags for this mechanism */
 	const CRYPT_ALGO_TYPE cryptAlgo;	/* cryptlib algo and mode */
 	const CRYPT_MODE_TYPE cryptMode;
 
@@ -184,6 +177,7 @@ typedef struct {
 #define CKM_NONE				( ( CK_MECHANISM_TYPE ) CRYPT_ERROR )
 #define CK_OBJECT_NONE			( ( CK_OBJECT_HANDLE ) CRYPT_ERROR )
 #define CKA_NONE				( ( CK_ATTRIBUTE_TYPE ) CRYPT_ERROR )
+#define CKF_NONE				0
 
 /* The HMAC mechanisms in PKCS #11 don't work because they have to be keyed 
    with generic secret keys (rather than specific HMAC keys) but generic 
@@ -245,6 +239,23 @@ int initPKCS11Init( INOUT DEVICE_INFO *deviceInfo,
 
 /* Prototypes for functions in pkcs11_pkc.c */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int rsaSetPublicComponents( INOUT PKCS11_INFO *pkcs11Info,
+							IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+							const CK_OBJECT_HANDLE hRsaKey,
+							const BOOLEAN nativeContext );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int dsaSetPublicComponents( INOUT PKCS11_INFO *pkcs11Info,
+							IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+							const CK_OBJECT_HANDLE hDsaKey,
+							const BOOLEAN nativeContext );
+#if defined( USE_ECDSA )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int ecdsaSetPublicComponents( INOUT PKCS11_INFO *pkcs11Info,
+							  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+							  const CK_OBJECT_HANDLE hEcdsaKey,
+							  const BOOLEAN nativeContext );
+#endif /* USE_ECDSA */
 CHECK_RETVAL \
 const PKCS11_MECHANISM_INFO *getMechanismInfoPKC( OUT int *mechanismInfoSize ) \
 												  STDC_NONNULL_ARG( ( 1 ) );
@@ -260,6 +271,11 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int addIAndSToTemplate( INOUT_ARRAY_C( 2 ) CK_ATTRIBUTE *certTemplate, 
 						IN_BUFFER( iAndSLength ) const void *iAndSPtr, 
 						IN_LENGTH_SHORT const int iAndSLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int getEccCurveType( INOUT PKCS11_INFO *pkcs11Info, 
+					 const CK_OBJECT_HANDLE hObject,
+					 OUT_ENUM_OPT( CRYPT_ECCCURVE ) \
+						CRYPT_ECCCURVE_TYPE *curveType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int findObject( INOUT PKCS11_INFO *pkcs11Info, 
 				OUT CK_OBJECT_HANDLE *hObject,

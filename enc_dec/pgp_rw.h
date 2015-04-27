@@ -33,7 +33,8 @@
 		  ( length <= 191 ) ? 1 : \
 		  ( length <= 8383 ) ? 2 : 4 )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int pgpReadShortLength( INOUT STREAM *stream, OUT_LENGTH int *length, 
+int pgpReadShortLength( INOUT STREAM *stream, 
+						OUT_LENGTH_SHORT_Z int *length, 
 						IN_BYTE const int ctb );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int pgpReadPartialLength( INOUT STREAM *stream, 

@@ -71,8 +71,11 @@
 	typedef HWND SQLHWND;
 	#endif /* 0 */
 
+	#pragma warning( push )
+	#pragma warning( disable : 4255 )	/* Errors in sqlext.h */
 	#include <sql.h>
 	#include <sqlext.h>
+	#pragma warning( pop )
   #endif /* Compiler-specific include locations */
 #else
   #include <sql.h>

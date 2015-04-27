@@ -507,7 +507,7 @@ WRITEMESSAGE_FUNCTION getMessageWriteFunction( IN_ENUM( CMPBODY ) \
 	if( isServer )
 		{
 		for( i = 0; 
-			 messageWriteServerTable[ i ].type != CTAG_PB_LAST && \
+			 messageWriteServerTable[ i ].type != CMPBODY_NONE && \
 				i < FAILSAFE_ARRAYSIZE( messageWriteServerTable, MESSAGEWRITE_INFO ); 
 			 i++ )
 			{
@@ -519,7 +519,7 @@ WRITEMESSAGE_FUNCTION getMessageWriteFunction( IN_ENUM( CMPBODY ) \
 	else
 		{
 		for( i = 0; 
-			 messageWriteClientTable[ i ].type != CTAG_PB_LAST && \
+			 messageWriteClientTable[ i ].type != CMPBODY_NONE && \
 				i < FAILSAFE_ARRAYSIZE( messageWriteClientTable, MESSAGEWRITE_INFO ); 
 			 i++ )
 			{

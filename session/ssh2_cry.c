@@ -25,13 +25,7 @@
 *																			*
 ****************************************************************************/
 
-/* Load one of the fixed SSH DH keys into a context */
-
-#if defined( INC_ALL )
-  #include "ssh_keys.h"
-#else
-  #include "session/ssh_dhkeys.h"
-#endif /* Compiler-specific includes */
+/* Load a DH key into a context */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext, 
@@ -43,8 +37,7 @@ int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	CRYPT_CONTEXT iDHContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
-	int keyType = CRYPT_IATTRIBUTE_KEY_SSH, keyLength = keyDataLength;
-	int length = DUMMY_INIT, status;
+	int keyLength = DUMMY_INIT, status;
 
 	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
 	assert( isWritePtr( keySize, sizeof( int ) ) );
@@ -94,64 +87,19 @@ int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	   is off by a few bits */
 	if( keyData == NULL )
 		{
-		const int actualKeySize = \
-			( requestedKeySize == CRYPT_USE_DEFAULT ) ? SSH2_DEFAULT_KEYSIZE : \
-			( requestedKeySize < 128 + 8 ) ? bitsToBytes( 1024 ) : \
-			( requestedKeySize < 192 + 8 ) ? bitsToBytes( 1536 ) : \
-			( requestedKeySize < 256 + 8 ) ? bitsToBytes( 2048 ) : \
-			( requestedKeySize < 384 + 8 ) ? bitsToBytes( 3072 ) : \
-			0;
-
-		/* Load the built-in DH key value that corresponds best to the 
-		   client's requested key size.  In theory we should probably 
-		   generate a new DH key each time:
-
-			status = krnlSendMessage( iDHContext, IMESSAGE_SETATTRIBUTE,
-									  ( MESSAGE_CAST ) &requestedKeySize,
-									  CRYPT_CTXINFO_KEYSIZE );
-			if( cryptStatusOK( status ) )
-				status = krnlSendMessage( iDHContext, IMESSAGE_CTX_GENKEY, 
-										  NULL, FALSE );
-
-		   however because the handshake is set up so that the client (rather 
-		   than the server) chooses the key size we can't actually perform 
-		   the generation until we're in the middle of the handshake.  This 
-		   means that the server will grind to a halt during each handshake 
-		   as it generates a new key of whatever size takes the client's 
-		   fancy (it also leads to a nice potential DoS attack on the 
-		   server).  To avoid this problem we use fixed keys of various 
-		   common sizes */
-		switch( actualKeySize )
-			{
-			case bitsToBytes( 1024 ):
-				keyData = dh1024SPKI;
-				keyLength = sizeof( dh1024SPKI );
-				keyType = CRYPT_IATTRIBUTE_KEY_SPKI;
-				break;
-
-			case bitsToBytes( 1536 ):
-				keyData = dh1536SSH,
-				keyLength = sizeof( dh1536SSH );
-				break;
-
-			case bitsToBytes( 2048 ):
-				keyData = dh2048SSH,
-				keyLength = sizeof( dh2048SSH );
-				break;
-
-			case bitsToBytes( 3072 ):
-			default:		/* Hier ist der mast zu ende */
-				keyData = dh3072SSH,
-				keyLength = sizeof( dh3072SSH );
-				break;
-			}
+		status = loadDHcontext( iDHContext, 
+								( requestedKeySize == CRYPT_USE_DEFAULT ) ? \
+								  SSH2_DEFAULT_KEYSIZE : requestedKeySize );
 		}
-	setMessageData( &msgData, ( MESSAGE_CAST ) keyData, keyLength );
-	status = krnlSendMessage( iDHContext, IMESSAGE_SETATTRIBUTE_S, &msgData, 
-							  keyType );
+	else
+		{
+		setMessageData( &msgData, ( MESSAGE_CAST ) keyData, keyDataLength );
+		status = krnlSendMessage( iDHContext, IMESSAGE_SETATTRIBUTE_S, &msgData, 
+								  CRYPT_IATTRIBUTE_KEY_SSH );
+		}
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iDHContext, IMESSAGE_GETATTRIBUTE, 
-								  &length, CRYPT_CTXINFO_KEYSIZE );
+								  &keyLength, CRYPT_CTXINFO_KEYSIZE );
 	if( cryptStatusError( status ) )
 		{
 		DEBUG_DIAG(( "Couldn't create DH context from stored data" ));
@@ -160,7 +108,7 @@ int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 		return( status );
 		}
 	*iCryptContext = iDHContext;
-	*keySize = length;
+	*keySize = keyLength;
 
 	return( CRYPT_OK );
 	}
@@ -168,13 +116,7 @@ int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 #ifdef USE_ECDH
 
 /* Load one of the fixed SSH ECDH keys into a context.  Since there's no SSH
-   format defined for this, we use the SSL format.  Note that this creates a
-   somewhat ugly sideways dependency where USE_SSH also required USE_SSL, to
-   handlet his we warn if it's not defined */
-
-#ifndef USE_SSL
-  #error SSH with ECC support requires USE_SSL to be defined
-#endif /* !USE_SSL */
+   format defined for this, we use the SSL format */
 
 static const BYTE FAR_BSS ecdh256SSL[] = {
 	0x03,		/* NamedCurve */
@@ -570,7 +512,7 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptInContext,
 									 CRYPT_CTXINFO_IV, ivSize,
 									 hashFunction, hashSize, 
-									 initialHashInfo, "A", 1,
+									 initialHashInfo, MKDATA( "A" ), 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 		if( cryptStatusOK( status ) )
@@ -579,7 +521,7 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 											sessionInfoPtr->iCryptOutContext,
 										 CRYPT_CTXINFO_IV, ivSize,
 										 hashFunction, hashSize,
-										 initialHashInfo, "B", 1,
+										 initialHashInfo, MKDATA( "B" ), 1,
 										 handshakeInfo->sessionID,
 										 handshakeInfo->sessionIDlength );
 		}
@@ -589,7 +531,7 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptInContext,
 									 CRYPT_CTXINFO_KEY, keySize,
 									 hashFunction, hashSize,
-									 initialHashInfo, "C", 1,
+									 initialHashInfo, MKDATA( "C" ), 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -598,7 +540,7 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptOutContext,
 									 CRYPT_CTXINFO_KEY, keySize,
 									 hashFunction, hashSize,
-									 initialHashInfo, "D", 1,
+									 initialHashInfo, MKDATA( "D" ), 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -611,7 +553,7 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 										SSH2_FIXED_KEY_SIZE : \
 										sessionInfoPtr->authBlocksize,
 									 hashFunction, hashSize,
-									 initialHashInfo, "E", 1,
+									 initialHashInfo, MKDATA( "E" ), 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -624,7 +566,7 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 										SSH2_FIXED_KEY_SIZE : \
 										sessionInfoPtr->authBlocksize,
 									 hashFunction, hashSize,
-									 initialHashInfo, "F", 1,
+									 initialHashInfo, MKDATA( "F" ), 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	zeroise( initialHashInfo, sizeof( HASHINFO ) );
@@ -730,8 +672,8 @@ CHECK_RETVAL \
 static int macDataSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext, 
 					   IN_INT const long seqNo,
 					   IN_BUFFER_OPT( dataLength ) const BYTE *data, 
-					   IN_LENGTH_Z const int dataLength,
-					   IN_LENGTH_Z const int packetDataLength, 
+					   IN_DATALENGTH_Z const int dataLength,
+					   IN_DATALENGTH_Z const int packetDataLength, 
 					   IN_ENUM_OPT( MAC ) const MAC_TYPE macType )
 	{
 	int status;
@@ -748,10 +690,10 @@ static int macDataSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext,
 				 when we start */
 	REQUIRES( ( data == NULL && dataLength == 0 ) || \
 			  ( data != NULL && \
-				dataLength > 0 && dataLength < MAX_INTLENGTH ) );
+				dataLength > 0 && dataLength < MAX_BUFFER_SIZE ) );
 			  /* Payload may be zero for packets where all information is 
 			     contained in the header */
-	REQUIRES( packetDataLength >= 0 && packetDataLength < MAX_INTLENGTH );
+	REQUIRES( packetDataLength >= 0 && packetDataLength < MAX_BUFFER_SIZE );
 	REQUIRES( macType >= MAC_NONE && macType < MAC_LAST );
 			  /* If we're doing a non-incremental MAC operation the type is 
 			     set to MAC_NONE */
@@ -821,9 +763,9 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int checkMacSSHIncremental( IN_HANDLE const CRYPT_CONTEXT iMacContext, 
 							IN_INT const long seqNo,
 							IN_BUFFER( dataMaxLength ) const BYTE *data, 
-							IN_LENGTH const int dataMaxLength, 
-							IN_LENGTH_Z const int dataLength, 
-							IN_LENGTH const int packetDataLength, 
+							IN_DATALENGTH const int dataMaxLength, 
+							IN_DATALENGTH_Z const int dataLength, 
+							IN_DATALENGTH const int packetDataLength, 
 							IN_ENUM( MAC ) const MAC_TYPE macType, 
 							IN_RANGE( 16, CRYPT_MAX_HASHSIZE ) const int macLength )
 	{
@@ -839,13 +781,13 @@ int checkMacSSHIncremental( IN_HANDLE const CRYPT_CONTEXT iMacContext,
 			  /* Since SSH starts counting packets from the first one but 
 				 unlike SSL doesn't MAC them, the seqNo is already nonzero 
 				 when we start */
-	REQUIRES( dataMaxLength > 0 && dataMaxLength < MAX_INTLENGTH );
+	REQUIRES( dataMaxLength > 0 && dataMaxLength < MAX_BUFFER_SIZE );
 	REQUIRES( ( macType == MAC_END && dataLength == 0 ) || \
-			  ( dataLength > 0 && dataLength < MAX_INTLENGTH ) );
+			  ( dataLength > 0 && dataLength < MAX_BUFFER_SIZE ) );
 			  /* Payload size may be zero for packets where all information
 			     is contained in, and has already been MACd as part of, the 
 				 header */
-	REQUIRES( packetDataLength >= 0 && packetDataLength < MAX_INTLENGTH );
+	REQUIRES( packetDataLength >= 0 && packetDataLength < MAX_BUFFER_SIZE );
 	REQUIRES( macType > MAC_NONE && macType < MAC_LAST );
 	REQUIRES( macLength >= 16 && macLength <= CRYPT_MAX_HASHSIZE );
 	REQUIRES( ( macType == MAC_START && \
@@ -884,8 +826,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int checkMacSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext, 
 				 IN_INT const long seqNo,
 				 IN_BUFFER( dataMaxLength ) const BYTE *data, 
-				 IN_LENGTH const int dataMaxLength, 
-				 IN_LENGTH_Z const int dataLength, 
+				 IN_DATALENGTH const int dataMaxLength, 
+				 IN_DATALENGTH_Z const int dataLength, 
 				 IN_RANGE( 16, CRYPT_MAX_HASHSIZE ) const int macLength )
 	{
 	MESSAGE_DATA msgData;
@@ -898,8 +840,8 @@ int checkMacSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext,
 			  /* Since SSH starts counting packets from the first one but 
 				 unlike SSL doesn't MAC them, the seqNo is already nonzero 
 				 when we start */
-	REQUIRES( dataMaxLength > 0 && dataMaxLength < MAX_INTLENGTH );
-	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH );
+	REQUIRES( dataMaxLength > 0 && dataMaxLength < MAX_BUFFER_SIZE );
+	REQUIRES( dataLength >= 0 && dataLength < MAX_BUFFER_SIZE );
 	REQUIRES( macLength >= 16 && macLength <= CRYPT_MAX_HASHSIZE );
 	REQUIRES( dataLength + macLength <= dataMaxLength );
 
@@ -924,8 +866,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int createMacSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext, 
 				  IN_INT const long seqNo,
 				  IN_BUFFER( dataMaxLength ) BYTE *data, 
-				  IN_LENGTH const int dataMaxLength, 
-				  IN_LENGTH const int dataLength )
+				  IN_DATALENGTH const int dataMaxLength, 
+				  IN_DATALENGTH const int dataLength )
 	{
 	MESSAGE_DATA msgData;
 	BYTE mac[ CRYPT_MAX_HASHSIZE + 8 ];
@@ -938,9 +880,9 @@ int createMacSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext,
 			  /* Since SSH starts counting packets from the first one but 
 				 unlike SSL doesn't MAC them, the seqNo is already nonzero 
 				 when we start */
-	REQUIRES( dataMaxLength > 0 && dataMaxLength < MAX_INTLENGTH );
+	REQUIRES( dataMaxLength > 0 && dataMaxLength < MAX_BUFFER_SIZE );
 	REQUIRES( dataLength > 0 && dataLength < dataMaxLength && \
-			  dataLength < MAX_INTLENGTH );
+			  dataLength < MAX_BUFFER_SIZE );
 
 	/* MAC the payload */
 	status = macDataSSH( iMacContext, seqNo, data, dataLength, 0, MAC_NONE );
@@ -1181,6 +1123,7 @@ int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 	krnlSendMessage( handshakeInfo->iExchangeHashContext,
 					 IMESSAGE_CTX_HASH, handshakeInfo->sessionID,
 					 handshakeInfo->sessionIDlength );
+	INJECT_FAULT( SESSION_BADSIG_HASH, SESSION_BADSIG_HASH_SSH_1 );
 	return( krnlSendMessage( handshakeInfo->iExchangeHashContext,
 							 IMESSAGE_CTX_HASH, "", 0 ) );
 	}

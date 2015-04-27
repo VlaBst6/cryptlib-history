@@ -1149,7 +1149,7 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 		status = checkCertDetails( issuerCertInfoPtr, issuerCertInfoPtr, 
 						( issuerCertInfoPtr->iPubkeyContext != CRYPT_ERROR ) ? \
 							issuerCertInfoPtr->iPubkeyContext : CRYPT_UNUSED,
-						NULL, TRUE, TRUE, &dummyLocus, &dummyType );
+						NULL, TRUE, TRUE, FALSE, &dummyLocus, &dummyType );
 
 		}
 	else
@@ -1159,7 +1159,7 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 		status = checkCertDetails( issuerCertInfoPtr, issuerCertInfoPtr, 
 						( issuerCertInfoPtr->iPubkeyContext != CRYPT_ERROR ) ? \
 							issuerCertInfoPtr->iPubkeyContext : CRYPT_UNUSED,
-						NULL, TRUE, TRUE, &issuerCertInfoPtr->errorLocus, 
+						NULL, TRUE, TRUE, FALSE, &issuerCertInfoPtr->errorLocus, 
 						&issuerCertInfoPtr->errorType );
 		}
 	if( cryptStatusError( status ) )
@@ -1189,7 +1189,8 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 		status = checkCertDetails( subjectCertInfoPtr, issuerCertInfoPtr, 
 						( issuerCertInfoPtr->iPubkeyContext != CRYPT_ERROR ) ? \
 							issuerCertInfoPtr->iPubkeyContext : CRYPT_UNUSED,
-						NULL, FALSE, TRUE, &subjectCertInfoPtr->errorLocus, 
+						NULL, FALSE, TRUE, FALSE, 
+						&subjectCertInfoPtr->errorLocus, 
 						&subjectCertInfoPtr->errorType );
 		if( cryptStatusError( status ) )
 			{

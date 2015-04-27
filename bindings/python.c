@@ -2300,19 +2300,11 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Certificate object type */
 
     v = Py_BuildValue("i", 2005);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FINGERPRINT", v);
-    Py_DECREF(v); /* Certificate fingerprints */
-
-    v = Py_BuildValue("i", 2005);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FINGERPRINT_MD5", v);
-    Py_DECREF(v);
+    Py_DECREF(v); /* Certificate fingerprints */
 
     v = Py_BuildValue("i", 2006);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FINGERPRINT_SHA1", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", 2006);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FINGERPRINT_SHA", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 2007);
@@ -2426,6 +2418,10 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 2033);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_REVPASSWORD", v);
     Py_DECREF(v); /* PKI user revocation password */
+
+    v = Py_BuildValue("i", 2034);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_RA", v);
+    Py_DECREF(v); /* PKI user is an RA */
 
     v = Py_BuildValue("i", 2100);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_COUNTRYNAME", v);
@@ -3836,7 +3832,7 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Server port number */
 
     v = Py_BuildValue("i", 6010);
-    PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_SERVER_FINGERPRINT", v);
+    PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1", v);
     Py_DECREF(v); /* Server key fingerprint */
 
     v = Py_BuildValue("i", 6011);
@@ -4308,6 +4304,18 @@ class CryptHandle:\n\
     Py_DECREF(v); /* NIST P521, SECG p521r1 */
 
     v = Py_BuildValue("i", 6);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_BRAINPOOL_P256", v);
+    Py_DECREF(v); /* Brainpool p256r1 */
+
+    v = Py_BuildValue("i", 7);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_BRAINPOOL_P384", v);
+    Py_DECREF(v); /* Brainpool p384r1 */
+
+    v = Py_BuildValue("i", 8);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_BRAINPOOL_P512", v);
+    Py_DECREF(v); /* Brainpool p512r1 */
+
+    v = Py_BuildValue("i", 9);
     PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_LAST", v);
     Py_DECREF(v); /* Last valid ECC curve type */
 
@@ -4646,6 +4654,14 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 0x08);
     PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_SUITEB_256", v);
     Py_DECREF(v);
+
+    v = Py_BuildValue("i", 0x10);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_DISABLE_NAMEVERIFY", v);
+    Py_DECREF(v); /* Disable cert hostname check */
+
+    v = Py_BuildValue("i", 0x20);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_DISABLE_CERTVERIFY", v);
+    Py_DECREF(v); /* Disable certificate check */
 
     v = Py_BuildValue("i", 256);
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_KEYSIZE", v);

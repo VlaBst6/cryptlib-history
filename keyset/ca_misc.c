@@ -285,6 +285,8 @@ int updateCertErrorLog( INOUT DBMS_INFO *dbmsInfo,
 	assert( ( data == NULL && dataLength == 0 ) || \
 			isReadPtr( data, dataLength ) );
 
+	ANALYSER_HINT_STRING( errorString );
+
 	REQUIRES( cryptStatusError( errorStatus ) );
 	REQUIRES( errorString != NULL );
 	REQUIRES( ( certID == NULL && certIDlength == 0 ) || \
@@ -500,6 +502,14 @@ static int certMgmtFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 			isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 
 	REQUIRES( keysetInfoPtr->type == KEYSET_DBMS );
+	REQUIRES( ( action != CRYPT_CERTACTION_ISSUE_CRL && 
+				action != CRYPT_CERTACTION_CERT_CREATION ) || \
+			  ( ( action == CRYPT_CERTACTION_ISSUE_CRL || \
+				  action == CRYPT_CERTACTION_CERT_CREATION ) && \
+				iCertificate != NULL ) );
+			  /* An ISSUE_CERT can have iCertificate == NULL, which leaves
+			     the issued certificate in the store without returning it
+				 to the caller */
 	REQUIRES( ( caKey == CRYPT_UNUSED ) || isHandleRangeValid( caKey ) );
 	REQUIRES( ( request == CRYPT_UNUSED ) || isHandleRangeValid( request ) );
 	REQUIRES( action > CRYPT_CERTACTION_NONE && \

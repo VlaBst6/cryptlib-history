@@ -374,7 +374,7 @@ int getSessionAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 
 		case CRYPT_SESSINFO_USERNAME:
 		case CRYPT_SESSINFO_PASSWORD:
-		case CRYPT_SESSINFO_SERVER_FINGERPRINT:
+		case CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1:
 		case CRYPT_SESSINFO_SERVER_NAME:
 		case CRYPT_SESSINFO_CLIENT_NAME:
 			attributeListPtr = findSessionInfo( sessionInfoPtr->attributeList,
@@ -483,8 +483,8 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			/* If the session is in the partially-open state while we wait 
 			   for the caller to allow or disallow the session authentication 
 			   they have to provide a clear yes or no indication by setting 
-			   the CRYPT_SESSINFO_AUTHRESPONSE to TRUE or FALSE before they 
-			   can try to continue the session activation */
+			   CRYPT_SESSINFO_AUTHRESPONSE to TRUE or FALSE before they can 
+			   try to continue the session activation */
 			if( ( sessionInfoPtr->flags & SESSION_PARTIALOPEN ) && \
 				sessionInfoPtr->authResponse == AUTHRESPONSE_NONE )
 				return( exitErrorNotInited( sessionInfoPtr,
@@ -615,8 +615,7 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			if( requiredAttributeFlags & ( SESSION_NEEDS_PRIVKEYCERT | \
 										   SESSION_NEEDS_PRIVKEYCACERT ) )
 				{
-				status = checkServerCertValid( value, &sessionInfoPtr->errorLocus, 
-											   &sessionInfoPtr->errorType );
+				status = checkServerCertValid( value, SESSION_ERRINFO );
 				if( cryptStatusError( status ) )
 					return( CRYPT_ARGERROR_NUM1 );
 				}
@@ -863,7 +862,7 @@ int setSessionAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 									  attribute, data, dataLength, flags ) );
 			}
 
-		case CRYPT_SESSINFO_SERVER_FINGERPRINT:
+		case CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1:
 			/* Remember the value */
 			return( addSessionInfoS( &sessionInfoPtr->attributeList,
 									 attribute, data, dataLength ) );

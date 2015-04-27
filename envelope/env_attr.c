@@ -365,15 +365,16 @@ static int instantiateCertChain( INOUT CONTENT_LIST *contentListItem,
 						certChainDataLength, CRYPT_ICERTTYPE_CMS_CERTSET );
 	if( contentListItem->issuerAndSerialNumber == NULL )
 		{
-		createInfo.arg2 = CRYPT_IKEYID_KEYID;
-		createInfo.strArg2 = contentListItem->keyID;
-		createInfo.strArgLen2 = contentListItem->keyIDsize;
+		updateMessageCreateObjectIndirectInfo( &createInfo, 
+								CRYPT_IKEYID_KEYID, contentListItem->keyID, 
+								contentListItem->keyIDsize );
 		}
 	else
 		{
-		createInfo.arg2 = CRYPT_IKEYID_ISSUERANDSERIALNUMBER;
-		createInfo.strArg2 = contentListItem->issuerAndSerialNumber;
-		createInfo.strArgLen2 = contentListItem->issuerAndSerialNumberSize;
+		updateMessageCreateObjectIndirectInfo( &createInfo, 
+								CRYPT_IKEYID_ISSUERANDSERIALNUMBER, 
+								contentListItem->issuerAndSerialNumber, 
+								contentListItem->issuerAndSerialNumberSize );
 		}
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
@@ -809,7 +810,7 @@ static int checkOtherAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			   type with the same type, which is useful for cases when 
 			   cryptlib automatically presets the type based on other
 			   information */
-			if( envelopeInfoPtr->contentType && \
+			if( envelopeInfoPtr->contentType != CRYPT_CONTENT_NONE && \
 				envelopeInfoPtr->contentType != value )
 				return( exitErrorInited( envelopeInfoPtr, 
 										 CRYPT_ENVINFO_CONTENTTYPE ) );
@@ -826,19 +827,23 @@ static int checkOtherAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			return( CRYPT_OK );
 
 		case CRYPT_ENVINFO_SIGNATURE:
-			*checkType = ( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) ? \
-							MESSAGE_CHECK_PKC_SIGCHECK : \
-							MESSAGE_CHECK_PKC_SIGN;
 			if( envelopeInfoPtr->usage != ACTION_NONE && \
 				envelopeInfoPtr->usage != ACTION_SIGN )
 				return( exitErrorInited( envelopeInfoPtr, 
 										 CRYPT_ENVINFO_SIGNATURE ) );
 			if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP && \
-				envelopeInfoPtr->contentType == CRYPT_CONTENT_DATA )
+				( envelopeInfoPtr->contentType != CRYPT_CONTENT_NONE && \
+				  envelopeInfoPtr->contentType != CRYPT_CONTENT_DATA ) )
 				{
-				/* See the long comment for CRYPT_ENVINFO_CONTENTTYPE */
+				/* See the long comment for CRYPT_ENVINFO_CONTENTTYPE 
+				   above.  In short, the processing for signing anything 
+				   other than plain data is undefined in PGP, so we don't 
+				   allow signature types for this content type */
 				return( CRYPT_ARGERROR_VALUE );
 				}
+			*checkType = ( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) ? \
+							MESSAGE_CHECK_PKC_SIGCHECK : \
+							MESSAGE_CHECK_PKC_SIGN;
 			*usage = ACTION_SIGN;
 			return( CRYPT_OK );
 
@@ -850,16 +855,61 @@ static int checkOtherAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			return( CRYPT_OK );
 
 		case CRYPT_ENVINFO_ORIGINATOR:
-			*checkType = MESSAGE_CHECK_PKC_KA_EXPORT;
 			if( envelopeInfoPtr->usage != ACTION_NONE && \
 				envelopeInfoPtr->usage != ACTION_CRYPT )
 				return( exitErrorInited( envelopeInfoPtr, 
 										 CRYPT_ENVINFO_ORIGINATOR ) );
-			*usage = ACTION_CRYPT;
 			if( envelopeInfoPtr->iExtraCertChain != CRYPT_ERROR )
 				return( exitErrorInited( envelopeInfoPtr, 
 										 CRYPT_ENVINFO_ORIGINATOR ) );
+			*checkType = MESSAGE_CHECK_PKC_KA_EXPORT;
+			*usage = ACTION_CRYPT;
 			return( CRYPT_OK );
+
+		case CRYPT_ENVINFO_HASH:
+			{
+			MESSAGE_DATA msgData;
+			int status;
+
+			if( envelopeInfoPtr->usage != ACTION_NONE && \
+				envelopeInfoPtr->usage != ACTION_SIGN )
+				return( exitErrorInited( envelopeInfoPtr, 
+										 CRYPT_ENVINFO_HASH ) );
+			*checkType = MESSAGE_CHECK_HASH;
+			*usage = ACTION_SIGN;
+
+			/* We can only perform the following check for envelopes since 
+			   for de-envelopes the format type won't have been established 
+			   yet */
+			if( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE )
+				return( CRYPT_OK );
+
+			/* Hash contexts, being keyless, are always regarded as being in 
+			   the high state so the standard kernel check for their 
+			   readiness for use can't be applied to them.  Instead, we have 
+			   to explicitly check them here by reading the hash value to 
+			   see whether the hashing has been finalised */
+			setMessageData( &msgData, NULL, 0 );
+			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE_S, 
+									  &msgData, CRYPT_CTXINFO_HASHVALUE );
+			if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
+				{
+				/* If it's a PGP envelope then we still need to hash in 
+				   authenticated attributes, so having the hashing completed 
+				   is an error */
+				if( cryptStatusOK( status ) )
+					return( CRYPT_ARGERROR_NUM1 );
+				}
+			else
+				{
+				/* If it's a CMS envelope then the hashing must be completed 
+				   so that we can read the hash value from the context */
+				if( cryptStatusError( status ) )
+					return( CRYPT_ARGERROR_NUM1 );
+				}
+
+			return( CRYPT_OK );
+			}
 
 		case CRYPT_ENVINFO_KEYSET_ENCRYPT:
 			*checkType = MESSAGE_CHECK_PKC_ENCRYPT_AVAIL;
@@ -1224,6 +1274,79 @@ int getEnvelopeAttributeS( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 *																			*
 ****************************************************************************/
 
+/* ACLS for checking attributes added to an envelope.  First, the attribute 
+   is checked using the formatType field to make sure that it's permitted 
+   for this envelope format type.  Then if there's a usage set, it's checked 
+   against the envelope usage, with ACTION_NONE being permitted since the 
+   usage type may not have been defined yet, for example if a modifier 
+   attribute like CRYPT_ENVINFO_INTEGRITY is added before an attribute like 
+   CRYPT_ENVINFO_KEY is added.  Next, if a check-action is defined in the
+   checkType field then the attribute being added is checked against the 
+   check-action.  Finally, if a required envelope flag is present, the 
+   envelope flags are checked to make sure that that option is enabled.
+
+   Some attributes require more specialised checking, indicated by the usage 
+   being ACTION_NONE.  This is handled via custom code in 
+   checkOtherAttribute().
+
+   formatAllDeenv is somewhat special in that while the explicit envelope 
+   type is CRYPT_FORMAT_AUTO, it can be set to CRYPT_FORMAT_CMS or 
+   CRYPT_FORMAT_PGP once we start processing data.  To deal with this we set 
+   the requiredFlag to ENVELOPE_ISDEENVELOPE to ensure that something like
+   CRYPT_FORMAT_CMS really is a de-envelope */
+
+typedef struct {
+	const CRYPT_ATTRIBUTE_TYPE type;	/* Attribute type */
+	const CRYPT_FORMAT_TYPE *formatType;/* Permitted envelope types */
+	const ACTION_TYPE usage;			/* Corresponding usage type, */
+	const MESSAGE_CHECK_TYPE checkType;	/*  check type, and */
+	const int requiredFlag;				/*  required enveloping flag */
+	} CHECK_INFO;
+
+static const CRYPT_FORMAT_TYPE formatAll[] = { 
+	CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, 
+	CRYPT_FORMAT_SMIME, CRYPT_FORMAT_PGP, CRYPT_FORMAT_NONE, 
+	CRYPT_FORMAT_NONE };
+static const CRYPT_FORMAT_TYPE formatAllEnv[] = { 
+	CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME,
+	CRYPT_FORMAT_PGP, CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
+static const CRYPT_FORMAT_TYPE formatAllDeenv[] = { 
+	CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CMS, CRYPT_FORMAT_PGP, 
+	CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
+static const CRYPT_FORMAT_TYPE formatAllCMS[] = {
+	CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, 
+	CRYPT_FORMAT_SMIME, CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
+static const CRYPT_FORMAT_TYPE formatAllSMIME[] = {
+	CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME, 
+	CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
+static const CRYPT_FORMAT_TYPE formatAllEnvSMIME[] = {
+	CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME, CRYPT_FORMAT_NONE, 
+	CRYPT_FORMAT_NONE };
+
+/* The following lookup table defines the checks that are applied to each 
+   attribute as it's added.
+
+	  Attribute						Format			Env.usage		Action to chk.			Env.flags */
+static const CHECK_INFO checkTable[] = {
+#ifdef USE_COMPRESSION
+	{ CRYPT_ENVINFO_COMPRESSION,	formatAllEnv,	ACTION_COMPRESS, MESSAGE_CHECK_NONE,	0 },
+#endif /* USE_COMPRESSION */
+	{ CRYPT_ENVINFO_DETACHEDSIGNATURE, formatAll,	ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_ENVINFO_INTEGRITY,		formatAllEnv,	ACTION_NONE,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_ENVINFO_KEY,			formatAllCMS,	ACTION_CRYPT,	MESSAGE_CHECK_CRYPT,	0 },
+	{ CRYPT_ENVINFO_SIGNATURE,		formatAll,		ACTION_NONE,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_ENVINFO_SIGNATURE_EXTRADATA, formatAllEnvSMIME, ACTION_NONE, MESSAGE_CHECK_NONE, 0 },
+	{ CRYPT_ENVINFO_PUBLICKEY,		formatAllEnv,	ACTION_CRYPT,	MESSAGE_CHECK_PKC_ENCRYPT, 0 },
+	{ CRYPT_ENVINFO_PRIVATEKEY,		formatAllDeenv,	ACTION_CRYPT,	MESSAGE_CHECK_PKC_DECRYPT, ENVELOPE_ISDEENVELOPE },
+	{ CRYPT_ENVINFO_SESSIONKEY,		formatAllCMS,	ACTION_CRYPT,	MESSAGE_CHECK_CRYPT,	0 },
+	{ CRYPT_ENVINFO_HASH,			formatAll,		ACTION_NONE,	MESSAGE_CHECK_HASH,		ENVELOPE_DETACHED_SIG },
+	{ CRYPT_ENVINFO_TIMESTAMP,		formatAllEnvSMIME, ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_OPTION_ENCR_MAC,		formatAllCMS,	ACTION_NONE,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_IATTRIBUTE_INCLUDESIGCERT, formatAllEnvSMIME, ACTION_SIGN, MESSAGE_CHECK_NONE,	0 },
+	{ CRYPT_IATTRIBUTE_ATTRONLY,	formatAllSMIME,	ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
+	{ CRYPT_ATTRIBUTE_NONE, NULL, ACTION_NONE, 0 }, { CRYPT_ATTRIBUTE_NONE, NULL, ACTION_NONE, 0 }
+	};
+
 /* Set a numeric/boolean attribute */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -1234,68 +1357,6 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	MESSAGE_CHECK_TYPE checkType = MESSAGE_CHECK_NONE;
 	ACTION_TYPE usage = ACTION_NONE;
 	const CRYPT_FORMAT_TYPE *formatTypeInfo = NULL;
-	typedef CRYPT_FORMAT_TYPE PERMITTED_FORMATS[ 7 ];
-	typedef struct {
-		const CRYPT_ATTRIBUTE_TYPE type;	/* Attribute type */
-		const CRYPT_FORMAT_TYPE *formatType;/* Permitted env.types */
-		const ACTION_TYPE usage;			/* Corresponding usage type, */
-		const MESSAGE_CHECK_TYPE checkType;	/*  check type, and */
-		const int requiredFlag;				/*  required env.flag */
-		} CHECK_INFO;
-	static const CRYPT_FORMAT_TYPE formatAll[] = { 
-		CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, 
-		CRYPT_FORMAT_SMIME, CRYPT_FORMAT_PGP, CRYPT_FORMAT_NONE, 
-		CRYPT_FORMAT_NONE };
-	static const CRYPT_FORMAT_TYPE formatAllEnv[] = { 
-		CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME,
-		CRYPT_FORMAT_PGP, CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
-	static const CRYPT_FORMAT_TYPE formatAllDeenv[] = { 
-		CRYPT_FORMAT_AUTO, CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
-	static const CRYPT_FORMAT_TYPE formatAllCMS[] = {
-		CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CRYPTLIB, CRYPT_FORMAT_CMS, 
-		CRYPT_FORMAT_SMIME, CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
-	static const CRYPT_FORMAT_TYPE formatAllSMIME[] = {
-		CRYPT_FORMAT_AUTO, CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME, 
-		CRYPT_FORMAT_NONE, CRYPT_FORMAT_NONE };
-	static const CRYPT_FORMAT_TYPE formatAllEnvSMIME[] = {
-		CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME, CRYPT_FORMAT_NONE, 
-		CRYPT_FORMAT_NONE };
-	static const CHECK_INFO checkTable[] = {
-	/* The following lookup table defines the checks that are applied to 
-	   each attribute as it's added.  First, the attribute is checked to 
-	   make sure that it's permitted for this envelope format type.  Then if 
-	   there's a usage defined, it's checked agains the envelope usage, with 
-	   ACTION_NONE being permitted since the usage type may not have been 
-	   defined yet, for example if a modifier attribute like 
-	   CRYPT_ENVINFO_INTEGRITY is added before an attribute like 
-	   CRYPT_ENVINFO_KEY is added.  Next, if a check-action is defined, the 
-	   attribute being added is checked against the action.  Finally, if a
-	   required envelope flag is present, the envelope flags are checked to
-	   make sure that that option is enabled.
-
-	   Some attributes require more specialised checking, indicated by the 
-	   usage being ACTION_NONE.  This is handled via custom code in 
-	   checkOtherAttribute().
-
-	  Attribute						Format			Env.usage		Action to chk.			Env.flags */
-#ifdef USE_COMPRESSION
-	{ CRYPT_ENVINFO_COMPRESSION,	formatAllEnv,	ACTION_COMPRESS, MESSAGE_CHECK_NONE,	0 },
-#endif /* USE_COMPRESSION */
-	{ CRYPT_ENVINFO_DETACHEDSIGNATURE, formatAll,	ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
-	{ CRYPT_ENVINFO_INTEGRITY,		formatAllEnv,	ACTION_NONE,	MESSAGE_CHECK_NONE,		0 },
-	{ CRYPT_ENVINFO_KEY,			formatAllCMS,	ACTION_CRYPT,	MESSAGE_CHECK_CRYPT,	0 },
-	{ CRYPT_ENVINFO_SIGNATURE,		formatAll,		ACTION_NONE,	MESSAGE_CHECK_NONE,		0 },
-	{ CRYPT_ENVINFO_SIGNATURE_EXTRADATA, formatAllEnvSMIME, ACTION_NONE, MESSAGE_CHECK_NONE, 0 },
-	{ CRYPT_ENVINFO_PUBLICKEY,		formatAllEnv,	ACTION_CRYPT,	MESSAGE_CHECK_PKC_ENCRYPT, 0 },
-	{ CRYPT_ENVINFO_PRIVATEKEY,		formatAllDeenv,	ACTION_CRYPT,	MESSAGE_CHECK_PKC_DECRYPT, 0 },
-	{ CRYPT_ENVINFO_SESSIONKEY,		formatAllCMS,	ACTION_CRYPT,	MESSAGE_CHECK_CRYPT,	0 },
-	{ CRYPT_ENVINFO_HASH,			formatAll,		ACTION_SIGN,	MESSAGE_CHECK_HASH,		ENVELOPE_DETACHED_SIG },
-	{ CRYPT_ENVINFO_TIMESTAMP,		formatAllEnvSMIME, ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
-	{ CRYPT_OPTION_ENCR_MAC,		formatAllCMS,	ACTION_NONE,	MESSAGE_CHECK_NONE,		9 },
-	{ CRYPT_IATTRIBUTE_INCLUDESIGCERT, formatAllEnvSMIME, ACTION_SIGN, MESSAGE_CHECK_NONE,	0 },
-	{ CRYPT_IATTRIBUTE_ATTRONLY,	formatAllSMIME,	ACTION_SIGN,	MESSAGE_CHECK_NONE,		0 },
-	{ CRYPT_ATTRIBUTE_NONE, NULL, ACTION_NONE, 0 }, { CRYPT_ATTRIBUTE_NONE, NULL, ACTION_NONE, 0 }
-	};
 	int requiredFlag = 0, i, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -1341,7 +1402,7 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   indeterminate time in the future.  Since much of the checking is
 	   similar, we use a table-driven check for most types and fall back to
 	   custom checking for special cases */
-	for( i = 0; checkTable[ i ].type != ACTION_NONE && \
+	for( i = 0; checkTable[ i ].type != CRYPT_ATTRIBUTE_NONE && \
 				i < FAILSAFE_ARRAYSIZE( checkTable, CHECK_INFO ); i++ )
 		{
 		if( checkTable[ i ].type == attribute )
@@ -1376,9 +1437,8 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		}
 
 	/* Make sure that the attribute is valid for the envelope usage type.
-	   We also allow ACTION_NONE as a usage since the envelope usage type
-	   may not have been nailed down yet by adding the necessary attributes 
-	   or enveloped data */
+	   A useage of ACTION_NONE means that the attribute requires special-
+	   case checking that's outside the scope of the basic ACL */
 	if( usage != ACTION_NONE )
 		{
 		/* Make sure that the usage requirements for the item that we're 
@@ -1449,8 +1509,14 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		   Most of this will be caught by the kernel but there are a couple 
 		   of special cases (e.g. an attribute certificate where the main 
 		   object is a PKC context) which are missed by the general kernel 
-		   checks */
-		if( ( attribute == CRYPT_ENVINFO_SIGNATURE || \
+		   checks.
+
+		   We can't perform this check on de-enveloping because we don't
+		   know at this stage whether the keying resources needed are 
+		   identified by issuerAndSerialNumber or by keyID, a certificate is 
+		   only required for the former */
+		if( !( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) && \
+			( attribute == CRYPT_ENVINFO_SIGNATURE || \
 			  attribute == CRYPT_ENVINFO_PUBLICKEY || \
 			  attribute == CRYPT_ENVINFO_PRIVATEKEY || \
 			  attribute == CRYPT_ENVINFO_ORIGINATOR ) && 
@@ -1488,39 +1554,6 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		/* Make sure that the required enveloping flag is set */
 		if( ( envelopeInfoPtr->flags & requiredFlag ) != requiredFlag )
 			return( CRYPT_ARGERROR_NUM1 );
-		}
-
-	/* Hash contexts, being keyless, are always regarded as being in the 
-	   high state so the standard kernel check for their readiness for use
-	   can't be applied to them.  Instead, we have to explicitly check
-	   them here, however we can only perform the check at this point for
-	   envelopes since for de-envelopes the format type won't have been
-	   established yet */
-	if( attribute == CRYPT_ENVINFO_HASH && \
-		!( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) )
-		{
-		MESSAGE_DATA msgData;
-
-		/* Try and read the hash value to check whether the hashing has been
-		   finalised */
-		setMessageData( &msgData, NULL, 0 );
-		status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE_S, &msgData,
-								  CRYPT_CTXINFO_HASHVALUE );
-		if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
-			{
-			/* If it's a PGP envelope then we still need to hash in 
-			   authenticated attributes, so having the hashing completed is
-			   an error */
-			if( cryptStatusOK( status ) )
-				return( CRYPT_ARGERROR_NUM1 );
-			}
-		else
-			{
-			/* If it's a CMS envelope then the hashing must be completed so
-			   that we can read the hash value from the context */
-			if( cryptStatusError( status ) )
-				return( CRYPT_ARGERROR_NUM1 );
-			}
 		}
 
 	/* Add it to the envelope */
@@ -1566,7 +1599,7 @@ int setEnvelopeAttributeS( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isReadPtr( data, dataLength ) );
 
-	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH );
+	REQUIRES( dataLength > 0 && dataLength < MAX_BUFFER_SIZE );
 	REQUIRES( isAttribute( attribute ) || \
 			  isInternalAttribute( attribute ) );
 

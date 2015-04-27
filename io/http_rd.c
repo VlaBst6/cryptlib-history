@@ -376,7 +376,7 @@ static int readResponseHeader( INOUT STREAM *stream,
 		   (yes, there are CAs that are issuing 150MB CRLs) */
 		initHeaderInfo( &headerInfo, 5,
 						httpDataInfo->bufferResize ? \
-							min( MAX_INTLENGTH, 8388608L ) : \
+							min( MAX_BUFFER_SIZE, 8388608L ) : \
 							httpDataInfo->bufSize,
 						*flags );
 		status = readHeaderLines( stream, lineBuffer, lineBufSize,
@@ -392,19 +392,23 @@ static int readResponseHeader( INOUT STREAM *stream,
 		*flags = headerInfo.flags & ~HTTP_FLAG_NOOP;
 		httpDataInfo->bytesAvail = headerInfo.contentLength;
 
-		/* If this was a soft error due to not finding the requested item, 
-		   pass the status on to the caller.  The low-level error
-		   information will still be present from readFirstHeaderLine() */
-		if( isResponseSoftError )
-			{
-			return( cryptStatusError( persistentStatus ) ? \
-					persistentStatus : CRYPT_ERROR_NOTFOUND );
-			}
-
 		/* If it's not something like a redirect that needs special-case
 		   handling, we're done */
 		if( !needsSpecialHandling )
+			{
+			/* If this was a soft error due to not finding the requested 
+			   item, pass the status on to the caller.  The low-level error 
+			   information will still be present from 
+			   readFirstHeaderLine() */
+			if( isResponseSoftError )
+				{
+				return( cryptStatusError( persistentStatus ) ? \
+						persistentStatus : CRYPT_ERROR_NOTFOUND );
+				}
+
+			/* There's no special-case handling required, we're done */
 			return( CRYPT_OK );
+			}
 
 		REQUIRES( httpStatus == 100 || httpStatus == 301 || \
 				  httpStatus == 302 || httpStatus == 307 );
@@ -485,7 +489,7 @@ static int readFunction( INOUT STREAM *stream,
 						 OUT_BUFFER( maxLength, *length ) void *buffer, 
 						 IN_LENGTH_FIXED( sizeof( HTTP_DATA_INFO ) ) \
 							const int maxLength, 
-						 OUT_LENGTH_Z int *length )
+						 OUT_DATALENGTH_Z int *length )
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 	HTTP_DATA_INFO *httpDataInfo = ( HTTP_DATA_INFO * ) buffer;
@@ -500,6 +504,19 @@ static int readFunction( INOUT STREAM *stream,
 
 	/* Clear return value */
 	*length = 0;
+
+	/* Check whether the other side has indicated that it closed the 
+	   connection after the previous message was read.  This operates at a 
+	   different level to the usual stream-level connection management 
+	   because the network connection may still be open but any further 
+	   attempts to do anything with it will return an error */
+	if( netStream->nFlags & STREAM_NFLAG_LASTMSGR )
+		{
+		retExt( CRYPT_ERROR_COMPLETE,
+				( CRYPT_ERROR_COMPLETE, NETSTREAM_ERRINFO, 
+				  "Peer has closed the connection via HTTP 'Connection: "
+				  "close'" ) );
+		}
 
 	/* Read the HTTP packet header */
 	if( netStream->nFlags & STREAM_NFLAG_ISSERVER )
@@ -521,7 +538,7 @@ static int readFunction( INOUT STREAM *stream,
 			void *newBuffer;
 
 			REQUIRES( httpDataInfo->bytesAvail > 0 && \
-					  httpDataInfo->bytesAvail < MAX_INTLENGTH );
+					  httpDataInfo->bytesAvail < MAX_BUFFER_SIZE );
 
 			/* readResponseHeader() will only allow content larger than the 
 			   buffer size if it's marked as a resizeable buffer */
@@ -582,7 +599,7 @@ static int readFunction( INOUT STREAM *stream,
 		}
 
 	/* If it's a plain-text error message, return it to the caller */
-	if( flags & HTTP_FLAG_TEXTMSG )
+	if( ( flags & HTTP_FLAG_TEXTMSG ) && !httpDataInfo->responseIsText )
 		{
 		BYTE *byteBufPtr = httpDataInfo->buffer;
 

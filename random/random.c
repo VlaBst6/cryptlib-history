@@ -56,15 +56,16 @@
 
 /* If we don't have a defined randomness interface, complain */
 
-#if !( defined( __BEOS__ ) || defined( __ECOS__ ) || \
-	   defined( __IBM4758__ ) || defined( __MAC__ ) || \
-	   defined( __MSDOS__ ) || defined( __MVS__ ) || \
-	   defined( __Nucleus__ ) || defined( __OS2__ ) || \
-	   defined( __PALMOS__ ) || defined( __TANDEM_NSK__ ) || \
+#if !( defined( __Android__ ) || defined( __BEOS__ ) || \
+	   defined( __ECOS__ ) || defined( __IBM4758__ ) || \
+	   defined( __iOS__ ) || defined( __MAC__ ) || defined( __MSDOS__ ) || \
+	   defined( __MVS__ ) || defined( __Nucleus__ ) || \
+	   defined( __OS2__ ) || defined( __PALMOS__ ) || \
+	   defined( __SMX__ ) || defined( __TANDEM_NSK__ ) || \
 	   defined( __TANDEM_OSS__ ) || defined( __UNIX__ ) || \
-	   defined( __VMCMS__ ) || defined( __WIN16__ ) || \
-	   defined( __WIN32__ ) || defined( __WINCE__ ) || \
-	   defined( __XMK__ ) )
+	   defined( __VMCMS__ ) || defined( __VxWorks__ ) || \
+	   defined( __WIN16__ ) || defined( __WIN32__ ) || \
+	   defined( __WINCE__ ) || defined( __XMK__ ) )
   #error You need to create OS-specific randomness-gathering functions in random/<os-name>.c
 #endif /* Various OS-specific defines */
 
@@ -73,8 +74,15 @@
 
 #ifdef CONFIG_RANDSEED
   #ifndef CONFIG_RANDSEED_QUALITY
-	/* If the user hasn't provided a quality estimate, default to 80 */
-	#define CONFIG_RANDSEED_QUALITY		80
+	/* If the user hasn't provided a quality estimate, default to 90.  This
+	   isn't necessarily because the quality is that good, but because many
+	   embedded systems provide so little entropy that setting it to 
+	   anything less then 90 would result in us never reaching the required 
+	   entropy level.  This isn't as arbitrary as it seems because the seed-
+	   file entropy is in theory 100 since it's meant to be produced from a
+	   cryptographically strong source, the use of a non-100 value is just
+	   to force an entropy poll if the user hasn't performed one */
+	#define CONFIG_RANDSEED_QUALITY		90
   #endif /* !CONFIG_RANDSEED_QUALITY */
   #if ( CONFIG_RANDSEED_QUALITY < 10 ) || ( CONFIG_RANDSEED_QUALITY > 100 )
 	#error CONFIG_RANDSEED_QUALITY must be between 10 and 100
@@ -350,7 +358,10 @@ static int tryGetRandomOutput( INOUT RANDOM_INFO *randomInfo,
 	if( cryptStatusOK( status ) )
 		status = mixRandomPool( exportedRandomInfo );
 	if( cryptStatusError( status ) )
+		{
+		endRandomPool( exportedRandomInfo );
 		return( status );
+		}
 
 	/* Postcondition for the mixing: The two pools differ, and the difference
 	   is more than just the bit flipping (this has a ~1e-14 chance of a false
@@ -397,7 +408,10 @@ static int tryGetRandomOutput( INOUT RANDOM_INFO *randomInfo,
 	status = generateX917( randomInfo, exportedRandomInfo->randomPool,
 						   RANDOMPOOL_ALLOCSIZE );
 	if( cryptStatusError( status ) )
+		{
+		endRandomPool( exportedRandomInfo );
 		return( status );
+		}
 
 	/* Check for stuck-at faults in the X9.17 generator by comparing a short
 	   sample from the current output with samples from the previous
@@ -428,6 +442,7 @@ static int tryGetRandomOutput( INOUT RANDOM_INFO *randomInfo,
 						 exportedRandomInfo->randomPool,
 						 RANDOMPOOL_SAMPLE_SIZE ) )
 				{
+				endRandomPool( exportedRandomInfo );
 				retIntError();
 				}
 
@@ -464,10 +479,12 @@ static int getRandomOutput( INOUT RANDOM_INFO *randomInfo,
 				   "Random pool size" );
 
 	/* Precondition for output quantity: We're being asked for a valid output
-	   length and we're not trying to use more than half the pool contents */
+	   length and we're not trying to use more than half the pool contents.
+	   Note that we've already checked that RANDOM_OUTPUTSIZE == 
+	   RANDOMPOOL_SIZE / 2 so we only check RANDOM_OUTPUTSIZE in the 
+	   REQUIRES() */
 	REQUIRES( sanityCheck( randomInfo ) );
-	REQUIRES( length > 0 && length <= RANDOM_OUTPUTSIZE && \
-			  length <= RANDOMPOOL_SIZE / 2 );
+	REQUIRES( length > 0 && length <= RANDOM_OUTPUTSIZE );
 
 	/* If the X9.17 generator cryptovariables haven't been initialised yet
 	   or have reached their use-by date, set the generator key and seed from
@@ -514,6 +531,8 @@ static int getRandomOutput( INOUT RANDOM_INFO *randomInfo,
 	     status == OK_SPECIAL && noRandomRetries < RANDOMPOOL_RETRIES; 
 		 noRandomRetries++ )
 		{
+		/* Reset the random pool before we retry */
+		initRandomPool( &exportedRandomInfo );
 		status = tryGetRandomOutput( randomInfo, &exportedRandomInfo );
 		}
 	if( cryptStatusError( status ) )
@@ -644,8 +663,9 @@ int getRandomData( INOUT TYPECAST( RANDOM_INFO * ) void *randomInfoPtr,
 	/* If we still can't get any random information, let the user know */
 	if( randomInfo->randomQuality < 100 )
 		{
+		DEBUG_DIAG(( "Insufficient random data available, only got %d out "
+					 "of 100", randomInfo->randomQuality ));
 		krnlExitMutex( MUTEX_RANDOM );
-		DEBUG_DIAG(( "No random data available" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_RANDOM );
 		}
@@ -909,7 +929,7 @@ void endRandomInfo( INOUT TYPECAST( RANDOM_INFO ** ) void **randomInfoPtrPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int addEntropyData( INOUT TYPECAST( RANDOM_INFO * ) void *randomInfoPtr, 
 					IN_BUFFER( length ) const void *buffer, 
-					IN_LENGTH const int length )
+					IN_DATALENGTH const int length )
 	{
 	RANDOM_INFO *randomInfo = ( RANDOM_INFO * ) randomInfoPtr;
 	const BYTE *bufPtr = ( BYTE * ) buffer;
@@ -921,7 +941,7 @@ int addEntropyData( INOUT TYPECAST( RANDOM_INFO * ) void *randomInfoPtr,
 	assert( isWritePtr( randomInfo, sizeof( RANDOM_INFO ) ) );
 	assert( isReadPtr( buffer, length ) );
 
-	REQUIRES( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES( length > 0 && length < MAX_BUFFER_SIZE );
 
 	status = krnlEnterMutex( MUTEX_RANDOM );
 	if( cryptStatusError( status ) )
@@ -1088,11 +1108,14 @@ int addEntropyQuality( INOUT TYPECAST( RANDOM_INFO * ) void *randomInfoPtr,
 
 /* Add entropy data from a stored seed value */
 
+#define RANDSEED_MAX_SIZE	1024
+
 STDC_NONNULL_ARG( ( 1 ) ) \
 static void addStoredSeedData( INOUT RANDOM_INFO *randomInfo )
 	{
 	STREAM stream;
-	BYTE streamBuffer[ STREAM_BUFSIZE + 8 ], seedBuffer[ 1024 + 8 ];
+	BYTE streamBuffer[ STREAM_BUFSIZE + 8 ];
+	BYTE seedBuffer[ RANDSEED_MAX_SIZE + 8 ];
 	char seedFilePath[ MAX_PATH_LENGTH + 8 ];
 	int seedFilePathLen, poolCount, length, status;
 
@@ -1115,16 +1138,17 @@ static void addStoredSeedData( INOUT RANDOM_INFO *randomInfo )
 		{
 		/* The seed data isn't present, don't try and access it again */
 		randomInfo->seedProcessed = TRUE;
-		DEBUG_DIAG(( "Error opening random seed file" ));
+		DEBUG_DIAG(( "Error opening random seed file, status %d", status ));
 		assert( DEBUG_WARN );
 		return;
 		}
 
-	/* Read up to 1K of data from the stored seed */
+	/* Read up to RANDSEED_MAX_SIZE of data from the stored seed */
+	memset( seedBuffer, 0, RANDSEED_MAX_SIZE );
 	sioctlSetString( &stream, STREAM_IOCTL_IOBUFFER, streamBuffer, 
 					 STREAM_BUFSIZE );
 	sioctlSet( &stream, STREAM_IOCTL_PARTIALREAD, TRUE );
-	status = length = sread( &stream, seedBuffer, 1024 );
+	status = length = sread( &stream, seedBuffer, RANDSEED_MAX_SIZE );
 	sFileClose( &stream );
 	zeroise( streamBuffer, STREAM_BUFSIZE );
 	if( cryptStatusError( status ) || length <= 16 )
@@ -1132,11 +1156,12 @@ static void addStoredSeedData( INOUT RANDOM_INFO *randomInfo )
 		/* The seed data is present but we can't read it or there's not 
 		   enough present to use, don't try and access it again */
 		randomInfo->seedProcessed = TRUE;
-		DEBUG_DIAG(( "Error reading random seed file" ));
+		DEBUG_DIAG(( "Error reading random seed file, status %d, length %d",
+					 status, length ));
 		assert( DEBUG_WARN );
 		return;
 		}
-	ENSURES_V( length >= 16 && length <= 1024 );
+	ENSURES_V( length >= 16 && length <= RANDSEED_MAX_SIZE );
 	randomInfo->seedSize = length;
 
 	/* Precondition: We got at least some non-zero data */
@@ -1152,18 +1177,18 @@ static void addStoredSeedData( INOUT RANDOM_INFO *randomInfo )
 	for( poolCount = RANDOMPOOL_SIZE; poolCount > 0; poolCount -= length )
 		{
 		status = addEntropyData( randomInfo, seedBuffer, length );
-		assert( cryptStatusOK( status ) );
+		ENSURES_V( cryptStatusOK( status ) );
 		}
 
 	/* There were at least 128 bits of entropy present in the seed, set the 
 	   entropy quality to the user-provided value */
 	status = addEntropyQuality( randomInfo, CONFIG_RANDSEED_QUALITY );
-	assert( cryptStatusOK( status ) );
+	ENSURES_V( cryptStatusOK( status ) );
 
-	zeroise( seedBuffer, 1024 );
+	zeroise( seedBuffer, RANDSEED_MAX_SIZE );
 
 	/* Postcondition: Nulla vestigia retrorsum */
-	FORALL( i, 0, 1024,
+	FORALL( i, 0, RANDSEED_MAX_SIZE,
 			seedBuffer[ i ] == 0 );
 	}
 #endif /* CONFIG_RANDSEED */

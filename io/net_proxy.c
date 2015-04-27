@@ -383,9 +383,7 @@ int findProxyUrl( OUT_BUFFER( proxyMaxLen, *proxyLen ) char *proxy,
 
 	/* Locate the proxy used for accessing the resource at the supplied URL.
 	   We have to convert to and from Unicode because the WinHTTP functions
-	   all take Unicode strings as args.  Note that we use the libc widechar
-	   functions rather than the Windows ones since the latter aren't
-	   present in Win95 or Win98.
+	   all take Unicode strings as args.
 
 	   WinHttpGetProxyForUrl() can be rather flaky, in some cases it'll fail
 	   instantly (without even trying auto-discovery) with GetLastError() =
@@ -449,8 +447,8 @@ static int findProxyUrl( char *proxy, const int proxyMaxLen,
 	assert( isWritePtr( proxy, proxyMaxLen ) );
 	assert( isReadPtr( url, urlLen ) );
 
-	REQUIRES( proxyMaxLen > 10 && proxyMaxLen < MAX_INTLENGTH );
-	REQUIRES( urlLen > 0 && urlLen < MAX_INTLENGTH );
+	REQUIRES( proxyMaxLen > 10 && proxyMaxLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( urlLen > 0 && urlLen < MAX_INTLENGTH_SHORT );
 
 	/* This gets somewhat complicated, under Win2K SP3 and XP and newer (or 
 	   at least Windows versions with WinHTTP 5.1 installed in some way, it

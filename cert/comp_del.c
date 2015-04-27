@@ -326,6 +326,14 @@ int deleteCertComponent( INOUT CERT_INFO *certInfoPtr,
 			return( CRYPT_OK );
 			}
 #endif /* USE_CERTREV */
+
+#ifdef USE_PKIUSER
+		case CRYPT_CERTINFO_PKIUSER_RA:
+			if( !certInfoPtr->cCertUser->isRA )
+				return( CRYPT_ERROR_NOTFOUND );
+			certInfoPtr->cCertUser->isRA = FALSE;
+			return( CRYPT_OK );
+#endif /* USE_PKIUSER */
 		}
 
 	retIntError();

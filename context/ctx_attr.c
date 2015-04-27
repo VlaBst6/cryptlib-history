@@ -388,7 +388,6 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 
 		case CRYPT_IATTRIBUTE_KEY_PGP:
 		case CRYPT_IATTRIBUTE_KEY_SSH:
-		case CRYPT_IATTRIBUTE_KEY_SSH1:
 		case CRYPT_IATTRIBUTE_KEY_SSL:
 			{
 			STREAM stream;
@@ -425,6 +424,15 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 									   KEYID_SIZE ) );
 #endif /* USE_HARDWARE */
 			return( CRYPT_ERROR_NOTFOUND );
+
+		case CRYPT_IATTRIBUTE_KDFPARAMS:
+			REQUIRES( contextType == CONTEXT_GENERIC );
+
+			if( contextInfoPtr->ctxGeneric->kdfParamSize <= 0 )
+				return( CRYPT_ERROR_NOTFOUND );
+			return( attributeCopy( msgData, 
+								   contextInfoPtr->ctxGeneric->kdfParams, 
+								   contextInfoPtr->ctxGeneric->kdfParamSize ) );
 
 		case CRYPT_IATTRIBUTE_ENCPARAMS:
 			REQUIRES( contextType == CONTEXT_GENERIC );
@@ -963,7 +971,6 @@ int setContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 		case CRYPT_IATTRIBUTE_KEY_SPKI:
 		case CRYPT_IATTRIBUTE_KEY_PGP:
 		case CRYPT_IATTRIBUTE_KEY_SSH:
-		case CRYPT_IATTRIBUTE_KEY_SSH1:
 		case CRYPT_IATTRIBUTE_KEY_SSL:
 		case CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL:
 		case CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL:
@@ -985,6 +992,15 @@ int setContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 			memcpy( contextInfoPtr->deviceStorageID, data, dataLength );
 			contextInfoPtr->deviceStorageIDset = TRUE;
 #endif /* USE_HARDWARE */
+			return( CRYPT_OK );
+
+		case CRYPT_IATTRIBUTE_KDFPARAMS:
+			REQUIRES( dataLength > 0 && dataLength <= CRYPT_MAX_TEXTSIZE );
+
+			memcpy( contextInfoPtr->ctxGeneric->kdfParams, data, 
+					dataLength );
+			contextInfoPtr->ctxGeneric->kdfParamSize = dataLength;
+
 			return( CRYPT_OK );
 
 		case CRYPT_IATTRIBUTE_ENCPARAMS:

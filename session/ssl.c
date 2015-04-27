@@ -246,7 +246,7 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 	CRYPT_CERTIFICATE iLocalCertChain;
 	const ATTRIBUTE_LIST *fingerprintPtr = \
 				findSessionInfo( sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_SERVER_FINGERPRINT );
+								 CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1 );
 	MESSAGE_DATA msgData;
 	BYTE certFingerprint[ CRYPT_MAX_HASHSIZE + 8 ];
 #ifdef USE_ERRMSGS
@@ -314,7 +314,7 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 	status = importCertFromStream( stream, &iLocalCertChain, 
 								   DEFAULTUSER_OBJECT_HANDLE,
 								   CRYPT_ICERTTYPE_SSL_CERTCHAIN,
-								   chainLength );
+								   chainLength, KEYMGMT_FLAG_NONE );
 	if( cryptStatusError( status ) )
 		{
 		/* There are sufficient numbers of broken certificates around that 
@@ -401,7 +401,7 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 		   check it.  We don't worry if the add fails, it's a minor thing 
 		   and not worth aborting the handshake for */
 		( void ) addSessionInfoS( &sessionInfoPtr->attributeList,
-								  CRYPT_SESSINFO_SERVER_FINGERPRINT,
+								  CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1,
 								  certFingerprint, certFingerprintLength );
 		}
 
@@ -551,7 +551,11 @@ static int abortStartup( INOUT SESSION_INFO *sessionInfoPtr,
 
 	REQUIRES( cryptStatusError( status ) );
 
-	sendHandshakeFailAlert( sessionInfoPtr );
+	sendHandshakeFailAlert( sessionInfoPtr, 
+							( handshakeInfo != NULL && \
+							  handshakeInfo->failAlertType != 0 ) ? \
+								handshakeInfo->failAlertType : \
+								SSL_ALERT_HANDSHAKE_FAILURE );
 	if( cleanupSecurityContexts )
 		destroySecurityContextsSSL( sessionInfoPtr );
 	if( handshakeInfo != NULL )
@@ -781,11 +785,11 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 										  MESSAGE_CHECK_PKC_SIGN );
 			if( cryptStatusError( status ) )
 				{
-				setErrorInfo( sessionInfoPtr, CRYPT_CERTINFO_KEYUSAGE, 
-							  CRYPT_ERRTYPE_ATTR_VALUE );
-				return( CRYPT_ARGERROR_NUM1 );
+				retExt( CRYPT_ARGERROR_NUM1,
+						( CRYPT_ARGERROR_NUM1, SESSION_ERRINFO,
+						  "Server key can't be used for encryption or "
+						  "signing" ) );
 				}
-
 			return( CRYPT_OK );
 
 		case CRYPT_ALGO_DSA:
@@ -794,9 +798,9 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 									  MESSAGE_CHECK_PKC_SIGN );
 			if( cryptStatusError( status ) )
 				{
-				setErrorInfo( sessionInfoPtr, CRYPT_CERTINFO_KEYUSAGE, 
-							  CRYPT_ERRTYPE_ATTR_VALUE );
-				return( CRYPT_ARGERROR_NUM1 );
+				retExt( CRYPT_ARGERROR_NUM1,
+						( CRYPT_ARGERROR_NUM1, SESSION_ERRINFO,
+						  "Server key can't be used for signing" ) );
 				}
 #ifdef CONFIG_SUITEB
 			return( checkSuiteBKey( sessionInfoPtr, cryptContext, pkcAlgo ) );
@@ -805,7 +809,10 @@ static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 #endif /* CONFIG_SUITEB */
 
 		default:
-			return( CRYPT_ARGERROR_NUM1 );
+			retExt( CRYPT_ARGERROR_NUM1,
+					( CRYPT_ARGERROR_NUM1, SESSION_ERRINFO,
+					  "Server key uses algorithm that can't be used with "
+					  "SSL/TLS" ) );
 		}
 
 	retIntError();
@@ -953,6 +960,7 @@ static int preparePacketFunction( INOUT SESSION_INFO *sessionInfoPtr )
 		status = wrapPacketSSL( sessionInfoPtr, &stream, 0 );
 	if( cryptStatusOK( status ) )
 		status = stell( &stream );
+	INJECT_FAULT( SESSION_CORRUPT_DATA, SESSION_CORRUPT_DATA_SSL_1 );
 	sMemDisconnect( &stream );
 
 	return( status );
@@ -992,9 +1000,18 @@ int setAccessMethodSSL( INOUT SESSION_INFO *sessionInfoPtr )
 			   certificates and the like, so we require some sort of 
 			   server-side key set in advance */
 		SSL_MINOR_VERSION_TLS11,	/* TLS 1.1 */
+#ifdef USE_SSL3
 			SSL_MINOR_VERSION_SSL, SSL_MINOR_VERSION_TLS12,
+#else
+			SSL_MINOR_VERSION_TLS, SSL_MINOR_VERSION_TLS12,
+#endif /* USE_SSL3 */
 			/* We default to TLS 1.1 rather than TLS 1.2 because support for 
-			   the latter will be minimal for quite some time */
+			   the latter will be minimal a long time, however even TLS 1.1 
+			   support is still minimal, see
+			   https://www.trustworthyinternet.org/ssl-pulse, which puts
+			   it just as low as TLS 1.2.  We still go with 1.1 however
+			   because we need it in order to have support for TLS
+			   extensions and, conveniently, explicit IVs */
 
 		/* Protocol-specific information */
 		EXTRA_PACKET_SIZE + \
@@ -1007,6 +1024,28 @@ int setAccessMethodSSL( INOUT SESSION_INFO *sessionInfoPtr )
 		};
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* Make sure that the huge list of cipher suites is set up correctly */
+	assert( SSL_NULL_WITH_NULL == 0x00 );
+	assert( TLS_DH_DSS_EXPORT_WITH_DES40_CBC_SHA == 0x0B );
+	assert( TLS_DH_anon_EXPORT_WITH_RC4_40_MD5 == 0x17 );
+	assert( TLS_KRB5_WITH_DES_CBC_SHA == 0x1E );
+	assert( TLS_PSK_WITH_NULL_SHA == 0x2C );
+	assert( TLS_RSA_WITH_AES_128_CBC_SHA == 0x2F );
+	assert( TLS_RSA_WITH_NULL_SHA256 == 0x3B );
+	assert( TLS_DH_DSS_WITH_AES_128_CBC_SHA256 == 0x3E );
+	assert( TLS_RSA_WITH_CAMELLIA_128_CBC_SHA == 0x41 );
+	assert( TLS_DHE_RSA_WITH_AES_128_CBC_SHA256 == 0x67 );
+	assert( TLS_RSA_WITH_CAMELLIA_256_CBC_SHA == 0x84 );
+	assert( TLS_PSK_WITH_RC4_128_SHA == 0x8A );
+	assert( TLS_RSA_WITH_SEED_CBC_SHA == 0x96 );
+	assert( TLS_RSA_WITH_AES_128_GCM_SHA256 == 0x9C );
+	assert( TLS_RSA_WITH_CAMELLIA_128_CBC_SHA256 == 0xBA );
+	assert( TLS_ECDH_ECDSA_WITH_NULL_SHA == 0xC001 );
+	assert( TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA == 0xC01A );
+	assert( TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256 == 0xC023 );
+	assert( TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 == 0xC02B );
+	assert( TLS_ECDHE_PSK_WITH_RC4_128_SHA == 0xC033 );
 
 	/* Set the access method pointers */
 	sessionInfoPtr->protocolInfo = &protocolInfo;

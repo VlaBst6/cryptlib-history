@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						ASN.1 Algorithm Identifier Routines					*
-*						Copyright Peter Gutmann 1992-2011					*
+*						Copyright Peter Gutmann 1992-2013					*
 *																			*
 ****************************************************************************/
 
@@ -12,6 +12,8 @@
   #include "enc_dec/asn1.h"
   #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_INT_ASN1
 
 /****************************************************************************
 *																			*
@@ -303,7 +305,11 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 
 	authEnc128/authEnc256: RFC 6476
 		SEQUENCE {
-			prf			AlgorithmIdentifier DEFAULT PBKDF2,
+			prf ::= [ 0 ] SEQUENCE {
+				salt			OCTET STRING SIZE(0),
+				iterationCount	INTEGER (1),
+				prf				AlgorithmIdentifier
+				} DEFAULT PBKDF2,
 			encAlgo		AlgorithmIdentifier,
 			macAlgo		AlgorithmIdentifier */
 
@@ -315,17 +321,19 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int readAuthEncParamData( INOUT STREAM *stream,
-								 OUT_LENGTH_Z int *offset,
+								 OUT_DATALENGTH_Z int *offset,
 								 OUT_LENGTH_SHORT_Z int *length,
+								 IN_TAG_ENCODED const int tag,
 								 IN_LENGTH_SHORT const int maxLength )
 	{
 	const int paramStart = stell( stream );
-	int paramLength, status;
+	int paramLength, tagValue, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( offset, sizeof( int ) ) );
 	assert( isWritePtr( length, sizeof( int ) ) );
 
+	REQUIRES_S( tag >= 1 && tag < MAX_TAG );
 	REQUIRES( maxLength > 0 && maxLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( !cryptStatusError( paramStart ) );
 
@@ -333,7 +341,12 @@ static int readAuthEncParamData( INOUT STREAM *stream,
 	*offset = *length = 0;
 
 	/* Get the start and length of the parameter data */
-	status = readUniversal( stream );
+	status = tagValue = readTag( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( tagValue != tag )
+		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
+	status = readUniversalData( stream );
 	if( cryptStatusError( status ) )
 		return( status );
 	paramLength = stell( stream ) - paramStart;
@@ -378,9 +391,10 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 		}
 	else
 		{
-		if( isHashAlgo( queryInfo->cryptAlgo ) )
+		if( isHashAlgo( queryInfo->cryptAlgo ) || \
+			isMacAlgo( queryInfo->cryptAlgo ) )
 			{
-			/* For hash algorithms, the optional parameter is the hash 
+			/* For hash/MAC algorithms, the optional parameter is the hash 
 			   width */
 			if( param1 != 0 )
 				queryInfo->hashAlgoParam = param1;
@@ -501,17 +515,30 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 			   In addition the caller needs a copy of the encryption and MAC
 			   parameters to use when creating the encryption and MAC
 			   contexts, so we record the position within the encoded 
-			   parameter data.  First we tunnel down into the parmaeter
+			   parameter data.  First we tunnel down into the parameter
 			   data to find the locations of the encryption and MAC
 			   parameters */
 			status = readSequence( stream, NULL );
+			if( cryptStatusOK( status ) && \
+				peekTag( stream ) == MAKE_CTAG( 0 ) )
+				{
+				/* Optional KDF parameters */
+				status = readAuthEncParamData( stream,
+									&queryInfo->kdfParamStart, 
+									&queryInfo->kdfParamLength, 
+									MAKE_CTAG( 0 ), maxLength - 16 );
+									/* -16 for enc/MAC param.*/
+				}
 			if( cryptStatusOK( status ) )
 				{
 				/* Encryption algorithm parameters */
 				status = readAuthEncParamData( stream,
 									&queryInfo->encParamStart, 
 									&queryInfo->encParamLength, 
-									maxLength - 8 );/* -8 for MAC param.*/
+									BER_SEQUENCE,
+									maxLength - \
+										( queryInfo->kdfParamLength + 8 ) );
+										/* -8 for MAC param */
 				}
 			if( cryptStatusOK( status ) )
 				{
@@ -519,7 +546,10 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 				status = readAuthEncParamData( stream,
 									&queryInfo->macParamStart, 
 									&queryInfo->macParamLength,
-									maxLength - queryInfo->encParamLength );
+									BER_SEQUENCE,
+									maxLength - \
+										( queryInfo->kdfParamLength + \
+										  queryInfo->encParamLength ) );
 				}
 			if( cryptStatusError( status ) )
 				return( status );
@@ -527,6 +557,7 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 			/* The encryption/MAC parameter positions are taken from the 
 			   start of the encoded data, not from the start of the 
 			   stream */
+			queryInfo->kdfParamStart -= offset;
 			queryInfo->encParamStart -= offset;
 			queryInfo->macParamStart -= offset;
 
@@ -708,13 +739,23 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 		case CRYPT_IALGO_GENERIC_SECRET:
 			{
 			MESSAGE_DATA msgData;
+			BYTE kdfData[ CRYPT_MAX_TEXTSIZE + 8 ];
 			BYTE encAlgoData[ CRYPT_MAX_TEXTSIZE + 8 ];
 			BYTE macAlgoData[ CRYPT_MAX_TEXTSIZE + 8 ];
-			int encAlgoDataSize, macAlgoDataSize;
+			int kdfDataSize = 0, encAlgoDataSize, macAlgoDataSize;
 
-			/* Get the encoded parameters for the encryption and MAC 
-			   contexts that will be derived from the generic-secret 
-			   context */
+			/* Get the encoded parameters for the optional KDF data and 
+			   encryption and MAC contexts that will be derived from the 
+			   generic-secret context */
+			setMessageData( &msgData, kdfData, CRYPT_MAX_TEXTSIZE );
+			status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
+									  &msgData, CRYPT_IATTRIBUTE_KDFPARAMS );
+			if( status == CRYPT_OK )	
+				{
+				/* Since the KDF data is optional it may not be present, in 
+				   which case we skip it */
+				kdfDataSize = msgData.length;
+				}
 			setMessageData( &msgData, encAlgoData, CRYPT_MAX_TEXTSIZE );
 			status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
 									  &msgData, CRYPT_IATTRIBUTE_ENCPARAMS );
@@ -730,9 +771,14 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 
 			/* Write the pre-encoded AuthEnc parameter data */
 			writeSequence( stream, oidSize + \
-						   sizeofObject( encAlgoDataSize + macAlgoDataSize ) );
+						   sizeofObject( kdfDataSize + \
+										 encAlgoDataSize + \
+										 macAlgoDataSize ) );
 			swrite( stream, oid, oidSize );
-			writeSequence( stream, encAlgoDataSize + macAlgoDataSize );
+			writeSequence( stream, kdfDataSize + encAlgoDataSize + \
+								   macAlgoDataSize );
+			if( kdfDataSize > 0 )
+				swrite( stream, kdfData, kdfDataSize );
 			swrite( stream, encAlgoData, encAlgoDataSize );
 			return( swrite( stream, macAlgoData, macAlgoDataSize ) );
 			}
@@ -835,7 +881,7 @@ int writeAlgoIDex( INOUT STREAM *stream,
 	REQUIRES_S( parameter == CRYPT_ALGO_NONE || \
 				( parameter >= CRYPT_ALGO_FIRST_HASH && \
 				  parameter <= CRYPT_ALGO_LAST_HASH ) || \
-				( isHashExtAlgo( cryptAlgo ) && \
+				( isHashMacExtAlgo( cryptAlgo ) && \
 				  parameter >= 32 && parameter <= CRYPT_MAX_HASHSIZE ) );
 	REQUIRES_S( extraLength >= 0 && extraLength < MAX_INTLENGTH_SHORT );
 	REQUIRES_S( oid != NULL );
@@ -977,7 +1023,7 @@ int sizeofContextAlgoID( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 							  &algorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( isHashExtAlgo( algorithm ) )
+	if( isHashMacExtAlgo( algorithm ) )
 		{
 		int blockSize;
 
@@ -1017,7 +1063,7 @@ int writeContextAlgoID( INOUT STREAM *stream,
 							  &algorithm, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( isHashExtAlgo( algorithm ) )
+	if( isHashMacExtAlgo( algorithm ) )
 		{
 		int blockSize;
 
@@ -1082,7 +1128,7 @@ int readContextAlgoID( INOUT STREAM *stream,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( isHashExtAlgo( queryInfoPtr->cryptAlgo ) )
+	if( isHashMacExtAlgo( queryInfoPtr->cryptAlgo ) )
 		{
 		/* It's a variable-width hash algorithm, set the output width */
 		status = krnlSendMessage( createInfo.cryptHandle, 
@@ -1186,3 +1232,4 @@ int writeGenericAlgoID( INOUT STREAM *stream,
 	writeSequence( stream, oidLength );
 	return( writeOID( stream, oid ) );
 	}
+#endif /* USE_INT_ASN1 */

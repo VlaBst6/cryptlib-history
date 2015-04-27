@@ -72,10 +72,12 @@ static int processMechanismMessage( INOUT DEVICE_INFO *deviceInfoPtr,
 		   This code was only ever used with Fortezza devices, with PKCS #11 
 		   devices the support for various mechanisms is too patchy to allow 
 		   us to rely on it so we always use system mechanisms which we know 
-		   will get it right.  Because it should never be used in normal 
-		   use, we throw an exception if we get here inadvertently (if this 
-		   doesn't stop execution then the krnlAcquireObject() will since it 
-		   will refuse to allocate the system object) */
+		   will get it right.
+		   
+		   Because it should never be used in normal use, we throw an 
+		   exception if we get here inadvertently.  If this doesn't stop 
+		   execution then the krnlAcquireObject() will since it will refuse 
+		   to allocate the system object */
 		assert( INTERNAL_ERROR );
 		setMessageObjectUnlocked( messageExtInfo );
 		status = krnlSuspendObject( deviceInfoPtr->objectHandle, &refCount );
@@ -471,7 +473,7 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 					   IN_ENUM( CRYPT_DEVICE ) const CRYPT_DEVICE_TYPE deviceType,
 					   IN_BUFFER_OPT( nameLength ) const char *name, 
 					   IN_LENGTH_TEXT_Z const int nameLength,
-					   OUT_PTR DEVICE_INFO **deviceInfoPtrPtr )
+					   OUT_OPT_PTR DEVICE_INFO **deviceInfoPtrPtr )
 	{
 	DEVICE_INFO *deviceInfoPtr;
 	OBJECT_SUBTYPE subType;

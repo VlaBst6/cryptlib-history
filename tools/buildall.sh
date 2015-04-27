@@ -1,21 +1,31 @@
 #!/bin/sh
 # Build all cryptlib modules
 
+# Explicitly clear build flags
+
+SHARED=0
+ANALYSE=0
+BUILDWITHGCC=0
+
 # Make sure that we've been given sufficient arguments.
 
 if [ "$1" = "shared" ] ; then
     SHARED=1 ;
     shift ;
 fi
-if [ "$1" = "" ] ; then
+if [ "$1" = "analyse" ] ; then
+    ANALYSE=1 ;
+    shift ;
+fi
+if [ -z "$1" ] ; then
 	echo "$0: Missing OS name." >&2 ;
 	exit 1 ;
 fi
-if [ "$2" = "" ] ; then
+if [ -z "$2" ] ; then
 	echo "$0: Missing compiler name." >&2 ;
 	exit 1 ;
 fi
-if [ "$3" = "" ] ; then
+if [ -z "$3" ] ; then
 	echo "$0: Missing compiler flags." >&2 ;
 	exit 1 ;
 fi
@@ -31,7 +41,7 @@ shift
 
 MAJ="3"
 MIN="4"
-PLV="2"
+PLV="3"
 PROJ="cl"
 SHARED_OBJ_PATH="./shared-obj/"
 if [ $OSNAME = "Darwin" ] ; then
@@ -91,8 +101,10 @@ fi
 # is empty, we add an extra character to the comparison string to avoid
 # syntax errors.
 
-if [ $SHARED ] ; then
+if [ $SHARED -gt 0 ] ; then
 	CFLAGS="`./tools/ccopts.sh $CC $OSNAME`" ;
+elif [ $ANALYSE -gt 0 ] ; then
+	CFLAGS="`./tools/ccopts.sh $CC analyse`" ;
 else
 	CFLAGS="`./tools/ccopts.sh $CC`" ;
 fi
@@ -115,7 +127,7 @@ if [ '$(CROSSCOMPILE)x' = '1x' ] ; then
 	echo "Cross-compiling for OS target $OSNAME" ;
 	CFLAGS="$* `./tools/ccopts.sh $CC $OSNAME` \
 			-DOSVERSION=`./tools/osversion.sh $OSNAME`" ;
-	if [ $SHARED ] ; then
+	if [ $SHARED -gt 0 ] ; then
 		make TARGET=$SLIBNAME OBJPATH=$SHARED_OBJ_PATH $CFLAGS $OSNAME ;
 	else
 		make $CFLAGS $OSNAME ;
@@ -149,7 +161,7 @@ checkForGcc()
 	echo "Building with gcc instead of the default $OSNAME compiler."
 	echo "  (Re-scanning for build options under gcc)."
 	BUILDWITHGCC=1
-	if [ $SHARED ] ; then
+	if [ $SHARED -gt 0 ] ; then
 		CFLAGS="`./tools/ccopts.sh gcc $OSNAME`" ;
 	else
 		CFLAGS="`./tools/ccopts.sh gcc`" ;
@@ -208,14 +220,14 @@ buildWithNativeToolsShared()
 
 # Build cryptlib, taking into account OS-specific quirks
 
-if [ $SHARED ] ; then
-	if [ $BUILDWITHGCC ] ; then
+if [ $SHARED -gt 0 ] ; then
+	if [ $BUILDWITHGCC -gt 0 ] ; then
 		buildWithGccShared $OSNAME $SLIBNAME $* ;
 	else
 		buildWithNativeToolsShared $OSNAME $SLIBNAME $CC $* ;
 	fi
 else
-	if [ $BUILDWITHGCC ] ; then
+	if [ $BUILDWITHGCC -gt 0 ] ; then
 		buildWithGcc $OSNAME $* ;
 	else
 		buildWithNativeTools $OSNAME $CC $* ;

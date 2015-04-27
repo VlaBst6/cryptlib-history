@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib SSHv2 Server Management					*
-*						Copyright Peter Gutmann 1998-2008					*
+*						Copyright Peter Gutmann 1998-2013					*
 *																			*
 ****************************************************************************/
 
@@ -32,20 +32,20 @@
    key isn't an ECC key we probably shouldn't be advertising any ECC keyex
    algorithms, so we vary what we send based on the server key type.
 
-   Note that the values in these lists must be present in the algorithm-name 
-   mapping tables in ssh2.c */
+   The values in these lists must be present in the algorithm-name mapping 
+   tables in ssh2.c */
 
 static const CRYPT_ALGO_TYPE FAR_BSS algoKeyexEccList[] = {
-#ifdef PREFER_ECC_SUITES
+#ifdef PREFER_ECC
 	CRYPT_ALGO_ECDH,
-#endif /* PREFER_ECC_SUITES */
-	CRYPT_PSEUDOALGO_DHE_ALT, CRYPT_PSEUDOALGO_DHE, CRYPT_ALGO_DH, 
-#if !defined( PREFER_ECC_SUITES )
+#endif /* PREFER_ECC */
+	MK_ALGO( PSEUDOALGO_DHE_ALT ), MK_ALGO( PSEUDOALGO_DHE ), CRYPT_ALGO_DH, 
+#if !defined( PREFER_ECC )
 	CRYPT_ALGO_ECDH,
-#endif /* !PREFER_ECC_SUITES */
+#endif /* !PREFER_ECC */
 	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 static const CRYPT_ALGO_TYPE FAR_BSS algoKeyexList[] = {
-	CRYPT_PSEUDOALGO_DHE_ALT, CRYPT_PSEUDOALGO_DHE, CRYPT_ALGO_DH, 
+	MK_ALGO( PSEUDOALGO_DHE_ALT ), MK_ALGO( PSEUDOALGO_DHE ), CRYPT_ALGO_DH, 
 	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 
 static const CRYPT_ALGO_TYPE FAR_BSS algoEncrList[] = {
@@ -77,6 +77,8 @@ static int writeAlgoList( INOUT STREAM *stream,
 	/* Get the list of SSH algorithms and names */
 	status = getAlgoStringInfo( &algoStringInfoTbl, &noAlgoStringInfoEntries );
 	ENSURES( cryptStatusOK( status ) );
+	ENSURES( noAlgoStringInfoEntries > 0 && \
+			 noAlgoStringInfoEntries < FAILSAFE_ITERATIONS_MED );
 
 	/* Walk down the list of algorithms remembering the encoded name of each
 	   one that's available for use */
@@ -90,36 +92,29 @@ static int writeAlgoList( INOUT STREAM *stream,
 		const CRYPT_ALGO_TYPE cryptAlgo = algoList[ algoIndex ];
 		int i;
 
-		/* Make sure that this algorithm is available for use.  If it's a
-		   composite cipher suite then we can't perform the check until
-		   after we've mapped it to the corresponding cryptlib algorithm
-		   values */
+		/* Make sure that this algorithm is available for use */
 		if( !isPseudoAlgo( cryptAlgo ) && !algoAvailable( cryptAlgo ) )
 			continue;
 
-		/* Find the mapping entry for this algorithm or cipher suite */
+		/* Find the mapping entry for this algorithm */
 		for( i = 0; 
 			 algoStringInfoTbl[ i ].algo != CRYPT_ALGO_NONE && \
 				algoStringInfoTbl[ i ].algo != cryptAlgo && \
 				i < noAlgoStringInfoEntries; i++ );
 		ENSURES( i < noAlgoStringInfoEntries );
-		ENSURES( algoStringInfoTbl[ i ].algo != CRYPT_ALGO_NONE && \
-				 noAlgos >= 0 && noAlgos < 16 );
+		ENSURES( algoStringInfoTbl[ i ].algo != CRYPT_ALGO_NONE );
 		algoStringInfo = &algoStringInfoTbl[ i ];
 
-		/* If it's a cipher suite, make sure that the algorithms that it's
-		   made up of are available */
-		if( isPseudoAlgo( cryptAlgo ) )
-			{
-			if( algoStringInfo->checkCryptAlgo != CRYPT_ALGO_NONE && \
-				!algoAvailable( algoStringInfo->checkCryptAlgo ) )
-				continue;
-			if( algoStringInfo->checkHashAlgo != CRYPT_ALGO_NONE && \
-				!algoAvailable( algoStringInfo->checkHashAlgo ) )
-				continue;
-			}
+		/* Make sure that any required sub-algorithms are available */
+		if( algoStringInfo->checkCryptAlgo != CRYPT_ALGO_NONE && \
+			!algoAvailable( algoStringInfo->checkCryptAlgo ) )
+			continue;
+		if( algoStringInfo->checkHashAlgo != CRYPT_ALGO_NONE && \
+			!algoAvailable( algoStringInfo->checkHashAlgo ) )
+			continue;
 
 		/* Remember the algorithm details */
+		REQUIRES( noAlgos >= 0 && noAlgos < 16 );
 		availAlgoIndex[ noAlgos++ ] = i;
 		length += algoStringInfo->nameLen;
 		if( noAlgos > 1 )
@@ -129,7 +124,8 @@ static int writeAlgoList( INOUT STREAM *stream,
 
 	/* Encode the list of available algorithms into a comma-separated string */
 	status = writeUint32( stream, length );
-	for( algoIndex = 0; cryptStatusOK( status ) && algoIndex < noAlgos; 
+	for( algoIndex = 0; cryptStatusOK( status ) && algoIndex < noAlgos && \
+			algoIndex < FAILSAFE_ITERATIONS_MED; 
 		 algoIndex++ )
 		{
 		const ALGO_STRING_INFO *algoStringInfo = \
@@ -140,6 +136,7 @@ static int writeAlgoList( INOUT STREAM *stream,
 		status = swrite( stream, algoStringInfo->name,
 						 algoStringInfo->nameLen );
 		}
+	ENSURES( algoIndex < FAILSAFE_ITERATIONS_MED );
 	return( status );
 	}
 
@@ -277,11 +274,27 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 	streamBookmarkSet( &stream, keyexInfoLength );
 	if( sessionInfoPtr->sessionSSH->packetType == SSH_MSG_KEXDH_GEX_REQUEST_NEW )
 		{
+		int minKeySize;
+
 		/* It's a { min_length, length, max_length } sequence, save a copy
 		   and get the length value */
-		readUint32( &stream );
+		minKeySize = readUint32( &stream );
 		keySize = readUint32( &stream );
 		status = readUint32( &stream );
+
+		/* Some implementations (e.g. OpenSSH >= 6.7) request ridiculous key 
+		   sizes, to deal with this we change the effective key size to 
+		   CRYPT_MAX_PKCSIZE if the client has asked for a key size > 
+		   CRYPT_MAX_PKCSIZE but also specified that they'll accept a 
+		   min_length <= CRYPT_MAX_PKCSIZE */
+		if( cryptStatusOK( status ) && \
+			keySize > bytesToBits( CRYPT_MAX_PKCSIZE ) && \
+			minKeySize <= bytesToBits( CRYPT_MAX_PKCSIZE ) )
+			{
+			DEBUG_PRINT(( "Client requested key size %d...%d bits, using "
+						  "%d bits.\n", minKeySize, keySize ));
+			keySize = bytesToBits( CRYPT_MAX_PKCSIZE );
+			}
 		}
 	else
 		{
@@ -380,8 +393,8 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	sMemConnect( &stream, keyData, msgData.length );
-	readUint32( &stream );
-	status = readUniversal32( &stream );
+	readUint32( &stream );					/* Length */
+	status = readUniversal32( &stream );	/* ID string */
 	ENSURES( cryptStatusOK( status ) );
 	keyDataStart = stell( &stream );
 	keyDataLength = sMemDataLeft( &stream );
@@ -427,31 +440,19 @@ static int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* SSH hashes parts of the handshake messages for integrity-protection
-	   purposes so before we start we hash the ID strings (first the client
-	   string that we read previously, then our server string) encoded as SSH
-	   string values.  In addition since the handshake can retroactively 
-	   switch to a different hash algorithm mid-exchange we have to 
-	   speculatively hash the messages with alternative algorithms in case 
-	   the other side decides to switch */
-	status = hashAsString( handshakeInfo->iExchangeHashContext,
-						   sessionInfoPtr->receiveBuffer,
-						   strlen( sessionInfoPtr->receiveBuffer ) );
-	if( cryptStatusOK( status ) )
-		status = hashAsString( handshakeInfo->iExchangeHashContext, 
-							   SSH2_ID_STRING, SSH_ID_STRING_SIZE );
-	if( cryptStatusOK( status ) && \
-		handshakeInfo->iExchangeHashAltContext != CRYPT_ERROR )
-		{
-		status = hashAsString( handshakeInfo->iExchangeHashAltContext,
-							   sessionInfoPtr->receiveBuffer,
-							   strlen( sessionInfoPtr->receiveBuffer ) );
-		if( cryptStatusOK( status ) )
-			status = hashAsString( handshakeInfo->iExchangeHashAltContext, 
+	/* SSH hashes the handshake ID strings for integrity-protection purposes, 
+	   first the client string that we read previously and then our server 
+	   string */
+	status = hashHandshakeStrings( handshakeInfo, 
+								   sessionInfoPtr->receiveBuffer,
+								   sessionInfoPtr->receiveBufEnd,
 								   SSH2_ID_STRING, SSH_ID_STRING_SIZE );
-		}
 	if( cryptStatusError( status ) )
 		return( status );
+
+	/* Now that we've processed the out-of-band data in the receive buffer, 
+	   mark it as empty */
+	sessionInfoPtr->receiveBufEnd = 0;
 
 	/* Send the server hello packet:
 
@@ -475,10 +476,11 @@ static int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	   shouting at each other and then a complex interlock process where
 	   bits of the initial exchange can be discarded and retried if necessary.
 	   This is ugly and error-prone.  The client code solves this by waiting
-	   for the server hello, choosing known-good algorithms, and then sending
-	   the client hello immediately followed by the client key exchange data.
-	   Since it waits for the server to speak first it can choose parameters
-	   that are accepted the first time.
+	   for the server hello, choosing known-good parameters based on what the
+	   server communicates in its hello message, and then sending the client 
+	   hello immediately followed by the client key exchange data.  Since it 
+	   waits for the server to speak first it can choose parameters that are 
+	   accepted the first time.
 
 	   Unfortunately this doesn't work if we're the server since we'd end up 
 	   waiting for the client to speak first while it waits for us to speak 
@@ -512,7 +514,7 @@ static int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	   OK_SPECIAL to indicate that the next packet should be skipped.  An
 	   alternative (and simpler) strategy would be to always throw away the
 	   client's first keyex sent by older versions of the F-Secure client
-	   since they're using an algorithm choice that's impossible to use but 
+	   since they're using an algorithm choice that's impossible to use, but 
 	   that implementation-specific approach doesn't generalise well to 
 	   other versions or other clients */
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, SSH_MSG_KEXINIT );
@@ -527,7 +529,7 @@ static int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		int pkcAlgo;
 
 		/* If the server key is a non-ECC key then it can't be used with an 
-		   ECC keyex so we have to explicitly disable it (technically it is 
+		   ECC keyex so we have to explicitly disable it (technically it's 
 		   possible to mix ECDH with RSA but this is more likely an error 
 		   than anything deliberate) */
 		status = krnlSendMessage( sessionInfoPtr->privateKey, 
@@ -565,9 +567,11 @@ static int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 								FAILSAFE_ARRAYSIZE( algoMACList, \
 													CRYPT_ALGO_TYPE ) );
 	if( cryptStatusOK( status ) )
-		status = writeAlgoString( &stream, CRYPT_PSEUDOALGO_COPR );
+		status = writeAlgoString( &stream, 
+								  MK_ALGO( PSEUDOALGO_COPR ) );
 	if( cryptStatusOK( status ) )
-		status = writeAlgoString( &stream, CRYPT_PSEUDOALGO_COPR );
+		status = writeAlgoString( &stream, 
+								  MK_ALGO( PSEUDOALGO_COPR ) );
 	if( cryptStatusOK( status ) )
 		{
 		writeUint32( &stream, 0 );			/* No language tag */
@@ -581,12 +585,14 @@ static int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 										 &serverHelloLength, 
 										 serverHelloLength );
 		}
+	INJECT_FAULT( SESSION_CORRUPT_HANDSHAKE, SESSION_CORRUPT_HANDSHAKE_SSH_1 );
 	if( cryptStatusOK( status ) )
 		status = sendPacketSSH2( sessionInfoPtr, &stream, FALSE );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
 	ANALYSER_HINT( serverHelloPtr != NULL );
+	INJECT_FAULT( SESSION_CORRUPT_HANDSHAKE, SESSION_CORRUPT_HANDSHAKE_SSH_2 );
 
 	/* While we wait for the client to digest our hello and send back its
 	   response, create the context with the DH key */
@@ -789,6 +795,7 @@ static int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	streamBookmarkSet( &stream, keyLength );
+	INJECT_FAULT( SESSION_WRONGCERT, SESSION_WRONGCERT_SSH_1 );
 	status = exportAttributeToStream( &stream, sessionInfoPtr->privateKey,
 									  CRYPT_IATTRIBUTE_KEY_SSH );
 	if( cryptStatusOK( status ) )
@@ -802,8 +809,11 @@ static int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		return( status );
 		}
+	INJECT_FAULT( SESSION_WRONGCERT, SESSION_WRONGCERT_SSH_2 );
+	INJECT_FAULT( SESSION_BADSIG_DATA, SESSION_BADSIG_DATA_SSH_1 );
 	swrite( &stream, handshakeInfo->serverKeyexValue,
 			handshakeInfo->serverKeyexValueLength );
+	INJECT_FAULT( SESSION_BADSIG_DATA, SESSION_BADSIG_DATA_SSH_2 );
 
 	/* Complete phase 2 of the DH key agreement process to obtain the shared
 	   secret value */
@@ -876,7 +886,8 @@ static int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int completeServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
-									INOUT SSH_HANDSHAKE_INFO *handshakeInfo )
+									STDC_UNUSED INOUT \
+										SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
 	STREAM stream;
 	BOOLEAN userInfoPresent = FALSE;
@@ -892,8 +903,8 @@ static int completeServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
 		int stringLength;
 
-		/* If the caller has supplied user information to match against we
-		   require a match against the fixed caller-supplied information 
+		/* If the caller has supplied user information to match against then 
+		   we require a match against the fixed caller-supplied information 
 		   rather than accepting what the client sends us and passing it 
 		   back to the caller to check */
 		if( findSessionInfo( sessionInfoPtr->attributeList, 
@@ -930,12 +941,20 @@ static int completeServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		status = readString32( &stream, stringBuffer, CRYPT_MAX_TEXTSIZE,
 							   &stringLength );
 		sMemDisconnect( &stream );
-		if( cryptStatusError( status ) || \
-			stringLength != 12 || memcmp( stringBuffer, "ssh-userauth", 12 ) )
+		if( cryptStatusError( status ) )
 			{
 			retExt( CRYPT_ERROR_BADDATA,
 					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
 					  "Invalid service request packet" ) );
+			}
+		if( stringLength != 12 || \
+			memcmp( stringBuffer, "ssh-userauth", 12 ) )
+			{
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+					  "Invalid service request packet '%s'",
+					  sanitiseString( stringBuffer, CRYPT_MAX_TEXTSIZE, 
+									  stringLength ) ) );
 			}
 		status = openPacketStreamSSH( &stream, sessionInfoPtr, 
 									  SSH_MSG_SERVICE_ACCEPT );
@@ -964,38 +983,8 @@ static int completeServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
 	status = processChannelOpen( sessionInfoPtr, &stream );
 	sMemDisconnect( &stream );
-#if 1
-	return( status );
-#else	/* If we handle the following inline as part of the general read code
-		   it requires that the user try and read some data (with a non-zero
-		   timeout) right after the connect completes.  Because it's awkward
-		   to have to rely on this we provide optional code to explicitly 
-		   clear the pipe here.  This code stops as soon as the first data
-		   channel-opening request is received, with further requests being
-		   handled inline as part of the standard data-read handling.  The
-		   reason why this isn't enabled by default is that it's possible to
-		   encounter a client that doesn't send anything beyond the initial
-		   channel open, which means that we'd hang around waiting for a
-		   control message until we time out */
-	if( cryptStatusError( status ) )
-		return( status );
 
-	/* Process any further junk that the caller may throw at us until we get
-	   a request that we can handle, indicated by an OK_SPECIAL response */
-	do
-		{
-		status = length = \
-			readHSPacketSSH2( sessionInfoPtr, SSH_MSG_SPECIAL_REQUEST, 8 );
-		if( !cryptStatusError( status ) )
-			{
-			sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
-			status = processChannelControlMessage( sessionInfoPtr, &stream );
-			sMemDisconnect( &stream );
-			}
-		}
-	while( cryptStatusOK( status ) );
-	return( ( status == OK_SPECIAL ) ? CRYPT_OK : status );
-#endif /* 1 */
+	return( status );
 	}
 
 /****************************************************************************

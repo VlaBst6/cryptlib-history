@@ -2,7 +2,7 @@
 # *****************************************************************************
 # *                                                                           *
 # *                        cryptlib External API Interface                    *
-# *                       Copyright Peter Gutmann 1997-2012                   *
+# *                       Copyright Peter Gutmann 1997-2014                   *
 # *                                                                           *
 # *                 adapted for Perl Version 5.x  by Alvaro Livraghi          *
 # *****************************************************************************
@@ -12,7 +12,7 @@
 #
 # This file has been created automatically by a perl script from the file:
 #
-# "cryptlib.h" dated Wed Aug 29 15:34:08 2012, filesize = 97645.
+# "cryptlib.h" dated Sat Oct  4 00:33:32 2014, filesize = 98058.
 #
 # Please check twice that the file matches the version of cryptlib.h
 # in your cryptlib source! If this is not the right version, try to download an
@@ -25,7 +25,7 @@
 # -----------------------------------------------------------------------------
 #
 
-	sub CRYPTLIB_VERSION { 3410 }
+	sub CRYPTLIB_VERSION { 3430 }
 
 #  Additional defines for compilers that provide extended function and 
 #  function-parameter checking 
@@ -402,7 +402,7 @@
 	# Internal data buffer size
 	sub CRYPT_ATTRIBUTE_BUFFERSIZE { 16 }
 
-	# User internally
+	# Used internally
 
 	sub CRYPT_GENERIC_LAST { 17 }
 	sub CRYPT_OPTION_FIRST { 100 }
@@ -596,13 +596,9 @@
 	# Certificate object type
 	sub CRYPT_CERTINFO_CERTTYPE { 2004 }
 	# Certificate fingerprints
-	sub CRYPT_CERTINFO_FINGERPRINT { 2005 }
-
 	sub CRYPT_CERTINFO_FINGERPRINT_MD5 { 2005 }
 
 	sub CRYPT_CERTINFO_FINGERPRINT_SHA1 { 2006 }
-
-	sub CRYPT_CERTINFO_FINGERPRINT_SHA { 2006 }
 
 	sub CRYPT_CERTINFO_FINGERPRINT_SHA2 { 2007 }
 
@@ -661,6 +657,8 @@
 	sub CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD { 2032 }
 	# PKI user revocation password
 	sub CRYPT_CERTINFO_PKIUSER_REVPASSWORD { 2033 }
+	# PKI user is an RA
+	sub CRYPT_CERTINFO_PKIUSER_RA { 2034 }
 
 	# X.520 Distinguished Name components.  This is a composite field, the
 	# DN to be manipulated is selected through the addition of a
@@ -1595,7 +1593,7 @@
 	# Server port number
 	sub CRYPT_SESSINFO_SERVER_PORT { 6009 }
 	# Server key fingerprint
-	sub CRYPT_SESSINFO_SERVER_FINGERPRINT { 6010 }
+	sub CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1 { 6010 }
 	# Client name
 	sub CRYPT_SESSINFO_CLIENT_NAME { 6011 }
 	# Client port number
@@ -2036,6 +2034,10 @@
 	sub CRYPT_SSLOPTION_SUITEB_128 { 0x04 }
 # SuiteB security levels 
 	sub CRYPT_SSLOPTION_SUITEB_256 { 0x08 }
+	sub CRYPT_SSLOPTION_DISABLE_NAMEVERIFY { 0x10 }
+# Disable cert hostname check 
+	sub CRYPT_SSLOPTION_DISABLE_CERTVERIFY { 0x20 }
+# Disable certificate check 
 
 #****************************************************************************
 #*                                                                           *
@@ -2047,7 +2049,7 @@
 
 	sub CRYPT_MAX_KEYSIZE { 256 }
 
-# The maximum IV size - 256 bits 
+# The maximum IV/cipher block size - 256 bits 
 
 	sub CRYPT_MAX_IVSIZE { 32 }
 
@@ -2223,7 +2225,7 @@ sub CRYPT_PKCINFO_DLP
 
 	# Named ECC curves.  Since these need to be mapped to all manner of
 	# protocol- and mechanism-specific identifiers, when updating this list
-	# grep for occurrences of CRYPT_ECCCURVE_P256 (the most common one) and
+	# grep for occurrences of the string "P256" (the most common one) and
 	# check whether any related mapping tables need to be updated
 	# No ECC curve type
 	sub CRYPT_ECCCURVE_NONE { 0 }
@@ -2237,8 +2239,14 @@ sub CRYPT_PKCINFO_DLP
 	sub CRYPT_ECCCURVE_P384 { 4 }
 	# NIST P521, SECG p521r1
 	sub CRYPT_ECCCURVE_P521 { 5 }
+	# Brainpool p256r1
+	sub CRYPT_ECCCURVE_BRAINPOOL_P256 { 6 }
+	# Brainpool p384r1
+	sub CRYPT_ECCCURVE_BRAINPOOL_P384 { 7 }
+	# Brainpool p512r1
+	sub CRYPT_ECCCURVE_BRAINPOOL_P512 { 8 }
 	# Last valid ECC curve type
-	sub CRYPT_ECCCURVE_LAST { 6 }
+	sub CRYPT_ECCCURVE_LAST { 9 }
 
 
 ##### END ENUM CRYPT_ECCCURVE_TYPE

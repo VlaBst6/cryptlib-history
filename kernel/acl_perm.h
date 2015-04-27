@@ -151,6 +151,11 @@
   #define MKPERM_INT_CERTIFICATES( perm ) ACCESS_INT_xxx_xxx
   #define MKPERM_SPECIAL_CERTIFICATES( perm ) ACCESS_xxx_xxx
 #endif /* USE_CERTIFICATES */
+#if defined( USE_CERTIFICATES ) || defined( USE_PSEUDOCERTIFICATES )
+  #define MKPERM_ALT_CERTIFICATES( perm ) ACCESS_##perm
+#else
+  #define MKPERM_ALT_CERTIFICATES( perm ) ACCESS_xxx_xxx
+#endif /* USE_CERTIFICATES || USE_PSEUDOCERTIFICATES */
 
 #ifdef USE_CERTREQ
   #define MKPERM_CERTREQ( perm )		ACCESS_##perm
@@ -305,6 +310,14 @@
 #endif /* USE_PGP || USE_PGPKEYS */
 
 /* Keyset ACL macros */
+
+#ifdef USE_PKCS15
+  #define MKPERM_PKCS15( perm )			ACCESS_##perm
+  #define MKPERM_INT_PKCS15( perm )		ACCESS_INT_##perm
+#else
+  #define MKPERM_PKCS15( perm )			ACCESS_xxx_xxx
+  #define MKPERM_INT_PKCS15( perm )		ACCESS_INT_xxx_xxx
+#endif /* USE_PKCS15 */
 
 #ifdef USE_DBMS
   #define MKPERM_DBMS( perm )			ACCESS_##perm

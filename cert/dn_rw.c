@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate DN Read/Write Routines					*
-*						Copyright Peter Gutmann 1996-2008					*
+*						Copyright Peter Gutmann 1996-2013					*
 *																			*
 ****************************************************************************/
 
@@ -130,9 +130,9 @@ static int readAVA( INOUT STREAM *stream,
 	   read the wrapper around the string type with readGenericHole() we have 
 	   to allow a minimum length of zero instead of one because of broken 
 	   AVAs with zero-length strings */
-	tag = peekTag( stream );
-	if( cryptStatusError( tag ) )
-		return( tag );
+	status = tag = peekTag( stream );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( tag == BER_BITSTRING )
 		return( readAVABitstring( stream, length, stringTag ) );
 	*stringTag = tag;
@@ -162,7 +162,14 @@ static int readRDNcomponent( INOUT STREAM *stream,
 	/* Read the type information for this AVA */
 	status = readAVA( stream, &type, &valueLength, &stringTag );
 	if( cryptStatusError( status ) )
+		{
+		/* If this is an unrecognised AVA, don't try and process it (the
+		   content will already have been skipped in readAVA()) */
+		if( status == OK_SPECIAL )
+			return( CRYPT_OK );
+
 		return( status );
+		}
 	if( valueLength <= 0 )
 		{
 		/* Skip broken AVAs with zero-length strings */
@@ -222,7 +229,7 @@ static int readDNComponent( INOUT STREAM *stream,
 
 		status = readRDNcomponent( stream, dnComponentListPtrPtr, 
 								   rdnLength );
-		if( cryptStatusError( status ) && status != OK_SPECIAL )
+		if( cryptStatusError( status ) )
 			return( status );
 
 		rdnLength -= stell( stream ) - rdnStart;
@@ -306,15 +313,6 @@ static int preEncodeDN( INOUT DN_COMPONENT *dnComponentPtr,
 
 	assert( isReadPtr( dnComponentPtr, sizeof( DN_COMPONENT ) ) );
 
-#if 0	/* 18/7/08 Should never happen */
-	/* If we're being fed an entry in the middle of a DN, move back to the
-	   start */
-	for( iterationCount = 0;
-		 dnComponentPtr->prev != NULL && \
-			iterationCount < FAILSAFE_ITERATIONS_MED;
-		 dnComponentPtr = dnComponentPtr->prev, iterationCount++ );
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
-#endif /* 0 */
 	ENSURES( dnComponentPtr->prev == NULL );
 
 	/* Walk down the DN pre-encoding each AVA */
@@ -338,7 +336,7 @@ static int preEncodeDN( INOUT DN_COMPONENT *dnComponentPtr,
 										dnComponentPtr->valueLength,
 										&dnComponentPtr->valueStringType, 
 										&dnComponentPtr->asn1EncodedStringType,
-										&dnStringLength );
+										&dnStringLength, TRUE );
 			if( cryptStatusError( status ) )
 				return( status );
 			dnComponentPtr->encodedAVAdataSize = ( int ) \
@@ -464,22 +462,23 @@ int writeDN( INOUT STREAM *stream,
 *																			*
 ****************************************************************************/
 
-/* Note that the ability to specify free-form DNs means that users can 
-   create arbitrarily garbled and broken DNs (the creation of weird 
-   nonstandard DNs is pretty much the main reason why the DN-string 
-   capability exists).  This includes DNs that can't be easily handled 
-   through normal cryptlib facilities, for example ones where the CN 
-   component consists of illegal characters or is in a form that isn't 
-   usable as a search key for functions like cryptGetPublicKey().  If users
-   want to use this oddball-DN facility it's up to them to make sure that
-   the resulting DN information works with whatever environment they're
-   intending to use it in */
+/* The ability to specify free-form DNs means that users can create 
+   arbitrarily garbled and broken DNs (the creation of weird nonstandard DNs 
+   is pretty much the main reason why the DN-string capability exists).  
+   This includes DNs that can't be easily handled through normal cryptlib 
+   facilities, for example ones where the CN component consists of illegal 
+   characters or is in a form that isn't usable as a search key for 
+   functions like cryptGetPublicKey().  Because of these problems this 
+   functionality is disabled by default, if users want to use this oddball-
+   DN facility it's up to them to make sure that the resulting DN 
+   information works with whatever environment they're intending to use it 
+   in */
 
 #ifdef USE_CERT_DNSTRING 
 
-#if defined( _MSC_VER )
+#if defined( _MSC_VER ) || defined( __GNUC__ )
   #pragma message( "  Building with string-form DNs enabled." )
-#endif /* Warn with VC++ */
+#endif /* Warn about special features enabled */
 
 /* Check whether a string can be represented as a textual DN string */
 
@@ -751,7 +750,8 @@ int readDNstring( INOUT_PTR DN_PTR **dnComponentListPtrPtr,
 			   we care about here is the validity so we ignore the returned 
 			   encoding information */
 			status = getAsn1StringInfo( textBuffer, textIndex, 
-										&valueStringType, &dummy1, &dummy2 );
+										&valueStringType, &dummy1, &dummy2, 
+										FALSE );
 			if( cryptStatusError( status ) )
 				{
 				if( dnComponentPtr != NULL )
@@ -872,12 +872,13 @@ int writeDNstring( INOUT STREAM *stream,
 		   string.  Exactly what we should return if this check fails is a
 		   bit uncertain since there's no error code that it really
 		   corresponds to, CRYPT_ERROR_NOTAVAIL appears to be the least
-		   inappropriate one to use.  An alternative is to return a special-
-		   case string like "(DN can't be represented in string form)" but
-		   this then looks (from the return status) as if it was actually
-		   representable, requiring special-case checks for valid-but-not-
-		   valid returned data, so the error status is probably the best
-		   option */
+		   inappropriate one to use.
+		   
+		   An alternative is to return a special-case string like "(DN 
+		   can't be represented in string form)" but this then looks (from 
+		   the return status) as if it was actually representable, requiring 
+		   special-case checks for valid-but-not-valid returned data, so the 
+		   error status is probably the best option */
 		if( !isTextString( dnComponentPtr->value, 
 						   dnComponentPtr->valueLength ) )
 			return( CRYPT_ERROR_NOTAVAIL );

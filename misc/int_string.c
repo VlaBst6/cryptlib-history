@@ -299,7 +299,9 @@ BOOLEAN strIsPrintable( IN_BUFFER( strLen ) const void *str,
 
 	for( i = 0; i < strLen; i++ )
 		{
-		if( !isPrint( strPtr[ i ] ) )
+		const int ch = byteToInt( strPtr[ i ] );
+
+		if( !isValidTextChar( ch ) )
 			return( FALSE );
 		}
 
@@ -334,10 +336,11 @@ BOOLEAN strIsPrintable( IN_BUFFER( strLen ) const void *str,
    become "Error string [...]" */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-char *sanitiseString( INOUT_BUFFER( strMaxLen, strLen ) BYTE *string, 
+char *sanitiseString( INOUT_BUFFER( strMaxLen, strLen ) void *string, 
 					  IN_LENGTH_SHORT const int strMaxLen, 
 					  IN_LENGTH_SHORT const int strLen )
 	{
+	BYTE *strPtr = string;	/* See comment below */
 	const int strDataLen = min( strLen, strMaxLen );
 	int i;
 
@@ -349,31 +352,34 @@ char *sanitiseString( INOUT_BUFFER( strMaxLen, strLen ) BYTE *string,
 				  "(Internal error)" );
 
 	/* Remove any potentially unsafe characters from the string, effectively
-	   converting it from a 'BYTE *' to a 'char *' */
+	   converting it from a 'BYTE *' to a 'char *'.  This is also the reason
+	   why the function prototype declares it as a 'void *', if it's declared
+	   as a 'BYTE *' then the conversion process gives compilers and static
+	   analysers headaches */
 	for( i = 0; i < strDataLen; i++ )
 		{
-		const int ch = byteToInt( string[ i ] );
+		const int ch = byteToInt( strPtr[ i ] );
 
-		if( ch <= 0 || ch > 0x7F || !isPrint( ch ) )
-			string[ i ] = '.';
+		if( !isValidTextChar( ch ) )
+			strPtr[ i ] = '.';
 		}
 
 	/* If there was more input than we could fit into the buffer and 
 	   there's room for a continuation indicator, add this to the output 
 	   string */
 	if( ( strLen > strMaxLen ) && ( strMaxLen > 8 ) )
-		memcpy( string + strMaxLen - 6, "[...]", 5 );	/* Extra -1 for '\0' */
+		memcpy( strPtr + strMaxLen - 6, "[...]", 5 );	/* Extra -1 for '\0' */
 
 	/* Terminate the string to allow it to be used in printf()-style
 	   functions */
 	if( strLen < strMaxLen )
-		string[ strLen ] = '\0';
+		strPtr[ strLen ] = '\0';
 	else
-		string[ strMaxLen - 1 ] = '\0';
+		strPtr[ strMaxLen - 1 ] = '\0';
 
 	/* We've converted the string from BYTE * to char * so it can be 
 	   returned as a standard text string */
-	return( ( char * ) string );
+	return( ( char * ) strPtr );
 	}
 
 /****************************************************************************

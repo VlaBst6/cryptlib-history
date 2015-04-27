@@ -95,7 +95,7 @@ static int loadPrivateKeyContext( CRYPT_CONTEXT *cryptContext,
 			return( loadElgamalContexts( NULL, cryptContext ) );
 
 		case CRYPT_ALGO_ECDSA:
-			return( loadECDSAContexts( NULL, cryptContext ) );
+			return( loadECDSAContexts( CRYPT_UNUSED, NULL, cryptContext ) );
 		}
 
 	printf( "Algorithm %d not available, line %d.\n", cryptAlgo, __LINE__ );
@@ -118,6 +118,22 @@ static int checkCertPresence( const CRYPT_HANDLE cryptHandle,
 		printf( "Returned object isn't a %s, line %d.\n", certTypeName, 
 				__LINE__ );
 		return( FALSE );
+		}
+
+	/* The test that follows requires an encryption-capable algorithm, if 
+	   the algorithm can't be used for encryption then we skip it */
+	status = cryptGetAttribute( cryptHandle, CRYPT_CTXINFO_ALGO, &value );
+	if( cryptStatusError( status ) )
+		{
+		printf( "Couldn't read algorithm from certificate, line %d.\n", 
+				__LINE__ );
+		return( FALSE );
+		}
+	if( value != CRYPT_ALGO_RSA )
+		{
+		puts( "(Skipping certificate use test since algorithm can't be used "
+			  "for encryption)." );
+		return( TRUE );
 		}
 
 	/* Make sure that we can't use the read key (the certificate constrains 
@@ -395,7 +411,12 @@ int testGetPGPPrivateKey( void )
 		return( FALSE );
 
 	/* OpenPGP file, RSA with IDEA, sec_nai.skr */
-	return( getPGPPrivateKey( KEYFILE_NAIPGP, "OpenPGP (NAI)" ) );
+	if( !getPGPPrivateKey( KEYFILE_NAIPGP, "OpenPGP (NAI)" ) )
+		return( FALSE );
+
+	/* OpenPGP, RSA p and q swapped, sec_bc.gpg.  Create using 
+	   BouncyCastle */
+	return( getPGPPrivateKey( KEYFILE_OPENPGP_BOUNCYCASTLE, "OpenPGP (RSA p,q swapped)" ) );
 	}
 
 /* Get a key from a PKCS #12 file.  Because of the security problems
@@ -430,11 +451,16 @@ static int borkenKeyImport( const int fileNo )
 			RC2/40, then privKey with ID data and 3DES.  Unlike keyset #4
 			the ID data doesn't include a userID, so we again have to resort
 			to "[none]" to read it.
-		Keyset $6 = Unknown source, from some CA that generates the private 
+		Keyset #6 = Unknown source, from some CA that generates the private 
 			key for you rather than allowing you to generate it.  Contains 
 			mostly indefinite-length encodings of data, currently not 
 			readable, see the comments in keyset/pkcs12_rd.c for more 
-			details */
+			details.
+		Keyset #7 = Nexus 4 phone, DSA cert and private key.
+		Keyset #8 = EJBCA, ECDSA cert and private key in no documented format
+			(the code reads it from reverse-engineering the DER dump).
+		Keyset #9 = Windows, ECDSA cert and private key, as above, created
+			by importing and exporting Keyset #8 to/from Windows */
 	switch( fileNo )
 		{
 		case 1:
@@ -465,7 +491,24 @@ static int borkenKeyImport( const int fileNo )
 		case 6:
 			userID = TEXT( "SignLabel" );
 			password = TEXT( "vpsign" );
-			/* Drop through */
+
+			/* See comment above */
+			return( TRUE );
+
+		case 7:
+			userID = TEXT( "ClientDSA" );
+			password = TEXT( "nexus4" );
+			break;
+
+		case 8:
+			userID = TEXT( "CMG" );
+			password = TEXT( "skylight" );
+			break;
+
+		case 9:
+			userID = TEXT( "[none]" );		/* Label = GUID */
+			password = TEXT( "test" );
+			break;
 
 		default:
 			assert( 0 );
@@ -552,7 +595,7 @@ int testReadAltFileKey( void )
 	{
 	int i;
 
-	for( i = 1; i <= 5; i++ )
+	for( i = 1; i <= 9; i++ )
 		{
 		if( !borkenKeyImport( i ) )
 			return( FALSE );
@@ -636,6 +679,7 @@ static int readFileKey( const CRYPT_ALGO_TYPE cryptAlgo,
 	}
 
 static int writeFileKey( const CRYPT_ALGO_TYPE cryptAlgo, 
+						 const BOOLEAN createFile,
 						 const BOOLEAN useAltKeyFile,
 						 const BOOLEAN generateKey )
 	{
@@ -671,8 +715,7 @@ static int writeFileKey( const CRYPT_ALGO_TYPE cryptAlgo,
 	   a new keyset, for subsequent calls we update the existing keyset */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 					useAltKeyFile ? TEST_PRIVKEY_ALT_FILE : TEST_PRIVKEY_FILE,
-					( cryptAlgo == CRYPT_ALGO_RSA ) ? CRYPT_KEYOPT_CREATE : \
-													  CRYPT_KEYOPT_NONE );
+					createFile ? CRYPT_KEYOPT_CREATE : CRYPT_KEYOPT_NONE );
 	if( cryptStatusError( status ) )
 		{
 		cryptDestroyContext( privateKeyContext );
@@ -716,24 +759,24 @@ static int writeFileKey( const CRYPT_ALGO_TYPE cryptAlgo,
 
 int testReadWriteFileKey( void )
 	{
-	if( !writeFileKey( CRYPT_ALGO_RSA, FALSE, FALSE ) )
+	if( !writeFileKey( CRYPT_ALGO_RSA, TRUE, FALSE, FALSE ) )
 		return( FALSE );
 	if( !readFileKey( CRYPT_ALGO_RSA, FALSE, FALSE ) )
 		return( FALSE );
 	if( !readFileKey( CRYPT_ALGO_RSA, FALSE, TRUE ) )
 		return( FALSE );
-	if( !writeFileKey( CRYPT_ALGO_DSA, FALSE, FALSE ) )
+	if( !writeFileKey( CRYPT_ALGO_DSA, FALSE, FALSE, FALSE ) )
 		return( FALSE );
 	if( !readFileKey( CRYPT_ALGO_DSA, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
-		!writeFileKey( CRYPT_ALGO_ELGAMAL, FALSE, FALSE ) )
+		!writeFileKey( CRYPT_ALGO_ELGAMAL, FALSE, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
 		!readFileKey( CRYPT_ALGO_ELGAMAL, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
-		!writeFileKey( CRYPT_ALGO_ECDSA, FALSE, FALSE ) )
+		!writeFileKey( CRYPT_ALGO_ECDSA, FALSE, FALSE, FALSE ) )
 		return( FALSE );
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
 		!readFileKey( CRYPT_ALGO_ECDSA, FALSE, FALSE ) )
@@ -743,7 +786,7 @@ int testReadWriteFileKey( void )
 
 int testReadWriteAltFileKey( void )
 	{
-	if( !writeFileKey( CRYPT_ALGO_RSA, TRUE, FALSE ) )
+	if( !writeFileKey( CRYPT_ALGO_RSA, TRUE, TRUE, FALSE ) )
 		return( FALSE );
 	return( readFileKey( CRYPT_ALGO_RSA, TRUE, FALSE ) );
 	}
@@ -1590,7 +1633,7 @@ static int writeSingleStepFileCert( const CRYPT_ALGO_TYPE cryptAlgo,
 	status = cryptAddPublicKey( cryptKeyset, cryptCert );
 	if( cryptStatusError( status ) )
 		{
-		printExtError( cryptKeyset, "cryptAddPrivateKey()", status, 
+		printExtError( cryptKeyset, "cryptAddPublic/PrivateKey()", status, 
 					   __LINE__ );
 		return( FALSE );
 		}
@@ -2140,7 +2183,6 @@ int testRenewedCertFile( void )
 int testReadMiscFile( void )
 	{
 	CRYPT_KEYSET cryptKeyset;
-/*	CRYPT_CONTEXT cryptContext; */
 	BYTE filenameBuffer[ FILENAME_BUFFER_SIZE ];
 #ifdef UNICODE_STRINGS
 	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
@@ -2222,6 +2264,8 @@ void xxxPubKeyRead( const char *fileName, const char *keyName )
 *																			*
 ****************************************************************************/
 
+#if 1
+
 /* Generate test keys for CA and security protocol use.  This enables 
    various special-case extensions such as extKeyUsages or protocol-specific 
    AIA entries, as well as using a validity period of 5 years instead of the 
@@ -2236,15 +2280,30 @@ void xxxPubKeyRead( const char *fileName, const char *keyName )
 	SCEPCA_PRIVKEY_FILE	ca_scep.p15		SCEP CA key + root CA cert, SCEP CA
 										keyUsage allows encryption + signing.
 		SCEP_CA_FILE	scep_ca1.der	Written as side-effect of the above.
-	SERVER_PRIVKEY_FILE	server.p15		SSL server key + root CA cert, server
+	SERVER_PRIVKEY_FILE	server1.p15		SSL server key + root CA cert, server
 										cert has CN = localhost, OCSP AIA.
+	SERVER_PRIVKEY_FILE	server2.p15		As server2.p15 but with a different 
+										key, used to check that use of the
+										wrong key is detected.
 	SSH_PRIVKEY_FILE	ssh1.p15		Raw SSHv1 RSA key.
 	SSH_PRIVKEY_FILE	ssh2.p15		Raw SSHv2 DSA key.
 	SSH_PRIVKEY_FILE	ssh3.p15		Raw SSHv2 ECDSA key.
 	TSA_PRIVKEY_FILE	tsa.p15			TSA server key + root CA cert, TSA 
 										cert has TSP extKeyUsage.
-	USER_PRIVKEY_FILE	user.p15		User key + root CA cert, user cert 
+	USER_PRIVKEY_FILE	user1.p15		User key + root CA cert, user cert 
 										has email address.
+	USER_PRIVKEY_FILE	user2.p15		(Via template): User key using SHA256 
+										+ root CA cert, user cert has email 
+										address.  Used to test auto-upgrade 
+										of enveloping algos to SHA256.
+										Note that since 3.4.3 the default 
+										algorithm is now SHA256 anyway so 
+										this test is a no-op, but the 
+										functionality is left in place to 
+										test future upgrades to new hash 
+										algorithms.
+	USER_PRIVKEY_FILE	user3.p15		(Via template): User key + 
+										intermediate CA cert + root CA cert.
 										
 										(OCSP_CA_FILE is written by the
 										testCertManagement() code).
@@ -2262,7 +2321,71 @@ void xxxPubKeyRead( const char *fileName, const char *keyName )
 										newer one in testRenewedCertFile().
 	TEST_PRIVKEY_FILE	test.p15		Generic test key file */
 
-#if 0
+static const CERT_DATA FAR_BSS serverCertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Server cert" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "localhost" ) },
+
+	/* Add an OCSP AIA entry */
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_AUTHORITYINFO_OCSP },
+	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://localhost" ) },
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static const CERT_DATA FAR_BSS iCACertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Intermediate CA cert" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's Spare CA" ) },
+
+	/* Set the CA key usage extensions */
+	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
+	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN },
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static const CERT_DATA FAR_BSS scepCACertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "SCEP CA cert" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's SCEP CA" ) },
+
+	/* Set the CA as well as generic sign+encrypt key usage extensions */
+	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
+	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN | \
+										   CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
+										   CRYPT_KEYUSAGE_KEYENCIPHERMENT },
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static const CERT_DATA FAR_BSS tsaCertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "TSA Cert" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's TSA" ) },
+
+	/* Set the TSP extended key usage */
+	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_DIGITALSIGNATURE },
+	{ CRYPT_CERTINFO_EXTKEY_TIMESTAMPING, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static const CERT_DATA FAR_BSS userCertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave Smith" ) },
+	{ CRYPT_CERTINFO_EMAIL, IS_STRING, 0, TEXT( "dave@wetaburgers.com" ) },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },	/* Re-select subject DN */
+
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
 
 /* Create a standalone private key + certificate */
 
@@ -2390,81 +2513,241 @@ static int createSSHKeyFile( const int keyNo )
 	return( CRYPT_OK );
 	}
 
-/* Create a private key + certificate + CA certificate */
+/* Create a pseudo-certificate file, used to test embedded versions of 
+   cryptlib running an SSL/TLS server when it's built with 
+   CONFIG_NO_CERTIFICATES */
 
-static const CERT_DATA FAR_BSS serverCertRequestData[] = {
-	/* Identification information */
-	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Server cert" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "localhost" ) },
+static int createPseudoCertificateFile( void )
+	{
+	CRYPT_CONTEXT cryptContext, cryptCAKey;
+	CRYPT_CERTIFICATE cryptCertChain;
+	FILE *filePtr;
+	BYTE certBuffer[ BUFFER_SIZE ], *certBufPtr = certBuffer;
+	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+	int certBufSize = BUFFER_SIZE, status;
 
-	/* Add an OCSP AIA entry */
-	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_AUTHORITYINFO_OCSP },
-	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://localhost" ) },
-	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	/* Load a fixed RSA private key */
+	if( !loadRSAContexts( CRYPT_UNUSED, NULL, &cryptContext ) )
+		return( CRYPT_ERROR_NOTAVAIL );
+
+	/* Get the CA's private key */
+	status = getPrivateKey( &cryptCAKey, ICA_PRIVKEY_FILE,
+							USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Create the certificate chain for the SSL server key */
+	status = cryptCreateCert( &cryptCertChain, CRYPT_UNUSED,
+							  CRYPT_CERTTYPE_CERTCHAIN );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttribute( cryptCertChain,
+							CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
+	cryptDestroyContext( cryptContext );
+	if( cryptStatusOK( status ) && \
+		!addCertFields( cryptCertChain, serverCertRequestData, __LINE__ ) )
+		return( CRYPT_ERROR_FAILED );
+	if( cryptStatusOK( status ) )
+		status = cryptSignCert( cryptCertChain, cryptCAKey );
+	cryptDestroyContext( cryptCAKey );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Export the chain as an SSL certificate chain.  We can't use 
+	   CRYPT_IFORMAT_SSL for this since it's is a cryptlib-internal format,
+	   so we have to manually assemble the SSL chain ourselves */
+	status = cryptSetAttribute( cryptCertChain, 
+								CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+								CRYPT_CURSOR_FIRST );
+	if( cryptStatusError( status ) )
+		return( status );
+	do
+		{
+		int length;
+
+		/* Export the certificate, leaving room for the 24-bit length at the
+		   start */
+		status = cryptExportCert( certBufPtr + 3, certBufSize - 3, &length, 
+								  CRYPT_CERTFORMAT_CERTIFICATE, 
+								  cryptCertChain );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		/* Add in the 24-bit length required by SSL/TLS */
+		certBufPtr[ 0 ] = 0;
+		certBufPtr[ 1 ] = ( length >> 8 );
+		certBufPtr[ 2 ] = ( length & 0xFF );
+		certBufPtr += 3 + length;
+		certBufSize -= 3 + length;
+		}
+	while( cryptSetAttribute( cryptCertChain,
+							  CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+							  CRYPT_CURSOR_NEXT ) == CRYPT_OK );
+	cryptDestroyCert( cryptCertChain );
+
+	/* Write the SSL-format certificate chain to disk */
+	filenameFromTemplate( filenameBuffer, PSEUDOCERT_FILE_TEMPLATE, 1 );
+	if( ( filePtr = fopen( filenameBuffer, "wb" ) ) != NULL )
+		{
+		const int length = BUFFER_SIZE - certBufSize;
+		int count;
+
+		count = fwrite( certBuffer, 1, length, filePtr );
+		fclose( filePtr );
+		if( count < length )
+			{
+			remove( filenameBuffer );
+			puts( "Warning: Couldn't save SSL chain to disk, "
+				  "this will cause later\n         tests to fail.  "
+				  "Press a key to continue." );
+			getchar();
+			}
+		}
+
+	return( CRYPT_OK );
+	}
+
+/* Build a certificate chain without the root certificate.  This gets quite 
+   complicated to do, we can't just delete the root with:
+
+	cryptSetAttribute( certificate, CRYPT_CERTINFO_CURRENT_CERTIFICATE, 
+					   CRYPT_CURSOR_FIRST );
+	cryptDeleteAttribute( certificate, CRYPT_CERTINFO_CURRENT_CERTIFICATE );
+
+   because the chain is locked against updates, and we can't use a 
+   temporary keyset file to assemble the chain via:
+
+	cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
+					 TEST_PRIVKEY_FILE, CRYPT_KEYOPT_CREATE );
+	cryptSetAttribute( certChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE, 
+					   CRYPT_CURSOR_FIRST );
+	cryptExportCert( buffer, BUFFER_SIZE, &certSize, 
+					 CRYPT_CERTFORMAT_CERTIFICATE, certChain );
+	cryptImportCert( buffer, certSize, CRYPT_UNUSED, &certificate );
+	cryptSetAttribute( certificate, CRYPT_CERTINFO_TRUSTED_IMPLICIT, TRUE );
+	cryptAddPublicKey( cryptKeyset, certificate );
+	cryptSetAttribute( certChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE, 
+					   CRYPT_CURSOR_NEXT );
+	cryptExportCert( buffer, BUFFER_SIZE, &certSize, 
+					 CRYPT_CERTFORMAT_CERTIFICATE, certChain );
+	cryptImportCert( buffer, certSize, CRYPT_UNUSED, &certificate );
+	cryptSetAttribute( certificate, CRYPT_CERTINFO_TRUSTED_IMPLICIT, TRUE );
+	cryptAddPublicKey( cryptKeyset, certificate );
+	cryptKeysetClose( cryptKeyset );
+	cryptDestroyCert( certificate );
+
+   because the leaf certificate is an EE certificate and therefore can't be 
+   made explicitly trusted.  Because of this we have to create a pesudo-
+   encoding of a certificate chain by copying a fixed-size indefinite-length-
+   encoding header into a buffer:
+
+	   0 NDEF: SEQUENCE {
+	   2    9:   OBJECT IDENTIFIER signedData (1 2 840 113549 1 7 2)
+	  13 NDEF:   [0] {
+	  15 NDEF:     SEQUENCE {
+	  17    1:       INTEGER 1
+	  20   11:       SET {
+	  22    9:         SEQUENCE {
+	  24    5:           OBJECT IDENTIFIER sha1 (1 3 14 3 2 26)
+	  31    0:           NULL
+	         :           }
+	         :         }
+	  33   11:       SEQUENCE {
+	  35    9:         OBJECT IDENTIFIER data (1 2 840 113549 1 7 1)
+	         :         }
+	  46 NDEF:       [0] {
+   
+   and then appending the certificates to it, which on import becomes a 
+   canonicalised certificate chain */
+
+static BYTE certChainHeader[] = { \
+	0x30, 0x80, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 
+	0xF7, 0x0D, 0x01, 0x07, 0x02, 0xA0, 0x80, 0x30,
+	0x80, 0x02, 0x01, 0x01, 0x31, 0x0B, 0x30, 0x09, 
+	0x06, 0x05, 0x2B, 0x0E, 0x03, 0x02, 0x1A, 0x05,
+	0x00, 0x30, 0x0B, 0x06, 0x09, 0x2A, 0x86, 0x48, 
+	0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01, 0xA0, 0x80
 	};
 
-static const CERT_DATA FAR_BSS iCACertRequestData[] = {
-	/* Identification information */
-	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Intermediate CA cert" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's Spare CA" ) },
+static int writeCertChainNoRoot( void )
+	{
+	CRYPT_CERTIFICATE certChain;
+	FILE *filePtr;
+	BYTE buffer[ BUFFER_SIZE ];
+	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+	int bufPos, certSize, status;
 
-	/* Set the CA key usage extensions */
-	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
-	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN },
-	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
-	};
+	/* Get the complete certificate chain */
+	filenameFromTemplate( filenameBuffer, USER_PRIVKEY_FILE_TEMPLATE, 3 );
+	status = getPublicKey( &certChain, filenameBuffer, USER_PRIVKEY_LABEL );
+	if( cryptStatusError( status ) )
+		return( status );
 
-static const CERT_DATA FAR_BSS scepCACertRequestData[] = {
-	/* Identification information */
-	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "SCEP CA cert" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's SCEP CA" ) },
+	/* Export the required individual certificates from the chain and write
+	   them into a new pseudo-chain that we can import */
+	memcpy( buffer, certChainHeader, 48 );
+	bufPos = 48;
+	cryptSetAttribute( certChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE, 
+					   CRYPT_CURSOR_FIRST );
+	status = cryptExportCert( buffer + bufPos, BUFFER_SIZE - bufPos, 
+							  &certSize, CRYPT_CERTFORMAT_CERTIFICATE, 
+							  certChain );
+	if( cryptStatusOK( status ) )
+		{
+		bufPos += certSize;
+		cryptSetAttribute( certChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE, 
+						   CRYPT_CURSOR_NEXT );
+		status = cryptExportCert( buffer + bufPos, BUFFER_SIZE - bufPos, 
+								  &certSize, CRYPT_CERTFORMAT_CERTIFICATE, 
+								  certChain );
+		}
+	if( cryptStatusOK( status ) )
+		{
+		/* Add the 2-byte EOCs */
+		bufPos += certSize;
+		memset( buffer + bufPos, 0, 4 * 2 );
+		bufPos += 4 * 2;
+		}
+	cryptDestroyCert( certChain );
+	if( cryptStatusError( status ) )
+		return( status );
 
-	/* Set the CA as well as generic sign+encrypt key usage extensions */
-	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
-	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN | \
-										   CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-										   CRYPT_KEYUSAGE_KEYENCIPHERMENT },
-	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
-	};
+	/* Import the data as a new certificate chain, re-export it to 
+	   canonicalise it, and finally write the results to the output file */
+	status = cryptImportCert( buffer, bufPos, CRYPT_UNUSED, &certChain );
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptExportCert( buffer, BUFFER_SIZE, &certSize, 
+								  CRYPT_CERTFORMAT_CERTCHAIN, certChain );
+		}
+	cryptDestroyCert( certChain );
+	if( cryptStatusError( status ) )
+		return( status );
+	filenameFromTemplate( filenameBuffer, CHAINTEST_FILE_TEMPLATE, 
+						  CHAINTEST_CHAIN_NOROOT );
+	if( ( filePtr = fopen( filenameBuffer, "wb" ) ) != NULL )
+		{
+		int count;
 
-static const CERT_DATA FAR_BSS tsaCertRequestData[] = {
-	/* Identification information */
-	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "TSA Cert" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's TSA" ) },
+		count = fwrite( buffer, 1, certSize, filePtr );
+		fclose( filePtr );
+		if( count < certSize )
+			{
+			remove( filenameBuffer );
+			puts( "Warning: Couldn't save certificate chain to disk, "
+				  "this will cause later\n         tests to fail.  "
+				  "Press a key to continue." );
+			getchar();
+			}
+		}
 
-	/* Set the TSP extended key usage */
-	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_DIGITALSIGNATURE },
-	{ CRYPT_CERTINFO_EXTKEY_TIMESTAMPING, IS_NUMERIC, CRYPT_UNUSED },
-	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
-	};
+	return( CRYPT_OK );
+	}
 
-static const CERT_DATA FAR_BSS userCertRequestData[] = {
-	/* Identification information */
-	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave Smith" ) },
-	{ CRYPT_CERTINFO_EMAIL, IS_STRING, 0, TEXT( "dave@wetaburgers.com" ) },
-	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },	/* Re-select subject DN */
-
-	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
-	};
+/* Create the cryptlib test keys */
 
 int createTestKeys( void )
 	{
 	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
-#ifdef UNICODE_STRINGS
-	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
-#endif /* UNICODE_STRINGS */
-	void *fileNamePtr = filenameBuffer;
 	int status;
 
 	puts( "Creating custom key files and associated certificate files..." );
@@ -2481,78 +2764,72 @@ int createTestKeys( void )
 	status = createCAKeyFile();
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nSSH RSA server key..." );
+		printf( "done.\nSSH RSA server key... " );
 		status = createSSHKeyFile( 1 );
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nSSH DSA server key..." );
+		printf( "done.\nSSH DSA server key... " );
 		status = createSSHKeyFile( 2 );
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nSSH ECC server key..." );
+		printf( "done.\nSSH ECC server key... " );
 		status = createSSHKeyFile( 3 );
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nSSL/TLS RSA server key..." );
+		printf( "done.\nSSL/TLS RSA server key... " );
 
 		filenameFromTemplate( filenameBuffer, SERVER_PRIVKEY_FILE_TEMPLATE, 1 );
-#ifdef UNICODE_STRINGS
-		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
-		fileNamePtr = wcBuffer;
-#endif /* UNICODE_STRINGS */
-		if( !writeFileCertChain( serverCertRequestData, fileNamePtr,
+		if( !writeFileCertChain( serverCertRequestData, filenameBuffer,
 								 NULL, FALSE, FALSE, CRYPT_ALGO_RSA, 
 								 CRYPT_USE_DEFAULT ) )
 			status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nSSL/TLS ECC P256 server key..." );
+		printf( "done.\nSSL/TLS RSA alternative server key... " );
+
+		filenameFromTemplate( filenameBuffer, SERVER_PRIVKEY_FILE_TEMPLATE, 2 );
+		if( !writeFileCertChain( serverCertRequestData, filenameBuffer,
+								 NULL, FALSE, FALSE, CRYPT_ALGO_RSA, 
+								 CRYPT_USE_DEFAULT ) )
+			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nSSL/TLS ECC P256 server key... " );
 
 		filenameFromTemplate( filenameBuffer, SERVER_ECPRIVKEY_FILE_TEMPLATE, 256 );
-#ifdef UNICODE_STRINGS
-		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
-		fileNamePtr = wcBuffer;
-#endif /* UNICODE_STRINGS */
-		if( !writeFileCertChain( serverCertRequestData, fileNamePtr,
+		if( !writeFileCertChain( serverCertRequestData, filenameBuffer,
 								 NULL, FALSE, FALSE, CRYPT_ALGO_ECDSA,
 								 CRYPT_USE_DEFAULT ) )
 			status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nSSL/TLS ECC P384 server key..." );
+		printf( "done.\nSSL/TLS ECC P384 server key... " );
 
 		filenameFromTemplate( filenameBuffer, SERVER_ECPRIVKEY_FILE_TEMPLATE, 384 );
-#ifdef UNICODE_STRINGS
-		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
-		fileNamePtr = wcBuffer;
-#endif /* UNICODE_STRINGS */
-		if( !writeFileCertChain( serverCertRequestData, fileNamePtr,
+		if( !writeFileCertChain( serverCertRequestData, filenameBuffer,
 								 NULL, FALSE, FALSE, CRYPT_ALGO_ECDSA,
 								 48 /* P384 */ ) )
 			status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nSSL/TLS ECC P521 server key..." );
+		printf( "done.\nSSL/TLS ECC P521 server key... " );
 
 		filenameFromTemplate( filenameBuffer, SERVER_ECPRIVKEY_FILE_TEMPLATE, 521 );
-#ifdef UNICODE_STRINGS
-		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
-		fileNamePtr = wcBuffer;
-#endif /* UNICODE_STRINGS */
-		if( !writeFileCertChain( serverCertRequestData, fileNamePtr,
+		if( !writeFileCertChain( serverCertRequestData, filenameBuffer,
 								 NULL, FALSE, FALSE, CRYPT_ALGO_ECDSA,
 								 66 /* P521 */ ) )
 			status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nIntermediate CA key..." );
+		printf( "done.\nIntermediate CA key... " );
 		if( !writeFileCertChain( iCACertRequestData, ICA_PRIVKEY_FILE,
 								 NULL, FALSE, FALSE, CRYPT_ALGO_RSA,
 								 CRYPT_USE_DEFAULT ) )
@@ -2560,20 +2837,16 @@ int createTestKeys( void )
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nSCEP CA key + SCEP request certificate..." );
+		printf( "done.\nSCEP CA key + SCEP request certificate... " );
 		filenameFromTemplate( filenameBuffer, SCEP_CA_FILE_TEMPLATE, 1 );
-#ifdef UNICODE_STRINGS
-		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
-		fileNamePtr = wcBuffer;
-#endif /* UNICODE_STRINGS */
 		if( !writeFileCertChain( scepCACertRequestData, SCEPCA_PRIVKEY_FILE,
-								 fileNamePtr, FALSE, FALSE, CRYPT_ALGO_RSA,
+								 filenameBuffer, FALSE, FALSE, CRYPT_ALGO_RSA,
 								 CRYPT_USE_DEFAULT ) )
 			status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nTSA key..." );
+		printf( "done.\nTSA key... " );
 		if( !writeFileCertChain( tsaCertRequestData, TSA_PRIVKEY_FILE,
 								 NULL, FALSE, FALSE, CRYPT_ALGO_RSA,
 								 CRYPT_USE_DEFAULT ) )
@@ -2581,11 +2854,130 @@ int createTestKeys( void )
 		}
 	if( cryptStatusOK( status ) )
 		{
-		printf( "done.\nUser key..." );
-		if( !writeFileCertChain( userCertRequestData, USER_PRIVKEY_FILE,
+		printf( "done.\nUser key... " );
+		filenameFromTemplate( filenameBuffer, USER_PRIVKEY_FILE_TEMPLATE, 1 );
+		if( !writeFileCertChain( userCertRequestData, filenameBuffer,
 								 NULL, FALSE, FALSE, CRYPT_ALGO_RSA,
 								 CRYPT_USE_DEFAULT ) )
 			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		int hashAlgo;
+
+		/* The following is currently redundant since the default hash is 
+		   SHA-256 anyway, see the comment with the filenames above for 
+		   details */
+		printf( "done.\nUser key using SHA256... " );
+		filenameFromTemplate( filenameBuffer, USER_PRIVKEY_FILE_TEMPLATE, 2 );
+		cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, 
+						   &hashAlgo );
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, 
+						   CRYPT_ALGO_SHA2 );
+		if( !writeFileCertChain( userCertRequestData, filenameBuffer,
+								 NULL, FALSE, FALSE, CRYPT_ALGO_RSA,
+								 CRYPT_USE_DEFAULT ) )
+			status = CRYPT_ERROR_FAILED;
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, 
+						   hashAlgo );
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nUser key (long chain)... " );
+		filenameFromTemplate( filenameBuffer, USER_PRIVKEY_FILE_TEMPLATE, 3 );
+		if( !writeFileCertChain( userCertRequestData, filenameBuffer,
+								 NULL, FALSE, TRUE, CRYPT_ALGO_RSA,
+								 CRYPT_USE_DEFAULT ) )
+			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		CRYPT_CERTIFICATE certificate;
+
+		printf( "done.\nCertificate chain test data... " );
+
+		/* Leaf certificate */
+		filenameFromTemplate( filenameBuffer, USER_PRIVKEY_FILE_TEMPLATE, 3 );
+		status = getPublicKey( &certificate, filenameBuffer, 
+							   USER_PRIVKEY_LABEL );
+		if( cryptStatusOK( status ) )
+			{
+			filenameFromTemplate( filenameBuffer, CHAINTEST_FILE_TEMPLATE, 
+								  CHAINTEST_LEAF );
+			status = exportCertFile( filenameBuffer, certificate, 
+									 CRYPT_CERTFORMAT_CERTIFICATE );
+			cryptDestroyCert( certificate );
+			}
+
+		/* Issuer (= intermediate CA) certificate */
+		if( cryptStatusOK( status ) )
+			{
+			status = getPublicKey( &certificate, ICA_PRIVKEY_FILE, 
+								   USER_PRIVKEY_LABEL );
+			}
+		if( cryptStatusOK( status ) )
+			{
+			filenameFromTemplate( filenameBuffer, CHAINTEST_FILE_TEMPLATE, 
+								  CHAINTEST_ISSUER );
+			status = exportCertFile( filenameBuffer, certificate, 
+									 CRYPT_CERTFORMAT_CERTIFICATE );
+			cryptDestroyCert( certificate );
+			}
+
+		/* Root certificate */
+		if( cryptStatusOK( status ) )
+			{
+			status = getPublicKey( &certificate, CA_PRIVKEY_FILE, 
+								   CA_PRIVKEY_LABEL );
+			}
+		if( cryptStatusOK( status ) )
+			{
+			filenameFromTemplate( filenameBuffer, CHAINTEST_FILE_TEMPLATE, 
+								  CHAINTEST_ROOT );
+			status = exportCertFile( filenameBuffer, certificate, 
+									 CRYPT_CERTFORMAT_CERTIFICATE );
+			cryptDestroyCert( certificate );
+			}
+
+		/* Full certificate chain */
+		if( cryptStatusOK( status ) )
+			{
+			filenameFromTemplate( filenameBuffer, USER_PRIVKEY_FILE_TEMPLATE, 3 );
+			status = getPublicKey( &certificate, filenameBuffer, 
+								   USER_PRIVKEY_LABEL );
+			}
+		if( cryptStatusOK( status ) )
+			{
+			filenameFromTemplate( filenameBuffer, CHAINTEST_FILE_TEMPLATE, 
+								  CHAINTEST_CHAIN );
+			status = exportCertFile( filenameBuffer, certificate, 
+									 CRYPT_CERTFORMAT_CERTCHAIN );
+			cryptDestroyCert( certificate );
+			}
+
+		/* Certificate chain without root certificate */
+		if( cryptStatusOK( status ) )
+			status = writeCertChainNoRoot();
+
+		/* Certificate chain without leaf certificate */
+		if( cryptStatusOK( status ) )
+			{
+			status = getPublicKey( &certificate, ICA_PRIVKEY_FILE, 
+								   USER_PRIVKEY_LABEL );
+			}
+		if( cryptStatusOK( status ) )
+			{
+			filenameFromTemplate( filenameBuffer, CHAINTEST_FILE_TEMPLATE, 
+								  CHAINTEST_CHAIN_NOLEAF );
+			status = exportCertFile( filenameBuffer, certificate, 
+									 CRYPT_CERTFORMAT_CERTCHAIN );
+			cryptDestroyCert( certificate );
+			}
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nSSL/TLS pseudo-certificate chain... " );
+		status = createPseudoCertificateFile();
 		}
 	if( cryptStatusError( status ) )
 		{

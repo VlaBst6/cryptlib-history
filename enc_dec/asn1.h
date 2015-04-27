@@ -16,6 +16,8 @@
   #include "io/stream.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_INT_ASN1
+
 /****************************************************************************
 *																			*
 *						BER/DER Constants and Macros						*
@@ -447,9 +449,10 @@ int writeCharacterString( INOUT STREAM *stream,
 						  IN_BUFFER( length ) const void *string, 
 						  IN_LENGTH_SHORT const int length, 
 						  IN_TAG_ENCODED const int tag );
-RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 int readCharacterString( INOUT STREAM *stream, 
-						 OUT_BUFFER( stringMaxLength, *stringLength ) void *string, 
+						 OUT_BUFFER_OPT( stringMaxLength, *stringLength ) \
+							void *string, 
 						 IN_LENGTH_SHORT const int stringMaxLength, 
 						 OUT_LENGTH_SHORT_Z int *stringLength, 
 						 IN_TAG_EXT const int tag );
@@ -575,8 +578,8 @@ int readGenericObjectHeader( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readRawObjectAlloc( INOUT STREAM *stream, 
-						OUT_BUFFER_ALLOC_OPT( *length ) void **objectPtrPtr, 
-						OUT_LENGTH_Z int *objectLengthPtr,
+						OUT_BUFFER_ALLOC_OPT( *objectLengthPtr ) void **objectPtrPtr,
+						OUT_LENGTH_SHORT_Z int *objectLengthPtr,
 						IN_LENGTH_SHORT_MIN( 16 ) const int minLength, 
 						IN_LENGTH_SHORT const int maxLength );
 
@@ -585,15 +588,15 @@ int readRawObjectAlloc( INOUT STREAM *stream,
    if the length is indefinite) and check that an object has valid encoding */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int getStreamObjectLength( INOUT STREAM *stream, OUT_LENGTH_Z int *length );
+int getStreamObjectLength( INOUT STREAM *stream, OUT_DATALENGTH_Z int *length );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int getObjectLength( IN_BUFFER( objectLength ) \
 					 const void *objectPtr, 
-					 IN_LENGTH const int objectLength, 
-					 OUT_LENGTH_Z int *length );
+					 IN_DATALENGTH const int objectLength, 
+					 OUT_DATALENGTH_Z int *length );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int checkObjectEncoding( IN_BUFFER( objectLength ) const void *objectPtr, 
-						 IN_LENGTH const int objectLength );
+						 IN_DATALENGTH const int objectLength );
 
 /* Full-length equivalents of length/encapsulating-object read routines.
    These are used explicitly in the rare situations where long lengths are
@@ -615,9 +618,11 @@ int readLongGenericHole( INOUT STREAM *stream,
 						 IN_TAG const int tag );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int getLongStreamObjectLength( INOUT STREAM *stream, 
-							   OUT_LENGTH_Z long *length );
+							   OUT_DATALENGTH_Z long *length );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int getLongObjectLength( IN_BUFFER( objectLength ) const void *objectPtr, 
-						 IN_LENGTH const long objectLength,
-						 OUT_LENGTH_Z long *length );
+						 IN_DATALENGTH const long objectLength,
+						 OUT_DATALENGTH_Z long *length );
+
+#endif /* USE_INT_ASN1 */
 #endif /* !_ASN1_DEFINED */

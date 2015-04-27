@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib SSL v3/TLS Cipher Suites						*
-*					Copyright Peter Gutmann 1998-2010						*
+*					Copyright Peter Gutmann 1998-2013						*
 *																			*
 ****************************************************************************/
 
@@ -24,7 +24,7 @@
 ****************************************************************************/
 
 /* The monster list of cryptlib's SSL/TLS cipher suites (the full list is 
-   even longer than this).  There are a pile of DH cipher suites, in 
+   much, much longer than this).  There are a pile of DH cipher suites, in 
    practice only DHE is used, DH requires the use of X9.42 DH certificates 
    (there aren't any) and DH_anon uses unauthenticated DH which implementers 
    seem to have an objection to even though it's not much different in 
@@ -122,6 +122,8 @@ static const CIPHERSUITE_INFO cipherSuiteDH[] = {
 	  CRYPT_ALGO_NONE, 0, 0, 0, CIPHERSUITE_FLAG_NONE }
 	};
 
+#if defined( USE_ECDSA ) && defined( USE_ECDH )
+
 static const CIPHERSUITE_INFO cipherSuiteECC[] = {
 	/* ECDH with ECDSA */
 	{ TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 
@@ -182,6 +184,9 @@ static const CIPHERSUITE_INFO cipherSuiteECC[] = {
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 
 	  CRYPT_ALGO_NONE, 0, 0, 0, CIPHERSUITE_FLAG_NONE }
 	};
+#endif /* USE_ECDSA && USE_ECDH */
+
+#ifdef USE_GCM
 
 static const CIPHERSUITE_INFO cipherSuiteGCM[] = {
 	/* ECDH with ECDSA and AES-GCM */
@@ -225,6 +230,9 @@ static const CIPHERSUITE_INFO cipherSuiteGCM[] = {
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 
 	  CRYPT_ALGO_NONE, 0, 0, 0, CIPHERSUITE_FLAG_NONE }
 	};
+#endif /* USE_GCM */
+
+#if defined( USE_RC4 ) || defined( USE_DES )
 
 static const CIPHERSUITE_INFO cipherSuiteMisc[] = {
 	/* RC4 + RSA */
@@ -266,9 +274,37 @@ static const CIPHERSUITE_INFO cipherSuiteMisc[] = {
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 
 	  CRYPT_ALGO_NONE, 0, 0, 0, CIPHERSUITE_FLAG_NONE }
 	};
+#endif /* USE_RC4 || USE_DES */
 
 static const CIPHERSUITE_INFO cipherSuitePSK[] = {
-	/* PSK */
+	/* PSK with PFS */
+	{ TLS_DHE_PSK_WITH_3DES_EDE_CBC_SHA,
+	  DESCRIPTION( "TLS_DHE_PSK_WITH_3DES_EDE_CBC_SHA" )
+	  CRYPT_ALGO_DH, CRYPT_ALGO_NONE, CRYPT_ALGO_3DES,
+	  CRYPT_ALGO_HMAC_SHA1, 0, 24, SHA1MAC_SIZE, 
+	  CIPHERSUITE_FLAG_PSK | CIPHERSUITE_FLAG_DH },
+	{ TLS_DHE_PSK_WITH_AES_128_CBC_SHA,
+	  DESCRIPTION( "TLS_DHE_PSK_WITH_AES_128_CBC_SHA" )
+	  CRYPT_ALGO_DH, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
+	  CIPHERSUITE_FLAG_PSK | CIPHERSUITE_FLAG_DH },
+	{ TLS_DHE_PSK_WITH_AES_256_CBC_SHA,
+	  DESCRIPTION( "TLS_DHE_PSK_WITH_AES_256_CBC_SHA" )
+	  CRYPT_ALGO_DH, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
+	  CRYPT_ALGO_HMAC_SHA1, 0, 32, SHA1MAC_SIZE, 
+	  CIPHERSUITE_FLAG_PSK | CIPHERSUITE_FLAG_DH },
+	{ TLS_DHE_PSK_WITH_AES_128_CBC_SHA256,
+	  DESCRIPTION( "TLS_DHE_PSK_WITH_AES_128_CBC_SHA256" )
+	  CRYPT_ALGO_DH, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
+	  CRYPT_ALGO_HMAC_SHA2, 0, 16, SHA2MAC_SIZE, 
+	  CIPHERSUITE_FLAG_PSK | CIPHERSUITE_FLAG_DH | CIPHERSUITE_FLAG_TLS12 },
+	{ TLS_DHE_PSK_WITH_RC4_128_SHA,
+	  DESCRIPTION( "TLS_DHE_PSK_WITH_RC4_128_SHA" )
+	  CRYPT_ALGO_DH, CRYPT_ALGO_NONE, CRYPT_ALGO_RC4,
+	  CRYPT_ALGO_HMAC_SHA1, 0, 16, SHA1MAC_SIZE, 
+	  CIPHERSUITE_FLAG_PSK | CIPHERSUITE_FLAG_DH },
+
+	/* PSK without PFS */
 	{ TLS_PSK_WITH_3DES_EDE_CBC_SHA,
 	  DESCRIPTION( "TLS_PSK_WITH_3DES_EDE_CBC_SHA" )
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_3DES,
@@ -284,6 +320,11 @@ static const CIPHERSUITE_INFO cipherSuitePSK[] = {
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
 	  CRYPT_ALGO_HMAC_SHA1, 0, 32, SHA1MAC_SIZE, 
 	  CIPHERSUITE_FLAG_PSK },
+	{ TLS_PSK_WITH_AES_128_CBC_SHA256,
+	  DESCRIPTION( "TLS_PSK_WITH_AES_128_CBC_SHA256" )
+	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
+	  CRYPT_ALGO_HMAC_SHA2, 0, 16, SHA2MAC_SIZE, 
+	  CIPHERSUITE_FLAG_PSK | CIPHERSUITE_FLAG_TLS12 },
 	{ TLS_PSK_WITH_RC4_128_SHA,
 	  DESCRIPTION( "TLS_PSK_WITH_RC4_128_SHA" )
 	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_RC4,
@@ -372,9 +413,7 @@ static const CIPHERSUITE_INFO cipherSuiteCanary[] = {
 			suites rather than having them ignored as the 25th-ranked 
 			option.  (GCM with ECC is a variant of this, this is even more 
 			of a fashion statement and really only makes sense with ECC).
-	DH suites unless PREFER_RSA_TO_DH is defined, since these provide
-			PFS, are secure against factoring attacks, and in many cases
-			are the same as RSA when employed in anon-DH-equivalent mode.
+	DH suites.
 	RSA suites with strong ciphers.
 	Misc RSA suites with also-ran ciphers.
 	Canary used to detect broken older version of MSIE */
@@ -386,26 +425,27 @@ typedef struct {
 
 static const CIPHERSUITES_LIST cipherSuitesList[] = {
 	{ cipherSuitePSK, FAILSAFE_ARRAYSIZE( cipherSuitePSK, CIPHERSUITE_INFO ) },
-#if defined( PREFER_ECC ) && defined( USE_ECDH ) && defined( USE_ECDSA )
+#ifdef PREFER_ECC
   #ifdef USE_GCM
 	{ cipherSuiteGCM, FAILSAFE_ARRAYSIZE( cipherSuiteGCM, CIPHERSUITE_INFO ) },
   #endif /* USE_GCM */
+  #if defined( USE_ECDSA ) && defined( USE_ECDH )
 	{ cipherSuiteECC, FAILSAFE_ARRAYSIZE( cipherSuiteECC, CIPHERSUITE_INFO ) },
-#endif /* PREFER_ECC && USE_ECDH && USE_ECDSA */
-#ifdef PREFER_RSA_TO_DH
-	{ cipherSuiteRSA, FAILSAFE_ARRAYSIZE( cipherSuiteRSA, CIPHERSUITE_INFO ) },
-	{ cipherSuiteDH, FAILSAFE_ARRAYSIZE( cipherSuiteDH, CIPHERSUITE_INFO ) },
-#else
+  #endif /* USE_ECDSA && USE_ECDH */
+#endif /* PREFER_ECC */
 	{ cipherSuiteDH, FAILSAFE_ARRAYSIZE( cipherSuiteDH, CIPHERSUITE_INFO ) },
 	{ cipherSuiteRSA, FAILSAFE_ARRAYSIZE( cipherSuiteRSA, CIPHERSUITE_INFO ) },
-#endif /* PREFER_RSA_TO_DH */
-#if !defined( PREFER_ECC ) && defined( USE_ECDH ) && defined( USE_ECDSA )
+#ifndef PREFER_ECC
   #ifdef USE_GCM
 	{ cipherSuiteGCM, FAILSAFE_ARRAYSIZE( cipherSuiteGCM, CIPHERSUITE_INFO ) },
   #endif /* USE_GCM */
+  #if defined( USE_ECDSA ) && defined( USE_ECDH )
 	{ cipherSuiteECC, FAILSAFE_ARRAYSIZE( cipherSuiteECC, CIPHERSUITE_INFO ) },
-#endif /* !PREFER_ECC && USE_ECDH && USE_ECDSA */
+  #endif /* USE_ECDSA && USE_ECDH */
+#endif /* !PREFER_ECC */
+#if defined( USE_RC4 ) || defined( USE_DES )
 	{ cipherSuiteMisc, FAILSAFE_ARRAYSIZE( cipherSuiteMisc, CIPHERSUITE_INFO ) },
+#endif /* USE_RC4 || USE_DES */
 	{ cipherSuiteCanary, FAILSAFE_ARRAYSIZE( cipherSuiteCanary, CIPHERSUITE_INFO ) },
 	{ NULL, 0 }, { NULL, 0 }
 	};
@@ -421,7 +461,7 @@ static const CIPHERSUITES_LIST cipherSuitesList[] = {
 
 #if defined( CONFIG_SUITEB )
 
-#if defined( _MSC_VER )
+#if defined( _MSC_VER ) || defined( __GNUC__ )
   #pragma message( "  Building with custom suite: Suite B" )
   #if defined( CONFIG_SUITEB_TESTS )
 	#pragma message( "  Building with custom suite: Suite B test suites" )

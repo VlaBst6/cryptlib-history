@@ -350,24 +350,22 @@ int checkRTCSResponse( INOUT CERT_INFO *certInfoPtr,
 		} */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofRtcsRequestEntry( INOUT VALIDITY_INFO *rtcsEntry )
+int sizeofRtcsRequestEntry( STDC_UNUSED const VALIDITY_INFO *rtcsEntry )
 	{
-	assert( isWritePtr( rtcsEntry, sizeof( VALIDITY_INFO ) ) );
+	assert( isReadPtr( rtcsEntry, sizeof( VALIDITY_INFO ) ) );
 
 	return( ( int ) sizeofObject( sizeofObject( KEYID_SIZE ) ) );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readRtcsRequestEntry( INOUT STREAM *stream, 
-						  INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
-						  INOUT CERT_INFO *certInfoPtr )
+						  INOUT_PTR VALIDITY_INFO **listHeadPtrPtr )
 	{
 	BYTE idBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int endPos, length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( listHeadPtrPtr, sizeof( VALIDITY_INFO * ) ) );
-	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
 	/* Determine the overall size of the entry */
 	status = readSequence( stream, &length );
@@ -435,7 +433,8 @@ int sizeofRtcsResponseEntry( INOUT VALIDITY_INFO *rtcsEntry,
 	/* Remember the encoded attribute size for later when we write the
 	   attributes */
 	status = \
-		rtcsEntry->attributeSize = sizeofAttributes( rtcsEntry->attributes );
+		rtcsEntry->attributeSize = sizeofAttributes( rtcsEntry->attributes,
+													 CRYPT_CERTTYPE_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 

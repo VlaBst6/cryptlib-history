@@ -66,6 +66,8 @@
   #include "crypt/rc5locl.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_RC5
+
 void RC5_32_ecb_encrypt(const unsigned char *in, unsigned char *out,
 			RC5_32_KEY *ks, int encrypt)
 	{
@@ -81,4 +83,4 @@ void RC5_32_ecb_encrypt(const unsigned char *in, unsigned char *out,
 	l=d[1]; l2c(l,out);
 	l=d[0]=d[1]=0;
 	}
-
+#endif /* USE_RC5 */

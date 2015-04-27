@@ -19,6 +19,8 @@
   #include "mechs/mech.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_INT_CMS
+
 /****************************************************************************
 *																			*
 *								Utility Routines							*
@@ -393,7 +395,7 @@ C_RET cryptQueryObject( C_IN void C_PTR objectData,
 
 	/* Perform basic error checking and clear the return value */
 	if( objectDataLength <= MIN_CRYPT_OBJECTSIZE || \
-		objectDataLength >= MAX_INTLENGTH )
+		objectDataLength >= MAX_BUFFER_SIZE )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( objectData, objectDataLength ) )
 		return( CRYPT_ERROR_PARAM1 );
@@ -443,3 +445,19 @@ C_RET cryptQueryObject( C_IN void C_PTR objectData,
 
 	return( CRYPT_OK );
 	}
+
+#else
+
+/****************************************************************************
+*																			*
+*						Stub Functions for non-CMS/PGP Use					*
+*																			*
+****************************************************************************/
+
+C_RET cryptQueryObject( C_IN void C_PTR objectData,
+						C_IN int objectDataLength,
+						C_OUT CRYPT_OBJECT_INFO C_PTR cryptObjectInfo )
+	{
+	return( CRYPT_ERROR_NOTAVAIL );
+	}
+#endif /* USE_INT_CMS */

@@ -59,11 +59,26 @@
 #include <stdio.h>
 #if defined( INC_ALL )
   #include "osconfig.h"
-  #include "rmdlocl.h"
 #else
   #include "crypt/osconfig.h"
+#endif /* Compiler-specific includes */
+
+#ifdef USE_RIPEMD160
+
+/* We can only include rmdlocl.h at this point since it creates code for 
+   various functions via complicated nesting of includes and macro 
+   manipulation */
+
+#if defined( INC_ALL )
+  #include "rmdlocl.h"
+#else
   #include "crypt/rmdlocl.h"
 #endif /* Compiler-specific includes */
+
+#if defined( RMD160_ASM ) && defined( _MSC_VER )
+  /* Pull in the RIPEMD-160 asm code packaged into a .lib - pcg */
+  #pragma comment( lib, "crypt/rm-win32.lib" )
+#endif /* RMD160_ASM && VC++ */
 
 #  ifdef RMD160_ASM
      void ripemd160_block_x86(RIPEMD160_CTX *c, unsigned long *p,int num);
@@ -494,3 +509,4 @@ void ripemd160_block_data_order (RIPEMD160_CTX *ctx, const void *p, int num)
 		}
 	}
 #endif
+#endif /* USE_RIPEMD160 */

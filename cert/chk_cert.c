@@ -852,6 +852,8 @@ int checkPathConstraints( const CERT_INFO *subjectCertInfoPtr,
 *																			*
 ****************************************************************************/
 
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
+
 /* Check attributes for a resource RPKI (RPKI) certificate.  This is 
    somewhat ugly in that it entails a number of implicit checks rather
    than just applying constraints specified in the certificate itself,
@@ -962,6 +964,7 @@ static int checkRPKIAttributes( const ATTRIBUTE_PTR *subjectAttributes,
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_CERTLEVEL_PKIX_PARTIAL */
 
 /****************************************************************************
 *																			*
@@ -1119,14 +1122,14 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 					CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	const ATTRIBUTE_PTR *subjectAttributes = subjectCertInfoPtr->attributes;
-	const ATTRIBUTE_PTR *issuerAttributes = \
-								( issuerCertInfoPtr != NULL ) ? \
-								issuerCertInfoPtr->attributes : NULL;
 	const ATTRIBUTE_PTR *attributePtr;
 	const BOOLEAN subjectSelfSigned = \
 					( subjectCertInfoPtr->flags & CERT_FLAG_SELFSIGNED ) ? \
 					TRUE : FALSE;
 #ifdef USE_CERTLEVEL_PKIX_PARTIAL
+	const ATTRIBUTE_PTR *issuerAttributes = \
+								( issuerCertInfoPtr != NULL ) ? \
+								issuerCertInfoPtr->attributes : NULL;
 	BOOLEAN subjectIsCA = FALSE, issuerIsCA = FALSE;
 	int value;
 #endif /* USE_CERTLEVEL_PKIX_PARTIAL */
@@ -1250,6 +1253,44 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 	if( ( subjectSelfSigned || shortCircuitCheck ) && \
 		( subjectCertInfoPtr->cCertCert->maxCheckLevel >= complianceLevel ) )
 		return( CRYPT_OK );
+
+	/* Perform certificate object-type-specific version checks */
+	if( subjectCertInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT )
+		{
+		/* Attribute certificates must be v2 */
+		if( subjectCertInfoPtr->version != 2 )
+			{
+			setErrorValues( CRYPT_CERTINFO_VERSION, 
+							CRYPT_ERRTYPE_ATTR_VALUE );
+			return( CRYPT_ERROR_INVALID );
+			}
+		}
+	else
+		{
+		/* If the certificate isn't v3 or above then it's only allowed under 
+		   very specific circumstances */
+		if( subjectCertInfoPtr->version < X509_V3 )
+			{
+			/* If the certificate isn't self-signed then it has to be 
+			   version 3 or above.  This is because the only certificates 
+			   that are still allowed to be X.509v1 are trusted root 
+			   certificates, any chain-internal certificate must be X.509v3 
+			   or higher.  In addition if it's less than version 3 then it 
+			   can't have any extensions.
+			   
+			   This is another failure situation for which it's difficult to 
+			   provide appropriately descriptive error information, however 
+			   a certificate like this is so broken that it should never be 
+			   encountered, and if it is then a somewhat odd error code is 
+			   to be expected */
+			if( !subjectSelfSigned || subjectCertInfoPtr->attributes != NULL )
+				{
+				setErrorValues( CRYPT_CERTINFO_VERSION, 
+								CRYPT_ERRTYPE_CONSTRAINT );
+				return( CRYPT_ERROR_INVALID );
+				}
+			}
+		}
 
 	/* If the certificate isn't self-signed, check name chaining */
 	if( !subjectSelfSigned )

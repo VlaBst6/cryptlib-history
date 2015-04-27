@@ -1,4 +1,3 @@
-
 #include "../crypt.h"
 
 #ifdef USE_JAVA
@@ -395,14 +394,10 @@
 #define cryptlib_crypt_CERTINFO_XYZZY 2003L
 #undef cryptlib_crypt_CERTINFO_CERTTYPE
 #define cryptlib_crypt_CERTINFO_CERTTYPE 2004L
-#undef cryptlib_crypt_CERTINFO_FINGERPRINT
-#define cryptlib_crypt_CERTINFO_FINGERPRINT 2005L
 #undef cryptlib_crypt_CERTINFO_FINGERPRINT_MD5
 #define cryptlib_crypt_CERTINFO_FINGERPRINT_MD5 2005L
 #undef cryptlib_crypt_CERTINFO_FINGERPRINT_SHA1
 #define cryptlib_crypt_CERTINFO_FINGERPRINT_SHA1 2006L
-#undef cryptlib_crypt_CERTINFO_FINGERPRINT_SHA
-#define cryptlib_crypt_CERTINFO_FINGERPRINT_SHA 2006L
 #undef cryptlib_crypt_CERTINFO_FINGERPRINT_SHA2
 #define cryptlib_crypt_CERTINFO_FINGERPRINT_SHA2 2007L
 #undef cryptlib_crypt_CERTINFO_FINGERPRINT_SHAng
@@ -459,6 +454,8 @@
 #define cryptlib_crypt_CERTINFO_PKIUSER_ISSUEPASSWORD 2032L
 #undef cryptlib_crypt_CERTINFO_PKIUSER_REVPASSWORD
 #define cryptlib_crypt_CERTINFO_PKIUSER_REVPASSWORD 2033L
+#undef cryptlib_crypt_CERTINFO_PKIUSER_RA
+#define cryptlib_crypt_CERTINFO_PKIUSER_RA 2034L
 #undef cryptlib_crypt_CERTINFO_COUNTRYNAME
 #define cryptlib_crypt_CERTINFO_COUNTRYNAME 2100L
 #undef cryptlib_crypt_CERTINFO_STATEORPROVINCENAME
@@ -1163,8 +1160,8 @@
 #define cryptlib_crypt_SESSINFO_SERVER_NAME 6008L
 #undef cryptlib_crypt_SESSINFO_SERVER_PORT
 #define cryptlib_crypt_SESSINFO_SERVER_PORT 6009L
-#undef cryptlib_crypt_SESSINFO_SERVER_FINGERPRINT
-#define cryptlib_crypt_SESSINFO_SERVER_FINGERPRINT 6010L
+#undef cryptlib_crypt_SESSINFO_SERVER_FINGERPRINT_SHA1
+#define cryptlib_crypt_SESSINFO_SERVER_FINGERPRINT_SHA1 6010L
 #undef cryptlib_crypt_SESSINFO_CLIENT_NAME
 #define cryptlib_crypt_SESSINFO_CLIENT_NAME 6011L
 #undef cryptlib_crypt_SESSINFO_CLIENT_PORT
@@ -1547,6 +1544,10 @@
 #define cryptlib_crypt_SSLOPTION_SUITEB_128 4L
 #undef cryptlib_crypt_SSLOPTION_SUITEB_256
 #define cryptlib_crypt_SSLOPTION_SUITEB_256 8L
+#undef cryptlib_crypt_SSLOPTION_DISABLE_NAMEVERIFY
+#define cryptlib_crypt_SSLOPTION_DISABLE_NAMEVERIFY 16L
+#undef cryptlib_crypt_SSLOPTION_DISABLE_CERTVERIFY
+#define cryptlib_crypt_SSLOPTION_DISABLE_CERTVERIFY 32L
 #undef cryptlib_crypt_MAX_KEYSIZE
 #define cryptlib_crypt_MAX_KEYSIZE 256L
 #undef cryptlib_crypt_MAX_IVSIZE
@@ -1599,8 +1600,14 @@
 #define cryptlib_crypt_ECCCURVE_P384 4L
 #undef cryptlib_crypt_ECCCURVE_P521
 #define cryptlib_crypt_ECCCURVE_P521 5L
+#undef cryptlib_crypt_ECCCURVE_BRAINPOOL_P256
+#define cryptlib_crypt_ECCCURVE_BRAINPOOL_P256 6L
+#undef cryptlib_crypt_ECCCURVE_BRAINPOOL_P384
+#define cryptlib_crypt_ECCCURVE_BRAINPOOL_P384 7L
+#undef cryptlib_crypt_ECCCURVE_BRAINPOOL_P512
+#define cryptlib_crypt_ECCCURVE_BRAINPOOL_P512 8L
 #undef cryptlib_crypt_ECCCURVE_LAST
-#define cryptlib_crypt_ECCCURVE_LAST 6L
+#define cryptlib_crypt_ECCCURVE_LAST 9L
 #undef cryptlib_crypt_OK
 #define cryptlib_crypt_OK 0L
 #undef cryptlib_crypt_ERROR_PARAM1

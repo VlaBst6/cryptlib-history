@@ -231,7 +231,6 @@ static int extractCertIdData( IN_HANDLE const CRYPT_CERTIFICATE iCryptHandle,
 								const CRYPT_CERTTYPE_TYPE certType,
 							  INOUT CERT_ID_DATA *certIdData )
 	{
-	MESSAGE_DATA msgData;
 	int status;
 
 	assert( isWritePtr( certIdData, sizeof( CERT_ID_DATA ) ) );
@@ -265,28 +264,8 @@ static int extractCertIdData( IN_HANDLE const CRYPT_CERTIFICATE iCryptHandle,
 		}
 	if( certType == CRYPT_CERTTYPE_PKIUSER )
 		{
-		BYTE binaryKeyID[ 64 + 8 ];
-		char encKeyID[ CRYPT_MAX_TEXTSIZE + 8 ];
-		int binaryKeyIDlength;
-
-		/* Get the PKI user ID.  We can't read this directly since it's
-		   returned in text form for use by end users so we have to read the
-		   encoded form, decode it, and then turn the decoded binary value
-		   into a key ID.  We identify the result as a keyID,
-		   (== subjectKeyIdentifier, which it isn't really) but we need to
-		   use this to ensure that it's hashed/expanded out to the correct
-		   size */
-		setMessageData( &msgData, encKeyID, CRYPT_MAX_TEXTSIZE );
-		status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
-								  &msgData, CRYPT_CERTINFO_PKIUSER_ID );
-		if( cryptStatusError( status ) )
-			return( status );
-		status =  decodePKIUserValue( binaryKeyID, 64, &binaryKeyIDlength, 
-									  encKeyID, msgData.length );
-		if( cryptStatusOK( status ) )
-			status = makeKeyID( certIdData->keyID, ENCODED_DBXKEYID_SIZE, 
-								&certIdData->keyIDlength, CRYPT_IKEYID_KEYID, 
-								binaryKeyID, binaryKeyIDlength );
+		status = getPkiUserKeyID( certIdData->keyID, ENCODED_DBXKEYID_SIZE, 
+								  &certIdData->keyIDlength, iCryptHandle );
 		if( cryptStatusOK( status ) )
 			status = getKeyID( certIdData->nameID, ENCODED_DBXKEYID_SIZE, 
 							   &certIdData->nameIDlength, iCryptHandle, 
@@ -734,12 +713,16 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 		{
 		/* Add the certificate or CRL */
 		if( type == CRYPT_CERTTYPE_CRL )
+			{
 			status = addCRL( dbmsInfo, iCryptHandle, CRYPT_UNUSED,
 							 DBMS_UPDATE_NORMAL, KEYSET_ERRINFO );
+			}
 		else
+			{
 			status = addCert( dbmsInfo, iCryptHandle,
 							  CRYPT_CERTTYPE_CERTIFICATE, CERTADD_NORMAL,
 							  DBMS_UPDATE_NORMAL, KEYSET_ERRINFO );
+			}
 
 		/* An item being added may already be present but we can't fail
 		   immediately because what's being added may be a chain containing

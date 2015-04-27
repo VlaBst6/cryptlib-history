@@ -92,6 +92,7 @@ EC_GROUP *EC_GROUP_new(const EC_METHOD *meth)
 		ECerr(EC_F_EC_GROUP_NEW, ERR_R_MALLOC_FAILURE);
 		return NULL;
 		}
+	memset( ret, 0, sizeof( EC_GROUP ) );			/* pcg */
 
 	ret->meth = meth;
 
@@ -709,6 +710,7 @@ EC_POINT *EC_POINT_new(const EC_GROUP *group)
 		ECerr(EC_F_EC_POINT_NEW, ERR_R_MALLOC_FAILURE);
 		return NULL;
 		}
+	memset( ret, 0, sizeof( EC_POINT ) );			/* pcg */
 
 	ret->meth = group->meth;
 	
@@ -1162,6 +1164,11 @@ int EC_GROUP_have_precompute_mult(const EC_GROUP *group)
 	}
 
 /* Checksum the ECC structure metadata and their data payloads - pcg */
+
+#define BN_checksum( bignum, checksum ) \
+	*( checksum ) = checksumBignumData( ( bignum )->d, \
+										( bignum )->top * sizeof( BN_ULONG ), \
+										*( checksum ) )
 
 void BN_checksum_ec_group_metadata( EC_GROUP *group, int *chk )	/* pcg */
 	{

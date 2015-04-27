@@ -128,11 +128,16 @@
 
 #define MAX_ATTRIBUTE_SIZE		1024
 
-/* Some objects contain internal buffers used to process data whose size can
-   be specified by the user, the following is the minimum size allowed for
-   these buffers */
+/* Some objects contain internal buffers used to process data whose size can 
+   be specified by the user, the following is the minimum and maximum size 
+   allowed for these buffers.  We don't use MAX_INTLENGTH for this both 
+   because it's a peculiarly high value (using all addressable memory as a 
+   buffer is a bit odd) and because using a fraction of the full INT_MAX
+   range makes it safe to perform range-based comparisons, 'value1 + 
+   value2 < value3', without the risk of integeer overflow */
 
 #define MIN_BUFFER_SIZE			8192
+#define MAX_BUFFER_SIZE			( INT_MAX / 4 )
 
 /* The minimum allowed length for object names (keysets, devices, users,
    etc).  In theory this could be a single character, but by default we
@@ -156,8 +161,8 @@
    around for years.  This can't safely be set to after about 1995 because
    there are mid-90s CA root certificates that are still in use today */
 
-#define MIN_TIME_VALUE			( ( 2010 - 1970 ) * 365 * 86400L )
-#define CURRENT_TIME_VALUE		( ( 2012 - 1970 ) * 365 * 86400L )
+#define MIN_TIME_VALUE			( ( 2012 - 1970 ) * 365 * 86400L )
+#define CURRENT_TIME_VALUE		( ( 2014 - 1970 ) * 365 * 86400L )
 #define MIN_STORED_TIME_VALUE	( ( 1995 - 1970 ) * 365 * 86400L )
 
 /* The minimum and maximum network port numbers.  Note that we allow ports 
@@ -181,7 +186,7 @@
    such as a hashed password.  This is used to prevent DoS attacks from data
    containing excessive iteration counts */
 
-#define MAX_KEYSETUP_ITERATIONS	20000
+#define MAX_KEYSETUP_ITERATIONS	50000
 
 /* PGP's S2K uses a bizarre processing-complexity specifier that specifies,
    in a very roundabout manner, the number of bytes hashed rather than the 
@@ -335,14 +340,20 @@
 #define cryptStandardError( status ) \
 		( ( status ) >= CRYPT_ENVELOPE_RESOURCE && ( status ) <= CRYPT_OK )
 
+/* Network I/O is government by all sorts of timeouts.  The following are 
+   the default timeout values used for network I/O, unless overridden by the
+   user */
+
+#define	NET_TIMEOUT_CONNECT		30
+#define NET_TIMEOUT_READ		15
+#define NET_TIMEOUT_WRITE		5
+
 /* The data formats for reading/writing public keys */
 
 typedef enum {
 	KEYFORMAT_NONE,		/* No key format */
 	KEYFORMAT_CERT,		/* X.509 SubjectPublicKeyInfo */
-/*	KEYFORMAT_PUBLIC,	// PKCS #15 public key - currently unused */
 	KEYFORMAT_SSH,		/* SSHv2 public key */
-	KEYFORMAT_SSH1,		/* SSHv1 public key */
 	KEYFORMAT_SSL,		/* SSL public key */
 	KEYFORMAT_PGP,		/* PGP public key */
 	KEYFORMAT_PRIVATE,	/* Private key */

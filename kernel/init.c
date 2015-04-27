@@ -313,7 +313,13 @@ int krnlBeginInit( void )
 	if( cryptStatusError( status ) )
 		{
 		MUTEX_UNLOCK( initialisation );
+#ifdef CONFIG_FAULT_MALLOC
+		/* If we're using memory fault-injection then a failure at this 
+		   point is expected */
+		return( CRYPT_ERROR_MEMORY );
+#else
 		retIntError();
+#endif /* CONFIG_FAULT_MALLOC */
 		}
 
 	/* The kernel data block has been initialised */

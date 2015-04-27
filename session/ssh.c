@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib SSH Session Management						*
-*						Copyright Peter Gutmann 1998-2008					*
+*					   Copyright Peter Gutmann 1998-2013					*
 *																			*
 ****************************************************************************/
 
@@ -17,13 +17,33 @@
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
 
-#if defined( USE_SSH ) || defined( USE_SSH1 )
+#if defined( USE_SSH )
 
 /****************************************************************************
 *																			*
 *								Utility Functions							*
 *																			*
 ****************************************************************************/
+
+/* Tables mapping SSHv2 algorithm names to cryptlib algorithm IDs, in 
+   preferred algorithm order.  Most of these are set in ssh2.c (see also the
+   comments there about ECC support), however the following table is pointed
+   to by the handshakeInfo and changed dynamically depending on what other 
+   options are enabled */
+
+static const ALGO_STRING_INFO FAR_BSS algoStringPubkeyTbl[] = {
+#ifdef PREFER_ECC
+	{ "ecdsa-sha2-nistp256", 19, CRYPT_ALGO_ECDSA,
+	  CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2 },
+#endif /* PREFER_ECC */
+	{ "ssh-rsa", 7, CRYPT_ALGO_RSA },
+	{ "ssh-dss", 7, CRYPT_ALGO_DSA },
+#if !defined( PREFER_ECC )
+	{ "ecdsa-sha2-nistp256", 19, CRYPT_ALGO_ECDSA,
+	  CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2 },
+#endif /* !PREFER_ECC */
+	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
+	};
 
 /* Initialise and destroy the handshake state information */
 
@@ -38,7 +58,10 @@ static int initHandshakeInfo( OUT SSH_HANDSHAKE_INFO *handshakeInfo )
 		handshakeInfo->iExchangeHashAltContext = \
 			handshakeInfo->iServerCryptContext = CRYPT_ERROR;
 	handshakeInfo->exchangeHashAlgo = CRYPT_ALGO_SHA1;
-	
+	handshakeInfo->algoStringPubkeyTbl = algoStringPubkeyTbl;
+	handshakeInfo->algoStringPubkeyTblNoEntries = \
+			FAILSAFE_ARRAYSIZE( algoStringPubkeyTbl, ALGO_STRING_INFO );
+
 	return( CRYPT_OK );
 	}
 
@@ -167,12 +190,12 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 				  length ) );
 		}
 
-	/* Null-terminate the string so that we can hash it to create the SSHv2
-	   exchange hash.  We actually set a block of memory following the 
-	   string to zeroes (rather than just one null character) in case of
-	   any slight range errors in the free-format text-string checks that
-	   are required further on to identify bugs in SSH implementations */
+	/* Remember how much we've got and set a block of memory following the 
+	   string to zeroes in case of any slight range errors in the free-
+	   format text-string checks that are required further on to identify 
+	   bugs in SSH implementations */
 	memset( sessionInfoPtr->receiveBuffer + length, 0, 16 );
+	sessionInfoPtr->receiveBufEnd = length;
 
 	/* Determine which version we're talking to */
 	switch( sessionInfoPtr->receiveBuffer[ SSH_ID_SIZE ] )
@@ -185,24 +208,9 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 				sessionInfoPtr->version = 2;
 				break;
 				}
-
-#ifdef USE_SSH1
-			/* If the caller has specifically asked for SSHv2 but all that 
-			   the server offers is SSHv1, we can't continue */
-			if( sessionInfoPtr->version >= 2 )
-				{
-				retExt( CRYPT_ERROR_NOSECURE,
-						( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
-						  "Server can only do SSHv1 when SSHv2 was "
-						  "requested" ) );
-				}
-			sessionInfoPtr->version = 1;
-			break;
-#else
 			retExt( CRYPT_ERROR_NOSECURE,
 					( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
 					  "Server can only do SSHv1" ) );
-#endif /* USE_SSH1 */
 
 		case '2':
 			sessionInfoPtr->version = 2;
@@ -432,9 +440,9 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 					!memcmp( versionStringPtr, "1.0", 3 ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_CUTEFTP;
 				if( ( vendorIDStringLength > 8 && \
-					!memcmp( vendorIDString, "sshlib: ", 8 ) > 0 ) || \
+					!memcmp( vendorIDString, "sshlib: ", 8 ) ) || \
 					( vendorIDStringLength > 9 && \
-					!memcmp( vendorIDString, "FlowSsh: ", 9 ) > 0 ) )
+					!memcmp( vendorIDString, "FlowSsh: ", 9 ) ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_ASYMMCOPR;
 				break;
 
@@ -513,19 +521,6 @@ static int initVersion( INOUT SESSION_INFO *sessionInfoPtr,
 	status = readVersionString( sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
-#ifdef USE_SSH1
-	if( sessionInfoPtr->version == 1 )
-		{
-		initSSH1processing( sessionInfoPtr, handshakeInfo,
-							isServer( sessionInfoPtr ) ? TRUE : FALSE );
-		sessionInfoPtr->sendBufStartOfs = \
-			sessionInfoPtr->receiveBufStartOfs = \
-				sessionInfoPtr->protocolInfo->sendBufStartOfs;
-		return( CRYPT_OK );
-		}
-#endif /* USE_SSH1 */
-	initSSH2processing( sessionInfoPtr, handshakeInfo,
-						isServer( sessionInfoPtr ) ? TRUE : FALSE );
 
 	/* SSHv2 hashes parts of the handshake messages for integrity-protection
 	   purposes so we create a context for the hash.  In addition since the 
@@ -603,7 +598,13 @@ static int completeStartup( INOUT SESSION_INFO *sessionInfoPtr )
 	   function pointers based on that */
 	status = initHandshakeInfo( &handshakeInfo );
 	if( cryptStatusOK( status ) )
+		{
+		if( isServer( sessionInfoPtr ) )
+			initSSH2serverProcessing( sessionInfoPtr, &handshakeInfo );
+		else
+			initSSH2clientProcessing( sessionInfoPtr, &handshakeInfo );
 		status = initVersion( sessionInfoPtr, &handshakeInfo );
+		}
 	if( cryptStatusOK( status ) )
 		status = handshakeInfo.beginHandshake( sessionInfoPtr,
 											   &handshakeInfo );
@@ -638,10 +639,8 @@ static int completeStartup( INOUT SESSION_INFO *sessionInfoPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int serverStartup( INOUT SESSION_INFO *sessionInfoPtr )
 	{
-	const char *idString = ( sessionInfoPtr->version == 1 ) ? \
-						   SSH1_ID_STRING "\n" : SSH2_ID_STRING "\r\n";
-	const int idStringLen = SSH_ID_STRING_SIZE + \
-							( ( sessionInfoPtr->version == 1 ) ? 1 : 2 );
+	const char *idString = SSH2_ID_STRING "\r\n";
+	const int idStringLen = SSH_ID_STRING_SIZE + 2;
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -656,7 +655,7 @@ static int serverStartup( INOUT SESSION_INFO *sessionInfoPtr )
 		status = initHandshakeInfo( &handshakeInfo );
 		if( cryptStatusError( status ) )
 			return( status );
-		initSSH2processing( sessionInfoPtr, &handshakeInfo, TRUE );
+		initSSH2serverProcessing( sessionInfoPtr, &handshakeInfo );
 		return( completeHandshake( sessionInfoPtr, &handshakeInfo ) );
 		}
 
@@ -864,7 +863,7 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 
 	/* Add the fingerprint */
 	return( addSessionInfoS( &sessionInfoPtr->attributeList,
-							 CRYPT_SESSINFO_SERVER_FINGERPRINT,
+							 CRYPT_SESSINFO_SERVER_FINGERPRINT_SHA1,
 							 fingerPrint, hashSize ) );
 	}
 
@@ -877,25 +876,42 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setAccessMethodSSH( INOUT SESSION_INFO *sessionInfoPtr )
 	{
+	static const PROTOCOL_INFO protocolInfo = {
+		/* General session information */
+		FALSE,						/* Request-response protocol */
+		SESSION_NONE,				/* Flags */
+		SSH_PORT,					/* SSH port */
+		SESSION_NEEDS_USERID |		/* Client attributes */
+			SESSION_NEEDS_PASSWORD | \
+			SESSION_NEEDS_KEYORPASSWORD | \
+			SESSION_NEEDS_PRIVKEYSIGN,
+				/* The client private key is optional, but if present it has
+				   to be signature-capable */
+		SESSION_NEEDS_PRIVATEKEY |	/* Server attributes */
+			SESSION_NEEDS_PRIVKEYSIGN,
+		2, 2, 2,					/* Version 2 */
+
+		/* Protocol-specific information */
+		EXTRA_PACKET_SIZE + \
+			DEFAULT_PACKET_SIZE,	/* Send/receive buffer size */
+		SSH2_HEADER_SIZE + \
+			SSH2_PAYLOAD_HEADER_SIZE,/* Payload data start */
+		DEFAULT_PACKET_SIZE			/* (Default) maximum packet size */
+		};
+
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Set the access method pointers */
+	sessionInfoPtr->protocolInfo = &protocolInfo;
+	sessionInfoPtr->transactFunction = ( isServer( sessionInfoPtr ) ) ? \
+									   serverStartup : completeStartup;
+	initSSH2processing( sessionInfoPtr );
 #ifdef USE_SSH_EXTENDED
 	sessionInfoPtr->getAttributeFunction = getAttributeFunction;
 	sessionInfoPtr->setAttributeFunction = setAttributeFunction;
 #endif /* USE_SSH_EXTENDED */
 	sessionInfoPtr->checkAttributeFunction = checkAttributeFunction;
-	if( isServer( sessionInfoPtr ) )
-		{
-		sessionInfoPtr->transactFunction = serverStartup;
-		initSSH2processing( sessionInfoPtr, NULL, TRUE );
-		}
-	else
-		{
-		sessionInfoPtr->transactFunction = completeStartup;
-		initSSH2processing( sessionInfoPtr, NULL, FALSE );
-		}
 
 	return( CRYPT_OK );
 	}
-#endif /* USE_SSH || USE_SSH1 */
+#endif /* USE_SSH */

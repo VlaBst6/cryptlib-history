@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Debug Header File 						*
-*						Copyright Peter Gutmann 1992-2011					*
+*						Copyright Peter Gutmann 1992-2013					*
 *																			*
 ****************************************************************************/
 
@@ -107,7 +107,7 @@
    To deal with this we redefine the assert() macro to call our own 
    assertion handler */
 
-#if defined( __WIN32__ ) && VC_LE_VC6( _MSC_VER )
+#if defined( __WIN32__ ) && !defined( NDEBUG ) && VC_LE_VC6( _MSC_VER )
 
 void vc6assert( const char *exprString, const char *fileName, 
 				const int lineNo );
@@ -149,30 +149,40 @@ void vc6assert( const char *exprString, const char *fileName,
 
 #if defined( NDEBUG ) && !defined( DEBUG_DIAGNOSTIC_ENABLE )
   #define DEBUG_PRINT( x )
+  #define DEBUG_PRINT_COND( x, y )
   #define DEBUG_OUT( string )
 #elif defined( __WIN32__ )
-  int debugPrintf( const char *format, ... );
-
-  #define DEBUG_PRINT( x )		debugPrintf x
   #define DEBUG_OUT( string )	OutputDebugString( string )
 #elif defined( __WINCE__ )
-  int debugPrintf( const char *format, ... );
-
-  #define DEBUG_PRINT( x )		debugPrintf x
   #define DEBUG_OUT( string )	NKDbgPrintfW( L"%s", string )
 #elif defined( __ECOS__ )
   #define DEBUG_PRINT( x )		diag_printf x
+  #define DEBUG_PRINT_COND( c, x )	if( c ) diag_printf x
   #define DEBUG_OUT( string )	diag_printf( "%s", string )
 #elif defined( __UNIX__ )
-  int debugPrintf( const char *format, ... );
-
-  #define DEBUG_PRINT( x )		debugPrintf x
   #define DEBUG_OUT( string )	debugPrintf( "%s", string )
 #else
   #include <stdio.h>			/* Needed for printf() */
   #define DEBUG_PRINT( x )		printf x
+  #define DEBUG_PRINT_COND( c, x )	if( c ) printf x
   #define DEBUG_OUT( string )	printf( "%s", string )
 #endif /* OS-specific diagnostic functions */
+#ifndef DEBUG_PRINT
+  int debugPrintf( const char *format, ... );
+
+  #define DEBUG_PRINT( x )		debugPrintf x
+  #define DEBUG_PRINT_COND( c, x )	if( c ) debugPrintf x
+#endif /* !DEBUG_PRINT */
+
+/* Sometimes we need to add additional debugging code that's needed only in 
+   the debug version, the following macro allows debug-only operations to be 
+   inserted */
+
+#if defined( NDEBUG )
+  #define DEBUG_OP( x )
+#else
+  #define DEBUG_OP( x )			x
+#endif /* Debug build */
 
 /* Output an I-am-here to the debugging outout (see above), useful when 
    tracing errors in code without debug symbols available */
@@ -215,6 +225,12 @@ void vc6assert( const char *exprString, const char *fileName,
 	DEBUG_DUMP_FILE: Writes a block of memory to a file in $TMP, suffix 
 		".der".
 
+	DEBUG_DUMP_FILE_OPT: As DEBUG_DUMP_FILE, but only tries to dump the 
+		contents if the length is non-zero.  This can happen if we get a
+		zero-length from a client or server, for example what's being
+		communicated is an error status and there's no content such as
+		as a certificate to dump.
+
 	DEBUG_DUMP_CERT: Writes a certificate object to a file, details as for
 		DEBUG_DUMP_FILE().
 
@@ -234,6 +250,7 @@ void vc6assert( const char *exprString, const char *fileName,
 
 #if defined( NDEBUG ) && !defined( DEBUG_DIAGNOSTIC_ENABLE )
   #define DEBUG_DUMP_FILE( name, data, length )
+  #define DEBUG_DUMP_FILE_OPT( name, data, length )
   #define DEBUG_DUMP_CERT( name, cert )
   #define DEBUG_DUMP_HEX( dumpPrefix, dumpBuf, dumpLen )
   #define DEBUG_DUMP_DATA( dumpBuf, dumpLen )
@@ -241,6 +258,9 @@ void vc6assert( const char *exprString, const char *fileName,
   #define DEBUG_GET_STREAMBYTE( stream, position )		0
 #else
   #define DEBUG_DUMP_FILE	debugDumpFile
+  #define DEBUG_DUMP_FILE_OPT( name, data, length ) \
+			if( ( length ) != 0 ) \
+				debugDumpFile( ( name ), ( data ), ( length ) )
   #define DEBUG_DUMP_CERT	debugDumpFileCert
   #define DEBUG_DUMP_HEX	debugDumpHex
   #define DEBUG_DUMP_DATA	debugDumpData
@@ -297,11 +317,12 @@ void vc6assert( const char *exprString, const char *fileName,
 
 /* Support functions that may be needed by the general debug functions */
 
-#if !defined( NDEBUG ) && defined( DEBUG_DIAGNOSTIC_ENABLE )
+#if !defined( NDEBUG ) && defined( USE_ERRMSGS ) && \
+	defined( DEBUG_DIAGNOSTIC_ENABLE )
 
 const char *getErrorInfoString( ERROR_INFO *errorInfo );
 
-#endif /* !NDEBUG */
+#endif /* !NDEBUG && USE_ERRMSGS && DEBUG_DIAGNOSTIC_ENABLE */
 
 /****************************************************************************
 *																			*
@@ -315,14 +336,17 @@ const char *getErrorInfoString( ERROR_INFO *errorInfo );
    Note that crypt/osconfig.h contains its own debug-malloc() handling for
    the OpenSSL-derived code enabled via USE_BN_DEBUG_MALLOC in osconfig.h,
    and zlib also has its own allocation code (which isn't instrumented for
-   diagnostic purposes).
+   diagnostic purposes).  In addition the default mapping to malloc()/free()
+   may be overridden in os_spec.h/os_spec.c for embedded systems that don't
+   use standard malloc/free, so we only set up the mappings if clAlloc() 
+   isn't already defined.
 
    In addition in order to control on-demand allocation of buffers for
    larger-than-normal data items, we can define CONFIG_NO_DYNALLOC to
    disable this allocation.  This is useful in memory-constrained
    environments where we can't afford to grab chunks of memory at random */
 
-#ifdef CONFIG_DEBUG_MALLOC
+#if defined( CONFIG_DEBUG_MALLOC )
   #undef clAlloc
   #undef clFree
   #define clAlloc( string, size ) \
@@ -333,7 +357,7 @@ const char *getErrorInfoString( ERROR_INFO *errorInfo );
 				   const int lineNo, size_t size );
   void clFreeFn( const char *fileName, const char *fnName,
 				 const int lineNo, void *memblock );
-#else
+#elif !defined( clAlloc )
   #define clAlloc( string, size )		malloc( size )
   #define clFree( string, memblock )	free( memblock )
 #endif /* !CONFIG_DEBUG_MALLOC */
@@ -357,7 +381,52 @@ const char *getErrorInfoString( ERROR_INFO *errorInfo );
   #define clFree( string, memblock )	free( memblock )
   void *clFaultAllocFn( const char *fileName, const char *fnName, 
 						const int lineNo, size_t size );
-  void clFaultSet( const int number );
+  void clFaultAllocSetCount( const int number );
+
+  /* Some of the should-neven-fail functions like the kernel self-tests
+	 include assertions to ensure that any failure raises an immediate 
+	 alert.  Since we're explicitly forcing a failure, we don't want to 
+	 be alerted to these conditions so we no-op out the assert if we're
+	 doing memory fault injection */
+  #define assertNoFault( x )
+  #define ENSURES_NOFAULT( x )	if( !( x ) ) return( CRYPT_ERROR_MEMORY )
+#else
+  #define assertNoFault			assert
+  #define ENSURES_NOFAULT		ENSURES
 #endif /* CONFIG_FAULT_MALLOC */
 
+/****************************************************************************
+*																			*
+*								Timing Functions							*
+*																			*
+****************************************************************************/
+
+#if defined( __WINDOWS__ ) || defined( __UNIX__ )
+
+/* High-resolution timing functionality, used to diagnose performance 
+   issues */
+
+#if defined( _MSC_VER )
+  typedef __int64 HIRES_TIME;
+  #define HIRES_FORMAT_SPECIFIER	"%lld"
+#elif defined( __GNUC__ )
+  typedef long long HIRES_TIME;
+  #define HIRES_FORMAT_SPECIFIER	"%lld"
+#else
+  typedef unsigned long HIRES_TIME;
+  #define HIRES_FORMAT_SPECIFIER	"%ld"
+#endif /* 32/64-bit time values */
+
+/* Timing support functions.  Call as:
+
+	HIRES_TIME timeVal;
+
+	timeVal = timeDiff( 0 );
+	function_to_time();
+	result = ( int ) timeDiff( timeVal ); */
+
+HIRES_TIME debugTimeDiff( HIRES_TIME startTime );
+int debugTimeDisplay( HIRES_TIME time );
+
+#endif /* __WINDOWS__ || __UNIX__ */
 #endif /* _DEBUG_DEFINED */

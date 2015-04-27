@@ -22,6 +22,8 @@
 
 #if defined( __AMX__ )
 
+#include <cjzzz.h>
+
 /* The AMX task-priority function returns the priority via a reference
    parameter.  Because of this we have to provide a wrapper that returns
    it as a return value */
@@ -36,43 +38,31 @@ int threadPriority( void )
 
 /****************************************************************************
 *																			*
-*									BeOS									*
+*									ARINC 653								*
 *																			*
 ****************************************************************************/
 
-/* Match a given substring against a string in a case-insensitive manner.
-   If possible we use native calls to handle this since they deal with
-   charset-specific issues such as collating sequences, however a few OSes
-   don't provide this functionality so we have to do it ourselves */
+#elif defined( __ARINC653__ )
 
-#elif defined( __BEOS__ ) || defined( __SYMBIAN32__ )
+#include <apex.h>
 
-int strnicmp( const char *src, const char *dest, int length )
+/* The ARINC 653 API returns status codes as a by-reference parameter, in 
+   cases where we don't care about the return status we need to provide a
+   dummy value to take this */
+
+RETURN_CODE_TYPE dummyRetCode;
+
+/* The ARINC 653 thread-self function returns the thread ID via a reference 
+   parameter, because of this we have to provide a wrapper that returns it 
+   as a return value */
+
+PROCESS_ID_TYPE threadSelf( void )
 	{
-	assert( isReadPtr( src, length ) );
+	PROCESS_ID_TYPE processID;
+	RETURN_CODE_TYPE retCode; 
 
-	while( length-- > 0 )
-		{
-		char srcCh = *src++, destCh = *dest++;
-
-		/* Need to be careful with toupper() side-effects */
-		srcCh = toUpper( srcCh );
-		destCh = toUpper( destCh );
-
-		if( srcCh != destCh )
-			return( srcCh - destCh );
-		}
-
-	return( 0 );
-	}
-
-int stricmp( const char *src, const char *dest )
-	{
-	const int length = strlen( src );
-
-	if( length != strlen( dest ) )
-		return( 1 );	/* Lengths differ */
-	return( strnicmp( src, dest, length ) );
+	GET_MY_ID( &processID, &retCode );
+	return( processID );
 	}
 
 /****************************************************************************
@@ -406,11 +396,13 @@ int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 
 #elif defined( __Nucleus__ )
 
+#include <nucleus.h>
+
 /* Wrappers for the Nucleus OS-level memory allocation functions */
 
 extern NU_MEMORY_POOL Application_Memory;
 
-void *clAlloc( long size )
+void *clAllocFn( size_t size )
 	{
 	STATUS Rc;
 	void *ptr;
@@ -422,9 +414,9 @@ void *clAlloc( long size )
 	return( ptr );
 	}
 
-void clFree( void *block )
+void clFreeFn( void *memblock )
 	{
-	NU_Deallocate_Memory( block );
+	NU_Deallocate_Memory( memblock );
 	}
 
 /****************************************************************************
@@ -699,8 +691,8 @@ long getTickCount( long startTime )
 		}
 	if( timeDifference <= 0 )
 		{
-		printf( "Error: Time difference = %X, startTime = %X, endTime = %X.\n",
-				timeDifference, startTime, timeLSB );
+		printf( "Error: Time difference = %lX, startTime = %lX, "
+				"endTime = %lX.\n", timeDifference, startTime, timeLSB );
 		return( 1 );
 		}
 	return( timeDifference );
@@ -786,6 +778,8 @@ static HMODULE WINAPI loadExistingLibrary( IN_STRING LPCTSTR lpFileName )
 
 	assert( isReadPtr( lpFileName, 2 ) );
 
+	ANALYSER_HINT_STRING( lpFileName );
+
 	/* Determine whether the DLL is present and accessible */
 	hFile = CreateFile( lpFileName, GENERIC_READ, 0, NULL, OPEN_EXISTING,
 						FILE_ATTRIBUTE_NORMAL, NULL );
@@ -845,6 +839,8 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	const int fileNameLength = strlen( lpFileName );
 	int pathLength, i;
 	BOOLEAN gotPath = FALSE;
+
+	ANALYSER_HINT_STRING( lpFileName );
 
 	REQUIRES_EXT( fileNameLength >= 1 && fileNameLength < MAX_PATH, \
 				  NULL );
@@ -936,6 +932,13 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	}
 #else	/* Newer code that does the same thing */
 
+#if VC_GE_2005( _MSC_VER )
+  #pragma warning( push )
+  #pragma warning( disable : 4255 )	/* Errors in VersionHelpers.h */
+  #include <VersionHelpers.h>
+  #pragma warning( pop )
+#endif /* VC++ >= 2005 */
+
 HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	{
 	char path[ MAX_PATH + 8 ];
@@ -947,14 +950,21 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 
 	assert( isReadPtr( lpFileName, 2 ) );
 
+	ANALYSER_HINT_STRING( lpFileName );
+
 	/* If it's Win98 or NT4, just call LoadLibrary directly.  In theory
 	   we could try a few further workarounds (see io/file.c) but in 
 	   practice bending over backwards to fix search path issues under
 	   Win98, which doesn't have ACLs to protect the files in the system
 	   directory anyway, isn't going to achieve much, and in any case both
 	   of these OSes should be long dead by now */
+#if VC_LT_2005( _MSC_VER )
 	if( getSysVar( SYSVAR_OSMAJOR ) <= 4 )
 		return( LoadLibrary( lpFileName ) );
+#else
+	if( !IsWindowsXPOrGreater() )
+		return( LoadLibrary( lpFileName ) );
+#endif /* VC++ < 2005 */
 
 	/* If it's already an absolute path, don't try and override it */
 	if( lpFileName[ 0 ] == '/' || \
@@ -1026,10 +1036,6 @@ void *initACLInfo( const int access )
 	BOOLEAN tokenOK = FALSE;
 
 	REQUIRES_N( access > 0 );
-
-	/* Win95/98/ME don't have any security, return null security info */
-	if( getSysVar( SYSVAR_ISWIN95 ) )
-		return( NULL );
 
 	/* Allocate and initialise the composite security info structure */
 	if( ( securityInfo = \
@@ -1634,6 +1640,48 @@ BOOL WINAPI DllMain( HANDLE hinstDLL, DWORD dwReason, LPVOID lpvReserved )
 
 /****************************************************************************
 *																			*
+*							String Function Support							*
+*																			*
+****************************************************************************/
+
+/* Match a given substring against a string in a case-insensitive manner.
+   If possible we use native calls to handle this since they deal with
+   charset-specific issues such as collating sequences, however a few OSes
+   don't provide this functionality so we have to do it ourselves */
+
+#ifdef NO_NATIVE_STRICMP
+
+int strnicmp( const char *src, const char *dest, int length )
+	{
+	assert( isReadPtr( src, length ) );
+
+	while( length-- > 0 )
+		{
+		char srcCh = *src++, destCh = *dest++;
+
+		/* Need to be careful with toupper() side-effects */
+		srcCh = toUpper( srcCh );
+		destCh = toUpper( destCh );
+
+		if( srcCh != destCh )
+			return( srcCh - destCh );
+		}
+
+	return( 0 );
+	}
+
+int stricmp( const char *src, const char *dest )
+	{
+	const int length = strlen( src );
+
+	if( length != strlen( dest ) )
+		return( 1 );	/* Lengths differ */
+	return( strnicmp( src, dest, length ) );
+	}
+#endif /* NO_NATIVE_STRICMP */
+
+/****************************************************************************
+*																			*
 *						Minimal Safe String Function Support				*
 *																			*
 ****************************************************************************/
@@ -2096,7 +2144,9 @@ static int sysVars[ MAX_SYSVARS ];
 
 int initSysVars( void )
 	{
-	OSVERSIONINFO osvi = { sizeof( OSVERSIONINFO ) };
+#if VC_LT_2005( _MSC_VER )
+	OSVERSIONINFO osvi = { sizeof(OSVERSIONINFO) };
+#endif /* VC++ < 2005 */
 	SYSTEM_INFO systemInfo;
 
 	static_assert( SYSVAR_LAST < MAX_SYSVARS, "System variable value" );
@@ -2104,6 +2154,7 @@ int initSysVars( void )
 	/* Reset the system variable information */
 	memset( sysVars, 0, sizeof( int ) * MAX_SYSVARS );
 
+#if VC_LT_2005( _MSC_VER )
 	/* Figure out which version of Windows we're running under */
 	if( !GetVersionEx( &osvi ) )
 		{
@@ -2114,18 +2165,17 @@ int initSysVars( void )
 		}
 	sysVars[ SYSVAR_OSMAJOR ] = osvi.dwMajorVersion;
 	sysVars[ SYSVAR_OSMINOR ] = osvi.dwMinorVersion;
-	sysVars[ SYSVAR_ISWIN95 ] = \
-					( osvi.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS ) ? \
-					TRUE : FALSE;
 
-	/* Check for Win32s just in case someone ever tries to load cryptlib under 
-	   it */
-	if( osvi.dwPlatformId == VER_PLATFORM_WIN32s )
+	/* Check for Win32s and Win95/98/ME just in case someone ever digs up 
+	   one of these systems and tries to load cryptlib under them */
+	if( osvi.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS || \
+		osvi.dwPlatformId == VER_PLATFORM_WIN32s )
 		{
 		DEBUG_DIAG(( "Win32s detected" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
+#endif /* VC++ < 2005 */
 
 	/* Get the system page size */
 	GetSystemInfo( &systemInfo );
@@ -2214,16 +2264,23 @@ int getSysVar( const SYSVAR_TYPE type )
    subtraction, but to align to a boundary we need to be able to perform 
    bitwise operations.  First we convert the pointer to a char pointer so
    that we can perform normal maths on it, and then we round in the usual
-   manner used by roundUp().  Because we have to do pointer-casting and
-   version we can't use roundUp() directly but have to build our own version 
-   here */
+   manner used by roundUp().  Because we have to do pointer-casting we can't 
+   use roundUp() directly but have to build our own version here */
 
 #if defined( __WIN32__ ) || defined( __WIN64__ ) 
   #define intptr_t	INT_PTR
 #elif defined( __ECOS__ )
   #define intptr_t	unsigned int
 #elif defined( __GNUC__ ) && ( __GNUC__ >= 3 )
-  #include <stdint.h>
+  #if defined( __VxWorks__ ) && \
+	  ( ( _WRS_VXWORKS_MAJOR < 6 ) || \
+		( _WRS_VXWORKS_MAJOR == 6 && _WRS_VXWORKS_MINOR < 6 ) )
+	/* Older versions of Wind River's toolchain don't include stdint.h,
+	   it was added somewhere around VxWorks 6.6 */
+	#define intptr_t	int
+  #else
+	#include <stdint.h>
+  #endif /* Nonstandard gcc environments */
 #elif defined( SYSTEM_64BIT )
   #define intptr_t	long long
 #else

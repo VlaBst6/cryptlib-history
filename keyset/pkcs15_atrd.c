@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib PKCS #15 Attribute Read Routines				*
-*						Copyright Peter Gutmann 1996-2007					*
+*						Copyright Peter Gutmann 1996-2011					*
 *																			*
 ****************************************************************************/
 
@@ -88,7 +88,7 @@ static int readKeyIdentifiers( INOUT STREAM *stream,
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	
 	REQUIRES( endPos > 0 && endPos > stell( stream ) && \
-			  endPos < MAX_INTLENGTH );
+			  endPos < MAX_BUFFER_SIZE );
 
 	for( status = CRYPT_OK, iterationCount = 0;
 		 cryptStatusOK( status ) && stell( stream ) < endPos && \
@@ -217,7 +217,7 @@ static int readPubkeyAttributes( INOUT STREAM *stream,
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 
 	REQUIRES( endPos > 0 && endPos > stell( stream ) && \
-			  endPos < MAX_INTLENGTH );
+			  endPos < MAX_BUFFER_SIZE );
 
 	status = readBitString( stream, &usageFlags );		/* Usage flags */
 	if( canContinue( stream, status, endPos ) &&		/* Native flag */
@@ -259,7 +259,7 @@ static int readCertAttributes( INOUT STREAM *stream,
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 
 	REQUIRES( endPos > 0 && endPos > stell( stream ) && \
-			  endPos < MAX_INTLENGTH );
+			  endPos < MAX_BUFFER_SIZE );
 
 	if( peekTag( stream ) == BER_BOOLEAN )			/* Authority flag */
 		status = readUniversal( stream );
@@ -491,9 +491,8 @@ int readObjectAttributes( INOUT STREAM *stream,
 			return( status );
 		}
 
-	/* For now we use the iD as the keyID, this may be overridden later if
-	   there's a real keyID present */
-	if( pkcs15infoPtr->iDlength > 0 )
+	/* If there's no keyID present then we use the iD as the keyID */
+	if( pkcs15infoPtr->keyIDlength <= 0 && pkcs15infoPtr->iDlength > 0 )
 		{
 		memcpy( pkcs15infoPtr->keyID, pkcs15infoPtr->iD, 
 				pkcs15infoPtr->iDlength );

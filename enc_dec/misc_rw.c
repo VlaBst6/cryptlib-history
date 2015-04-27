@@ -336,7 +336,8 @@ int readString32( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int readRawObject32( INOUT STREAM *stream, 
-					 OUT_BUFFER( bufferMaxLength, *bufferLength ) void *buffer, 
+					 OUT_BUFFER( bufferMaxLength, *bufferLength ) \
+						void *buffer, 
 					 IN_LENGTH_SHORT_MIN( UINT32_SIZE + 1 ) \
 						const int bufferMaxLength, 
 					 OUT_LENGTH_SHORT_Z int *bufferLength )
@@ -684,6 +685,11 @@ static int writeInteger( INOUT STREAM *stream,
 	   out any superfluous leading zeroes that may be present */
 	while( length > 0 && *intPtr == 0 )
 		{
+		/* This is usually a problem since quietly changing the length of a 
+		   low-level internal value before writing it will cause problems 
+		   with higher-level code that doesn't expect to have the data 
+		   length if internal components changed */
+		assert( DEBUG_WARN );
 		intPtr++;
 		length--;
 		}

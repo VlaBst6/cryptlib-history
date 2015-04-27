@@ -251,6 +251,18 @@ static int addStandardExtensions( INOUT CERT_INFO *certInfoPtr )
 		}
 
 	/* Add the subjectKeyIdentifier */
+#if 0	/* 10/12/12 To test situations where keyID != sKID, enable the 
+					following code */
+{
+BYTE buffer[ 128 ];
+
+memcpy( buffer, certInfoPtr->publicKeyID, KEYID_SIZE );
+memset( buffer, 0xFF, KEYID_SIZE / 2 );
+return( addCertComponentString( certInfoPtr, 
+								CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER,
+								buffer, KEYID_SIZE ) );
+}
+#endif /* 0 */
 	return( addCertComponentString( certInfoPtr, 
 									CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER,
 									certInfoPtr->publicKeyID, KEYID_SIZE ) );
@@ -371,7 +383,7 @@ int preEncodeCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 			}
 
 		/* Attributes are only allowed with version 3 certificates */
-		if( subjectCertInfoPtr->version >= 3 )
+		if( subjectCertInfoPtr->version >= X509_V3 )
 			{
 			status = addStandardExtensions( subjectCertInfoPtr );
 			if( cryptStatusError( status ) )

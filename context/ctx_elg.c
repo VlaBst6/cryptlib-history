@@ -37,7 +37,7 @@ static BOOLEAN pairwiseConsistencyTest( INOUT CONTEXT_INFO *contextInfoPtr,
 
 	/* Encrypt with the public key.  We  */
 	memset( buffer, 0, CRYPT_MAX_PKCSIZE );
-	memcpy( buffer + 1/*2*/, "abcde", 5 );
+	memcpy( buffer + 1, "abcde", 5 );
 	setDLPParams( &dlpParams, buffer,
 				  bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits ),
 				  buffer, ( CRYPT_MAX_PKCSIZE * 2 ) + 32 );
@@ -179,6 +179,9 @@ static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
 	PKC_INFO contextData, *pkcInfo = &contextData;
+	const CAPABILITY_INFO *capabilityInfoPtr;
+	DLP_PARAMS dlpParams;
+	BYTE buffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 32 + 8 ];
 	int status;
 
 	/* Initialise the key components */
@@ -186,7 +189,7 @@ static int selfTest( void )
 								getElgamalCapability(), &contextData, 
 								sizeof( PKC_INFO ), NULL );
 	if( cryptStatusError( status ) )
-		return( CRYPT_ERROR_FAILED );
+		return( status );
 	status = importBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
 						   dlpTestKey.pLen, DLPPARAM_MIN_P, 
 						   DLPPARAM_MAX_P, NULL, KEYSIZE_CHECK_PKC );
@@ -215,6 +218,7 @@ static int selfTest( void )
 		staticDestroyContext( &contextInfo );
 		retIntError();
 		}
+	capabilityInfoPtr = contextInfo.capabilityInfo;
 
 	/* Perform a test a sig generation/check and test en/decryption */
 #if 0	/* See comment in sig.code */
@@ -230,15 +234,35 @@ static int selfTest( void )
 	if( status != CRYPT_OK )
 		status = CRYPT_ERROR_FAILED;
 #endif /* 0 */
-	status = contextInfo.capabilityInfo->initKeyFunction( &contextInfo, NULL, 0 );
-	if( cryptStatusOK( status ) && \
+	status = capabilityInfoPtr->initKeyFunction( &contextInfo, NULL, 0 );
+	if( cryptStatusError( status ) || \
 		!pairwiseConsistencyTest( &contextInfo, FALSE ) )
-		status = CRYPT_ERROR_FAILED;
+		{
+		staticDestroyContext( &contextInfo );
+		return( CRYPT_ERROR_FAILED );
+		}
+
+	/* Finally, make sure that the memory fault-detection is working */
+	pkcInfo->dlpParam_p.d[ 8 ] ^= 0x0011;
+	memset( buffer, 0, CRYPT_MAX_PKCSIZE );
+	memcpy( buffer + 1, "abcde", 5 );
+	setDLPParams( &dlpParams, buffer,
+				  bitsToBytes( contextInfo.ctxPKC->keySizeBits ),
+				  buffer, ( CRYPT_MAX_PKCSIZE * 2 ) + 32 );
+	status = capabilityInfoPtr->encryptFunction( &contextInfo,
+							( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
+	if( cryptStatusOK( status ) )
+		{
+		/* The fault-detection couldn't detect a bit-flip, there's a 
+		   problem */
+		staticDestroyContext( &contextInfo );
+		return( CRYPT_ERROR_FAILED );
+		}
 
 	/* Clean up */
 	staticDestroyContext( &contextInfo );
 
-	return( status );
+	return( CRYPT_OK );
 	}
 #else
 	#define selfTest	NULL
@@ -327,12 +351,12 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	BN_copy( phi_p, p );
 	BN_sub_word( phi_p, 1 );			/* phi( p ) = p - 1 */
 	BN_mod( k, k, phi_p,				/* Reduce k to the correct range */
-			pkcInfo->bnCTX );
-	BN_gcd( r, k, phi_p, pkcInfo->bnCTX );
+			&pkcInfo->bnCTX );
+	BN_gcd( r, k, phi_p, &pkcInfo->bnCTX );
 	while( !BN_is_one( r ) )
 		{
 		BN_sub_word( k, 1 );
-		BN_gcd( r, k, phi_p, pkcInfo->bnCTX );
+		BN_gcd( r, k, phi_p, &pkcInfo->bnCTX );
 		}
 
 	/* Move the data from the buffer into a bignum */
@@ -342,19 +366,19 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		return( status );
 
 	/* r = g^k mod p */
-	BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );
+	BN_mod_exp_mont( r, g, k, p, &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );
 										/* r = g^k mod p */
 
 	/* s = ( k^-1 * ( hash - x * r ) ) mod phi( p ) */
 	kInv = BN_mod_inverse( k, phi_p,	/* k = ( k^-1 ) mod phi( p ) */
-						   pkcInfo->bnCTX );
+						   &pkcInfo->bnCTX );
 	BN_mod_mul( tmp, x, r, phi_p,		/* tmp = ( x * r ) mod phi( p ) */
-				pkcInfo->bnCTX );
+				&pkcInfo->bnCTX );
 	if( BN_cmp( s, tmp ) < 0 )			/* if hash < x * r */
 		BN_add( s, s, phi_p );			/*   hash = hash + phi( p ) (fast mod) */
 	BN_sub( s, s, tmp );				/* s = hash - x * r */
 	BN_mod_mul( s, s, kInv, phi_p,		/* s = ( s * k^-1 ) mod phi( p ) */
-				pkcInfo->bnCTX );
+				&pkcInfo->bnCTX );
 
 	/* Encode the result as a DL data block */
 	length = encodeDLValues( buffer, r, s );
@@ -397,14 +421,14 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 		/* u1 = ( y^r * r^s ) mod p */
 		BN_mod_exp_mont( u1, y, r, p,		/* y' = ( y^r ) mod p */
-						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );
+						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );
 		BN_mod_exp_mont( r, r, s, p, 		/* r' = ( r^s ) mod p */
-						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );
+						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );
 		BN_mod_mul_mont( u1, u1, r, p,		/* u1 = ( y' * r' ) mod p */
-						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );
+						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );
 
 		/* u2 = g^hash mod p */
-		BN_mod_exp_mont( u2, g, hash, p, pkcInfo->bnCTX,
+		BN_mod_exp_mont( u2, g, hash, p, &pkcInfo->bnCTX,
 						 &pkcInfo->dlpParam_mont_p );
 
 		/* if u1 == u2, signature is good */
@@ -457,6 +481,16 @@ static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr,
 	REQUIRES( dlpParams->outLen >= ( 2 + length ) * 2 && \
 			  dlpParams->outLen < MAX_INTLENGTH_SHORT );
 
+	/* Perform side-channel attack checks */
+	if( cryptStatusError( \
+			checksumContextData( pkcInfo, CRYPT_ALGO_ELGAMAL,
+					( contextInfoPtr->flags & CONTEXT_FLAG_ISPUBLICKEY ) ? \
+					FALSE : TRUE ) ) )
+		{
+		DEBUG_DIAG(( "Elgamal key memory corruption detected" ));
+		return( CRYPT_ERROR_FAILED );
+		}
+
 	/* Make sure that we're not being fed suspiciously short data 
 	   quantities.  importBignum() performs a more rigorous check, but we
 	   use this as a lint filter before performing the relatively expensive
@@ -489,9 +523,16 @@ static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr,
 		/* Generate the random value k, with the same 32-bit adjustment used
 		   in the DSA code to avoid bias in the output (the only real
 		   difference is that we eventually reduce it mode phi(p) rather than
-		   mod q) */
-		status = generateBignum( k, bytesToBits( length + \
-												 DLP_OVERFLOW_SIZE ), 0x80, 0 );
+		   mod q).
+
+		   We also add (meaning "mix in" rather than strictly 
+		   "arithmetically add") the data being encrypted to curtail 
+		   problems in the incredibly unlikely situation that the RNG value 
+		   repeats */
+		status = generateBignum( k, 
+								 bytesToBits( length + DLP_OVERFLOW_SIZE ), 
+								 0x80, 0, dlpParams->inParam1, 
+								 dlpParams->inLen1 );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -506,12 +547,12 @@ static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr,
 	CKPTR( BN_copy( phi_p, p ) );
 	CK( BN_sub_word( phi_p, 1 ) );		/* phi( p ) = p - 1 */
 	CK( BN_mod( k, k, phi_p,			/* Reduce k to the correct range */
-				pkcInfo->bnCTX ) );
-	CK( BN_gcd( s, k, phi_p, pkcInfo->bnCTX ) );
+				&pkcInfo->bnCTX ) );
+	CK( BN_gcd( s, k, phi_p, &pkcInfo->bnCTX ) );
 	while( bnStatusOK( bnStatus ) && !BN_is_one( s ) )
 		{
 		CK( BN_sub_word( k, 1 ) );
-		CK( BN_gcd( s, k, phi_p, pkcInfo->bnCTX ) );
+		CK( BN_gcd( s, k, phi_p, &pkcInfo->bnCTX ) );
 		}
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
@@ -525,14 +566,14 @@ static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr,
 
 	/* s = ( y^k * M ) mod p */
 	CK( BN_mod_exp_mont( r, y, k, p,	/* y' = y^k mod p */
-						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
+						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
 	CK( BN_mod_mul( s, r, tmp, p,		/* s = y'M mod p */
-					pkcInfo->bnCTX ) );
+					&pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
 	/* r = g^k mod p */
-	CK( BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX,
+	CK( BN_mod_exp_mont( r, g, k, p, &pkcInfo->bnCTX,
 						 &pkcInfo->dlpParam_mont_p ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
@@ -544,13 +585,17 @@ static int encryptFn( INOUT CONTEXT_INFO *contextInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Perform side-channel attack checks if necessary */
-	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
-		cryptStatusError( calculateBignumChecksum( pkcInfo, 
-												   CRYPT_ALGO_ELGAMAL ) ) )
+	/* Perform side-channel attack checks */
+	if( cryptStatusError( \
+			checksumContextData( pkcInfo, CRYPT_ALGO_ELGAMAL,
+					( contextInfoPtr->flags & CONTEXT_FLAG_ISPUBLICKEY ) ? \
+					FALSE : TRUE ) ) )
 		{
+		if( dlpParams->inLen2 != -999 )	/* Don't trigger on self-test */
+			DEBUG_DIAG(( "Elgamal key memory corruption detected" ));
 		return( CRYPT_ERROR_FAILED );
 		}
+
 	return( CRYPT_OK );
 	}
 
@@ -580,6 +625,14 @@ static int decryptFn( INOUT CONTEXT_INFO *contextInfoPtr,
 	REQUIRES( dlpParams->outLen >= length && \
 			  dlpParams->outLen < MAX_INTLENGTH_SHORT );
 
+	/* Perform side-channel attack checks */
+	if( cryptStatusError( \
+			checksumContextData( pkcInfo, CRYPT_ALGO_ELGAMAL, TRUE ) ) )
+		{
+		DEBUG_DIAG(( "Elgamal key memory corruption detected" ));
+		return( CRYPT_ERROR_FAILED );
+		}
+
 	/* Decode the values from a DL data block and make sure that r and s are
 	   valid, i.e. r, s = [1...p-1] */
 	status = pkcInfo->decodeDLValuesFunction( dlpParams->inParam1, 
@@ -590,11 +643,11 @@ static int decryptFn( INOUT CONTEXT_INFO *contextInfoPtr,
 
 	/* M = ( s / ( r^x ) ) mod p */
 	CK( BN_mod_exp_mont( r, r, x, p,		/* r' = r^x */
-						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
+						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
 	CKPTR( BN_mod_inverse( tmp, r, p,		/* r'' = r'^-1 */
-						   pkcInfo->bnCTX ) );
+						   &pkcInfo->bnCTX ) );
 	CK( BN_mod_mul( s, s, tmp, p,			/* s = s * r'^-1 mod p */
-					pkcInfo->bnCTX ) );
+					&pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
@@ -613,13 +666,14 @@ static int decryptFn( INOUT CONTEXT_INFO *contextInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Perform side-channel attack checks if necessary */
-	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
-		cryptStatusError( calculateBignumChecksum( pkcInfo, 
-												   CRYPT_ALGO_ELGAMAL ) ) )
+	/* Perform side-channel attack checks */
+	if( cryptStatusError( \
+			checksumContextData( pkcInfo, CRYPT_ALGO_ELGAMAL, TRUE ) ) )
 		{
+		DEBUG_DIAG(( "Elgamal key memory corruption detected" ));
 		return( CRYPT_ERROR_FAILED );
 		}
+
 	return( CRYPT_OK );
 	}
 
